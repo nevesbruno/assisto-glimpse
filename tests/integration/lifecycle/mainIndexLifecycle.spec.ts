@@ -140,6 +140,7 @@ describe('main process lifecycle', () => {
           failures: [],
         })),
         reportLegacyManagedHookCleanupFailures: vi.fn(),
+        resolveLegacyManagedHookCleanupMarkerPath: vi.fn(() => '/tmp/opencove-marker'),
       }),
     )
 

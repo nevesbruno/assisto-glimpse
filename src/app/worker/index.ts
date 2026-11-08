@@ -28,6 +28,7 @@ import { createBuiltinAgentProviderContributions } from '../../contexts/agent/in
 import {
   cleanupLegacyManagedHooksAtStartup,
   reportLegacyManagedHookCleanupFailures,
+  resolveLegacyManagedHookCleanupMarkerPath,
 } from '../../contexts/agent/infrastructure/cleanupLegacyManagedHooksAtStartup'
 import { readRepeatedWorkerFlagValues, readWorkerFlagValue } from './workerCliArguments'
 import { createWorkerShutdown } from './workerShutdown'
@@ -145,7 +146,12 @@ async function main(): Promise<void> {
   // can be incomplete. Hydrate the environment so git/ssh/etc behave consistently across Desktop,
   // Web UI, and remote/headless installs.
   await hydrateCliEnvironmentForAppLaunch(true)
-  reportLegacyManagedHookCleanupFailures(await cleanupLegacyManagedHooksAtStartup(homedir()))
+  reportLegacyManagedHookCleanupFailures(
+    await cleanupLegacyManagedHooksAtStartup(
+      homedir(),
+      resolveLegacyManagedHookCleanupMarkerPath(userDataPath),
+    ),
+  )
 
   const approvedWorkspaces = createApprovedWorkspaceStoreForPath(
     resolve(userDataPath, 'approved-workspaces.json'),

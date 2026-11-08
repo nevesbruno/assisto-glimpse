@@ -7,8 +7,14 @@ import {
   cleanLegacyClaudeSettings,
   cleanLegacyCodexConfigToml,
   cleanLegacyCodexHooksFile,
+  collectWholeFileStaleTrust,
   isLegacyOpenCoveCodexHooksFile,
 } from '../../../src/contexts/agent/infrastructure/legacyManagedHookCleanup'
+
+const allStale = new Map([
+  ['pre_tool_use', 0],
+  ['stop', 0],
+])
 
 function fixture(name: string): string {
   return readFileSync(resolve('tests/fixtures/agent/legacy-managed-hooks', name), 'utf8')
@@ -89,7 +95,10 @@ describe('legacy managed-hook residue cleanup', () => {
     const input = fixture('codex-config-coexist.input.toml')
     const expected = fixture('codex-config-coexist.expected.toml')
 
-    expect(cleanLegacyCodexConfigToml(input)).toEqual({ content: expected, removedCount: 2 })
+    expect(cleanLegacyCodexConfigToml(input, allStale)).toEqual({
+      content: expected,
+      removedCount: 2,
+    })
   })
 
   it('INV-B2 removes empty Claude event and hooks keys while preserving other top-level keys', () => {
@@ -137,11 +146,14 @@ describe('legacy managed-hook residue cleanup', () => {
       },
     })
     const codexSecond = cleanLegacyCodexHooksFile(codexFirst.content)
-    expect(codexSecond).toEqual({ content: codexFirst.content, removedCount: 0 })
+    expect(codexSecond).toMatchObject({ content: codexFirst.content, removedCount: 0 })
     expect(codexSecond.content).toBe(codexFirst.content)
 
-    const tomlFirst = cleanLegacyCodexConfigToml(fixture('codex-config-coexist.input.toml'))
-    const tomlSecond = cleanLegacyCodexConfigToml(tomlFirst.content)
+    const tomlFirst = cleanLegacyCodexConfigToml(
+      fixture('codex-config-coexist.input.toml'),
+      allStale,
+    )
+    const tomlSecond = cleanLegacyCodexConfigToml(tomlFirst.content, allStale)
     expect(tomlSecond).toEqual({ content: tomlFirst.content, removedCount: 0 })
   })
 
@@ -151,7 +163,7 @@ describe('legacy managed-hook residue cleanup', () => {
     )
     expect(() => JSON.parse(JSON.stringify(claude.content))).not.toThrow()
 
-    const toml = cleanLegacyCodexConfigToml(fixture('codex-config-coexist.input.toml'))
+    const toml = cleanLegacyCodexConfigToml(fixture('codex-config-coexist.input.toml'), allStale)
     expect(toml.content).toBe(fixture('codex-config-coexist.expected.toml'))
     expect(toml.content).toContain('[features]\nhooks = true')
     expect(toml.content).toContain('[projects."/repo"]\ntrust_level = "trusted"')
@@ -166,7 +178,7 @@ describe('legacy managed-hook residue cleanup', () => {
       '[hooks.state]',
     ].join('\n')
 
-    expect(cleanLegacyCodexConfigToml(similarHeaders)).toEqual({
+    expect(cleanLegacyCodexConfigToml(similarHeaders, allStale)).toEqual({
       content: similarHeaders,
       removedCount: 0,
     })
@@ -179,29 +191,85 @@ describe('legacy managed-hook residue cleanup', () => {
       '[features]\r\n' +
       'hooks = true\r\n'
 
-    expect(cleanLegacyCodexConfigToml(input)).toEqual({
+    expect(cleanLegacyCodexConfigToml(input, allStale)).toEqual({
       content: '[features]\r\nhooks = true\r\n',
       removedCount: 1,
     })
   })
 
   it('counts every removed Codex hooks.state table', () => {
+    const eventsStale = new Map(Array.from({ length: 10 }, (_, index) => [`event_${index}`, 0]))
     const input = Array.from(
       { length: 10 },
       (_, index) =>
         `[hooks.state."/Users/redacted/.codex/hooks.json:event_${index}:0:0"]\ntrusted_hash = "sha256:${index}"\n`,
     ).join('\n')
 
-    expect(cleanLegacyCodexConfigToml(input)).toEqual({ content: '', removedCount: 10 })
+    expect(cleanLegacyCodexConfigToml(input, eventsStale)).toEqual({
+      content: '',
+      removedCount: 10,
+    })
   })
 
   it('INV-B5 treats absent shapes and damaged TOML as safe no-ops', () => {
     for (const value of [null, undefined, '{ damaged', [], { theme: 'dark' }, { hooks: null }]) {
       expect(cleanLegacyClaudeSettings(value)).toEqual({ content: value, removedCount: 0 })
-      expect(cleanLegacyCodexHooksFile(value)).toEqual({ content: value, removedCount: 0 })
+      expect(cleanLegacyCodexHooksFile(value)).toMatchObject({ content: value, removedCount: 0 })
     }
 
     const damaged = '[hooks.state."/tmp/.codex/hooks.json:stop:0:0"]\nkey = true\n[broken'
-    expect(cleanLegacyCodexConfigToml(damaged)).toEqual({ content: damaged, removedCount: 0 })
+    expect(cleanLegacyCodexConfigToml(damaged, allStale)).toEqual({
+      content: damaged,
+      removedCount: 0,
+    })
+  })
+
+  it('keeps trust of user hooks and of events or earlier groups the cleanup did not touch', () => {
+    const toml = [
+      '[hooks.state."/home/u/.codex/hooks.json:stop:0:0"]',
+      'trusted_hash = "sha256:user-stop"',
+      '',
+      '[hooks.state."/home/u/.codex/hooks.json:pre_tool_use:0:0"]',
+      'trusted_hash = "sha256:user-pre"',
+      '',
+    ].join('\n')
+
+    expect(cleanLegacyCodexConfigToml(toml, new Map())).toEqual({ content: toml, removedCount: 0 })
+    expect(cleanLegacyCodexConfigToml(toml, new Map([['pre_tool_use', 1]]))).toEqual({
+      content: toml,
+      removedCount: 0,
+    })
+  })
+
+  it('derives stale trust from the first removed group so shifted indexes go too', () => {
+    const user = { hooks: [{ type: 'command', command: 'user' }] }
+    const legacy = { description: LEGACY_MANAGED_CODEX_HOOK_DESCRIPTION, hooks: [] }
+    const result = cleanLegacyCodexHooksFile({
+      hooks: { PreToolUse: [user, legacy, user, user], Stop: [user] },
+    })
+    expect(result.staleTrust).toEqual(new Map([['pre_tool_use', 1]]))
+
+    const toml = [0, 1, 2, 3]
+      .map(
+        n => `[hooks.state."/h/.codex/hooks.json:pre_tool_use:${n}:0"]\ntrusted_hash = "x${n}"\n`,
+      )
+      .concat('[hooks.state."/h/.codex/hooks.json:stop:0:0"]\ntrusted_hash = "s"\n')
+      .join('\n')
+    const cleaned = cleanLegacyCodexConfigToml(toml, result.staleTrust)
+
+    expect(cleaned.removedCount).toBe(3)
+    expect(cleaned.content).toContain('pre_tool_use:0:0')
+    expect(cleaned.content).not.toContain('pre_tool_use:1:0')
+    expect(cleaned.content).not.toContain('pre_tool_use:3:0')
+    expect(cleaned.content).toContain('stop:0:0')
+  })
+
+  it('marks every event of a whole-file removal as stale from group 0', () => {
+    expect(collectWholeFileStaleTrust({ hooks: { SessionStart: [], Stop: [] } })).toEqual(
+      new Map([
+        ['session_start', 0],
+        ['stop', 0],
+      ]),
+    )
   })
 })

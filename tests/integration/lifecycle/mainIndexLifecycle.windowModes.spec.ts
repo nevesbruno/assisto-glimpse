@@ -187,6 +187,7 @@ function mockMainIndexDependencies(params: {
         failures: [],
       })),
       reportLegacyManagedHookCleanupFailures: vi.fn(),
+      resolveLegacyManagedHookCleanupMarkerPath: vi.fn(() => '/tmp/opencove-marker'),
     }),
   )
 }

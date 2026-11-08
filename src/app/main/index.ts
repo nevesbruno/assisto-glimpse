@@ -38,6 +38,7 @@ import { requestRendererPersistFlush } from './rendererPersistFlush'
 import {
   cleanupLegacyManagedHooksAtStartup,
   reportLegacyManagedHookCleanupFailures,
+  resolveLegacyManagedHookCleanupMarkerPath,
 } from '../../contexts/agent/infrastructure/cleanupLegacyManagedHooksAtStartup'
 import { stripParentAgentSessionEnv } from '../../shared/runtime/stripParentAgentSessionEnv'
 
@@ -274,7 +275,12 @@ app.whenReady().then(async () => {
   // Best effort and non-blocking: launcher migration must never delay or break startup.
   void repairLegacyCliLaunchers().catch(() => undefined)
   await hydrateCliEnvironmentForAppLaunch(app.isPackaged === true)
-  reportLegacyManagedHookCleanupFailures(await cleanupLegacyManagedHooksAtStartup(homedir()))
+  reportLegacyManagedHookCleanupFailures(
+    await cleanupLegacyManagedHooksAtStartup(
+      homedir(),
+      resolveLegacyManagedHookCleanupMarkerPath(app.getPath('userData')),
+    ),
+  )
 
   // Set app user model id for windows
   electronApp.setAppUserModelId(resolveAppUserModelId())
