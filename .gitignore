@@ -125,3 +125,6 @@ tmp/
 # so a local release-style build creates this too.
 .cache/
 docs/Microsoft/
+
+# Spikes locais de viabilidade (F2-00), nao versionados
+scripts/spikes/
