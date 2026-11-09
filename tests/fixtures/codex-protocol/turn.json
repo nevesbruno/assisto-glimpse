@@ -1,0 +1,39 @@
+[
+  {
+    "definition": "TurnStartParams",
+    "message": {
+      "threadId": "019a0000-0000-7000-8000-000000000001",
+      "input": [{ "type": "text", "text": "rode os testes", "text_elements": [] }],
+      "clientUserMessageId": "dispatch-bbf91a556236"
+    }
+  },
+  {
+    "definition": "TurnStartResponse",
+    "message": {
+      "turn": { "id": "019a0000-0000-7000-8000-0000000000a1", "items": [], "status": "inProgress" }
+    }
+  },
+  {
+    "definition": "TurnStartedNotification",
+    "message": {
+      "threadId": "019a0000-0000-7000-8000-000000000001",
+      "turn": { "id": "019a0000-0000-7000-8000-0000000000a1", "items": [], "status": "inProgress" }
+    }
+  },
+  {
+    "definition": "ItemCompletedNotification",
+    "message": {
+      "threadId": "019a0000-0000-7000-8000-000000000001",
+      "turnId": "019a0000-0000-7000-8000-0000000000a1",
+      "completedAtMs": 1762700001000,
+      "item": { "type": "agentMessage", "id": "item-2", "text": "pronto" }
+    }
+  },
+  {
+    "definition": "TurnCompletedNotification",
+    "message": {
+      "threadId": "019a0000-0000-7000-8000-000000000001",
+      "turn": { "id": "019a0000-0000-7000-8000-0000000000a1", "items": [], "status": "completed" }
+    }
+  }
+]

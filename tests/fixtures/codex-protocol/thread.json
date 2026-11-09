@@ -1,0 +1,69 @@
+[
+  {
+    "definition": "ThreadStartParams",
+    "message": {
+      "cwd": "/work/project",
+      "sandbox": "workspace-write",
+      "approvalPolicy": "on-request",
+      "ephemeral": false,
+      "serviceName": "glimpse"
+    }
+  },
+  {
+    "definition": "ThreadStartResponse",
+    "message": {
+      "approvalPolicy": "on-request",
+      "approvalsReviewer": "user",
+      "cwd": "/work/project",
+      "model": "gpt-5.5",
+      "modelProvider": "openai",
+      "sandbox": { "type": "workspaceWrite" },
+      "thread": {
+        "id": "019a0000-0000-7000-8000-000000000001",
+        "sessionId": "019a0000-0000-7000-8000-000000000001",
+        "cliVersion": "0.167.0",
+        "createdAt": 1762700000,
+        "updatedAt": 1762700000,
+        "cwd": "/work/project",
+        "ephemeral": false,
+        "modelProvider": "openai",
+        "preview": "",
+        "projectId": null,
+        "source": "appServer",
+        "status": { "type": "idle" },
+        "turns": [],
+        "name": "Glimpse: Agente A"
+      },
+      "extraFieldFromNewerCodex": true
+    }
+  },
+  {
+    "definition": "ThreadSetNameParams",
+    "message": { "threadId": "019a0000-0000-7000-8000-000000000001", "name": "Glimpse: Agente A" }
+  },
+  {
+    "definition": "ThreadStartedNotification",
+    "message": {
+      "thread": {
+        "id": "019a0000-0000-7000-8000-000000000001",
+        "sessionId": "019a0000-0000-7000-8000-000000000001",
+        "cliVersion": "0.167.0",
+        "createdAt": 1762700000,
+        "updatedAt": 1762700000,
+        "cwd": "/work/project",
+        "ephemeral": false,
+        "modelProvider": "openai",
+        "preview": "",
+        "projectId": null,
+        "source": "appServer",
+        "status": { "type": "idle" },
+        "turns": [],
+        "name": "Glimpse: Agente A"
+      }
+    }
+  },
+  {
+    "definition": "ThreadStatusChangedNotification",
+    "message": { "threadId": "019a0000-0000-7000-8000-000000000001", "status": { "type": "idle" } }
+  }
+]

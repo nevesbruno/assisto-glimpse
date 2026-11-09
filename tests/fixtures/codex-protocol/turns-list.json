@@ -1,0 +1,43 @@
+[
+  {
+    "definition": "ThreadTurnsListParams",
+    "message": {
+      "threadId": "019a0000-0000-7000-8000-000000000001",
+      "limit": 20,
+      "sortDirection": "desc"
+    }
+  },
+  {
+    "definition": "ThreadTurnsListResponse",
+    "message": {
+      "data": [
+        {
+          "id": "019a0000-0000-7000-8000-0000000000a1",
+          "status": "interrupted",
+          "items": [
+            {
+              "type": "userMessage",
+              "id": "item-1",
+              "clientId": "dispatch-bbf91a556236",
+              "content": [{ "type": "text", "text": "rode os testes", "text_elements": [] }]
+            }
+          ]
+        },
+        {
+          "id": "019a0000-0000-7000-8000-000000000099",
+          "status": "completed",
+          "items": [
+            {
+              "type": "userMessage",
+              "id": "item-0",
+              "clientId": null,
+              "content": [{ "type": "text", "text": "oi", "text_elements": [] }]
+            },
+            { "type": "agentMessage", "id": "item-0b", "text": "ACK" }
+          ]
+        }
+      ],
+      "nextCursor": null
+    }
+  }
+]

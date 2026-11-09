@@ -5,3 +5,5 @@ pnpm-lock.yaml
 out
 test-results
 playwright-report
+# Gerado por scripts/codex-protocol/extract-subset.mjs; o sha256 do manifesto depende do formato do gerador
+src/contexts/orchestration/infrastructure/codex/protocol/codex-protocol.subset.json

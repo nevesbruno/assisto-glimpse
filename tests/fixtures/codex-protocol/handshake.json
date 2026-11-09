@@ -1,0 +1,15 @@
+[
+  {
+    "definition": "InitializeParams",
+    "message": { "clientInfo": { "name": "glimpse", "title": null, "version": "0.0.0" } }
+  },
+  {
+    "definition": "InitializeResponse",
+    "message": {
+      "codexHome": "/tmp/codex-home",
+      "platformFamily": "unix",
+      "platformOs": "linux",
+      "userAgent": "glimpse/0.167.0 (Linux; x86_64)"
+    }
+  }
+]
