@@ -298,11 +298,11 @@ the Sidebar does not maintain a second local persistence store.
 - `node_scrollback` terminal rows：Worker repository compatibility mirror；generic persistence may
   read them but must not overwrite recovery-owned rows.
 - Orchestration tables (v14)：`agent_links`、`orchestration_dispatches`、`orchestration_notices`、
-  `orchestration_hook_approvals` 的 owner 是 Worker，写入走 optimistic CAS（`revision`）；通用
+  `orchestration_hook_approvals` 的 owner 是 Worker，写入走 optimistic CAS（`revision`）；`orchestration_hook_approvals` 例外，无 `revision` 列，写入按主键幂等（`ON CONFLICT DO NOTHING`）；通用
   app-state 写入不得触碰这四张表。`app_meta.orchestration_links_revision`（初始 `0`）在同一事务内随每次
   link 变更递增。迁移 13→14 只创建（`IF NOT EXISTS`，additive、幂等）；`agent_links` 已含 phase 3 列
   （`kind`、`request_reason`、`requested_at`、`messages_*`）与 `spawn_request_id`，默认值对 phase 2 中性。
-  部分唯一索引：每个 executor 至多一条 `active` link，至多一个在途 dispatch（`reserved`/`sent`/`uncertain`）；
+  部分唯一索引：每个 executor 至多一条 `active` link，至多一个未终态 dispatch（`queued`/`reserved`/`sent`/`uncertain`，索引 `orchestration_dispatches_open_executor_unique_idx`，旧名 `..._in_flight_executor_unique_idx` 在打开时 `DROP INDEX IF EXISTS`，开发库中多余的 `queued` 被取消并退还 round，幂等）；
   唯一索引 `(orchestrator_node_id, spawn_request_id)` 保证 `orch.spawn` 幂等。回退到 13 的 App 会忽略这四张表并保留数据。
 - Browser profile data：客户端本地 SQLite browser profile store；历史、书签、下载记录、主页和权限决定默认不进入 Worker/WebUI 同步。
 

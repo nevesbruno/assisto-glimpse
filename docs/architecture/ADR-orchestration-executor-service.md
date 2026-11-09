@@ -3,7 +3,7 @@
 | Campo | Valor |
 | --- | --- |
 | Status | Proposto, com as decisões do Bruno de 09/11/2026 incorporadas |
-| Data | 08/11/2026, revisado em 09/11/2026 |
+| Data | 08/11/2026, revisado em 09/11/2026 (admissão de despacho por estado) |
 | Escopo | Fases 2 e 3 do plano de orquestração (núcleo com Codex, depois opencode v2, conexão por conversa e conversa entre orquestradores) |
 | Plano de origem | `~/.claude/plans/esse-projeto-um-piped-naur.md`, fora do repositório |
 | Prova técnica | `scripts/spikes/executor-service/RESULTADO.md`, que o card F2-00 move para `docs/research/orchestration-spike-executor-service.md`; a pasta de spikes fica ignorada pelo git |
@@ -35,10 +35,10 @@ Os achados 7 e 8 vieram desta revisão, feita só com `--help` e `--version`. A 
 
 ## Decisão
 
-1. **Contexto próprio.** Nasce o bounded context `src/contexts/orchestration/`, dono de ligações, fila de despacho, supervisor, avisos e da porta `ExecutorRuntime`.
+1. **Contexto próprio.** Nasce o bounded context `src/contexts/orchestration/`, dono de ligações, despachos, supervisor, avisos e da porta `ExecutorRuntime`.
 2. **Um serviço por executor.** Cada executor roda como processo próprio, filho do Worker e supervisionado por ele: `codex app-server` na fase 2 e `opencode serve` da v2 na fase 3.
 3. **Protocolo estruturado.** O Glimpse fala com o Codex por JSON-RPC sobre WebSocket em loopback com token de capacidade, e com o opencode por HTTP com Basic e SSE. A janela do executor no canvas é uma TUI conectada ao mesmo serviço, para acompanhar e intervir.
-4. **Despacho durável e idempotente.** A reserva é gravada antes do envio, há no máximo uma entrega em voo por executor e nenhum reenvio automático. A reconciliação consulta o próprio serviço.
+4. **Despacho durável, idempotente e admitido por estado.** A reserva é gravada antes do envio, há no máximo um despacho em aberto por executor (`queued` incluído) e nenhum reenvio automático. O orquestrador sabe pelo estado, antes de tentar, se pode despachar. A reconciliação consulta o próprio serviço.
 5. **Aviso agregado.** O Glimpse junta os eventos dos executores e entrega um aviso curto ao orquestrador pelo caminho de terminal existente, só quando ele está ocioso.
 6. **Autorização pela credencial da janela.** O principal vem do grant da sessão que chama. O orquestrador só alcança executores ligados a ele, e o executor não despacha.
 7. **Estado do Worker.** Ligações, despachos, avisos e aprovações de hooks vivem em tabelas próprias do Worker (esquema 14), fora do documento sincronizado que janelas conseguem gravar. O renderer recebe por leitura e evento.
@@ -63,6 +63,7 @@ Os achados 7 e 8 vieram desta revisão, feita só com `--help` e `--version`. A 
 | Pasta de spikes | Relatório em `docs/research/`, resto ignorado pelo git |
 | Pedido de conexão sem resposta | Sem prazo; o pedido espera até o usuário responder |
 | Commit destes documentos | Feito por agente numa branch nova, depois de revisão, em sessão futura |
+| Admissão de despacho por estado | Um despacho em aberto por executor, `queued` incluído, sem fila FIFO; sem janela de tempo nem hash de conteúdo na admissão; mesmo texto depois da conclusão é despacho novo, limitado pelas 3 rodadas; correção em dois passos (`orch.cancel` ou `orch.interrupt`, depois `orch.dispatch`); a janela de 2 s e os 10 s sem digitação do aviso ficam. A recusa `orch.dispatch_in_flight` é só rede de segurança |
 
 ## Alternativas descartadas
 
@@ -76,9 +77,10 @@ Os achados 7 e 8 vieram desta revisão, feita só com `--help` e `--version`. A 
 | Vista própria do Glimpse desenhada por eventos | Mais interface, e a prova mostrou que a TUI remota acompanha; fica como plano B |
 | Gravar confiança em `~/.codex`, por `config/value/write` ou respondendo o portão da TUI | Altera configuração do usuário, critério de reprovação do plano |
 | Stdio como transporte do app-server | Aceita um cliente só, e a TUI precisa do mesmo servidor |
-| Injetar despacho em turno ativo com `turn/steer` | Muda o turno em curso sem fronteira clara; a fila espera ociosidade |
+| Injetar despacho em turno ativo com `turn/steer` | Muda o turno em curso sem fronteira clara; o despacho espera ociosidade |
 | Reanexar ao serviço órfão depois de queda do Worker | Exigiria guardar o token de capacidade em disco |
 | Ligação criada direto pelo orquestrador, sem confirmação | O Glimpse não distingue o pedido do usuário de um texto injetado pela saída de outro agente |
+| Fila FIFO de profundidade livre por executor, com deduplicação por conteúdo em 10 min (D6 anterior) | Heurística de tempo e de texto que barra reenvio legítimo e deixa passar o reformulado; o orquestrador não ficava sabendo pelo estado quando podia despachar |
 
 ## Consequências
 
@@ -94,6 +96,7 @@ Os achados 7 e 8 vieram desta revisão, feita só com `--help` e `--version`. A 
 | Mais estado no Worker | Quatro tabelas novas e migração 14 | Migração aditiva, fixture v13 e downgrade best-effort |
 | Turno em voo se perde quando o Worker cai | O trabalho em curso é interrompido, sem duplicar despacho | Aviso de falha ao orquestrador, que decide redespachar |
 | A janela comum do opencode depende de correção própria | O 2.2.6 mudou API e flags do comando raiz | Trilha OC, separada da fase 2 |
+| Um despacho em aberto por executor | O orquestrador não empilha trabalho: para despachar de novo precisa do aviso, de `orch.cancel` ou de `orch.interrupt` | `admission` na resposta e no `orch status`, texto da skill e recusa `orch.dispatch_in_flight` com o bloqueante |
 
 ## Documentos do ADR
 
@@ -104,10 +107,10 @@ Os achados 7 e 8 vieram desta revisão, feita só com `--help` e `--version`. A 
 | Correção mínima do opencode na janela comum | [Adaptadores e ciclo de vida do executor](ADR-orchestration-executor-adapters.md) |
 | Fallback por terminal como evolução | [Adaptadores e ciclo de vida do executor](ADR-orchestration-executor-adapters.md) |
 | Ciclo de vida do serviço por executor | [Adaptadores e ciclo de vida do executor](ADR-orchestration-executor-adapters.md) |
-| Ligações e fila de despacho | [Despacho, aviso, autorização e superfície da orquestração](ADR-orchestration-dispatch-and-surface.md) |
+| Ligações e fila de despacho (inclui Admissão por estado e Saúde do executor no DTO) | [Despacho, aviso, autorização e superfície da orquestração](ADR-orchestration-dispatch-and-surface.md) |
 | Supervisor e aviso agregado | [Despacho, aviso, autorização e superfície da orquestração](ADR-orchestration-dispatch-and-surface.md) |
 | Autorização pela credencial da janela | [Despacho, aviso, autorização e superfície da orquestração](ADR-orchestration-dispatch-and-surface.md) |
-| Operações do Control Surface | [Despacho, aviso, autorização e superfície da orquestração](ADR-orchestration-dispatch-and-surface.md) |
+| Operações do Control Surface (inclui Resultados de orch.dispatch, orch.status e orch.spawn) | [Despacho, aviso, autorização e superfície da orquestração](ADR-orchestration-dispatch-and-surface.md) |
 | Comandos orch | [Despacho, aviso, autorização e superfície da orquestração](ADR-orchestration-dispatch-and-surface.md) |
 | Migração SQLite 13 para 14 | [Despacho, aviso, autorização e superfície da orquestração](ADR-orchestration-dispatch-and-surface.md) |
 | Sincronização com o renderer | [Despacho, aviso, autorização e superfície da orquestração](ADR-orchestration-dispatch-and-surface.md) |
@@ -119,22 +122,22 @@ O contexto segue o mesmo DDD com Clean dos demais. As regras de `harness/archite
 
 | Camada | Pasta | Conteúdo | Depende de |
 | --- | --- | --- | --- |
-| Domínio | `src/contexts/orchestration/domain/` | `agentLink.ts` (ligação e invariantes), `dispatch.ts` (máquina de estados pura), `roundPolicy.ts`, `noticeComposer.ts` (agregação, saneamento e corte), `orchestrationAuthorization.ts` (matriz de principal) | `shared` |
-| Aplicação | `src/contexts/orchestration/application/` | `ports/`, casos de uso, `dispatchPump.ts`, `reconcileOnBoot.ts`, `supervisor.ts`, `noticePump.ts` e a fachada `OrchestrationService.ts` | domínio e `shared` |
+| Domínio | `src/contexts/orchestration/domain/` | `agentLink.ts` (ligação e invariantes), `dispatch.ts` (máquina de estados pura), `dispatchAdmission.ts` (admissão por estado), `roundPolicy.ts`, `noticeComposer.ts` (agregação, saneamento e corte), `orchestrationAuthorization.ts` (matriz de principal) | `shared` |
+| Aplicação | `src/contexts/orchestration/application/` | `ports/`, casos de uso, `dispatchPump.ts`, `reconcileOnBoot.ts`, `executorHealth.ts`, `supervisor.ts`, `noticePump.ts` e a fachada `OrchestrationService.ts` | domínio e `shared` |
 | Infraestrutura | `src/contexts/orchestration/infrastructure/` | `codex/` (processo, cliente JSON-RPC, adaptador, comando da TUI, confiança de hooks e `protocol/`), `opencode/` (fase 3) e `persistence/` | aplicação, domínio, `platform` e `shared` |
 | Renderer | `src/contexts/orchestration/presentation/renderer/` | `useOrchestrationLinks.ts` e a loja de ligações | aplicação, domínio e `shared` |
 | Composição e handlers | `src/app/main/controlSurface/orchestration/` e `src/app/main/controlSurface/handlers/orchestrationHandlers.ts` | Implementação das portas que dependem do app, handlers `orch.*` e registro em `registerControlSurfaceHandlers.ts` | tudo, menos renderer |
-| Contratos | `src/shared/contracts/controlSurface/operations/domains/orch.ts` e `src/shared/contracts/dto/orchestration.ts` | Entradas zod, normalize puro, DTOs e erros | `shared` |
+| Contratos | `src/shared/contracts/controlSurface/operations/domains/orch.ts` e `src/shared/contracts/dto/orchestration.ts` | Entradas zod, normalize puro, DTOs, resultados e erros | `shared` |
 | CLI | `src/app/cli/commands/orch.ts` | Grupo `orch` | `shared` |
 
 | Porta | Responsabilidade | Implementação |
 | --- | --- | --- |
 | `ExecutorRuntimeFactory` e `ExecutorRuntime` | Falar com o serviço do executor | `infrastructure/codex` e, na fase 3, `opencode` |
-| `AgentLinkRepository`, `DispatchRepository`, `NoticeOutboxRepository` e `HookApprovalRepository` | Persistência com CAS por `revision` | `infrastructure/persistence` |
+| `AgentLinkRepository`, `DispatchRepository`, `NoticeOutboxRepository` e `HookApprovalRepository` | Persistência com CAS por `revision`; `DispatchRepository` busca o despacho fora de estado final do executor e recusa o segundo com `executor_busy` | `infrastructure/persistence` |
 | `ExecutorNodePort` | Criar o nó ao lado do orquestrador e ler provedor e existência de nós | Composição, sobre o fluxo de `node.create` |
 | `ExecutorTuiLauncher` | Lançar e relançar a TUI no PTY do nó | Composição, sobre o caminho de lançamento de sessão |
 | `OrchestratorDeliveryPort` | Entregar o aviso ao orquestrador | Composição, sobre `PromptDeliveryService` |
-| `OrchestratorReadinessPort` | Dizer se o orquestrador está ocioso | Composição, sobre run state e marca d'água de entrada do `ptyStreamHub` |
+| `OrchestratorReadinessPort` | Dizer se o orquestrador está ocioso (`readReadiness`) e avisar quando ele fica ocioso (`watchReadiness`) | Composição, sobre run state, `AgentRunStateRegistry.subscribe` e marca d'água de entrada do `ptyStreamHub` |
 | `ExecutorRunStateIngress` | Alimentar o run state e o arquivo de turnos | Composição, sobre `AgentRunStateRegistry` |
 | `PortReserver` | Reservar porta de loopback | Composição, sobre `reserveLoopbackPort` |
 | `OrchestrationEventPublisher` | Publicar `orchestration.links.updated` | Composição, sobre `publishSyncEvent` |
@@ -166,23 +169,25 @@ A porta esconde o provedor. O caso de uso só conhece sessão, turno, aprovaçã
 
 | Evento | Campos | Uso |
 | --- | --- | --- |
-| `executor.ready` | `sessionRef`, `resumed`, `version` | Libera a fila |
-| `turn.started` | `turnRef`, `dispatchId?`, `origin` (`glimpse` ou `screen`) | Run state em trabalho; turno vindo da tela segura a fila |
+| `executor.ready` | `sessionRef`, `resumed`, `version` | Libera o despacho `queued`; entra no `health` |
+| `turn.started` | `turnRef`, `dispatchId?`, `origin` (`glimpse` ou `screen`) | Run state em trabalho; turno vindo da tela segura o despacho `queued`; `health` vira `busy` |
 | `turn.completed` | `turnRef`, `dispatchId?`, `outcome` (`completed`, `failed` ou `interrupted`), `finalMessage?`, `usage?` | Fecha o despacho e gera aviso |
 | `approval.requested` | `requestId`, `kind`, resumo e `turnRef` | Interface primeiro e prazo de escalonamento |
 | `approval.resolved` | `requestId`, `resolvedBy` (`screen` ou `glimpse`) | Cancela o prazo |
 | `hooks.trust_pending` | Lista de `key`, evento, origem e `currentHash` | Status e interface |
-| `executor.degraded` | Motivo | Aviso na interface |
-| `executor.down` | Motivo, código de saída e sinal | Despacho em voo vira `uncertain` e o supervisor reinicia |
-| `executor.recovered` | `sessionRef` | Dispara a reconciliação |
+| `executor.degraded` | Motivo | Aviso na interface; `health` vira `degraded` |
+| `executor.down` | Motivo, código de saída e sinal | Despacho em voo vira `uncertain` e o supervisor reinicia; `health` vira `starting` ou `unavailable` |
+| `executor.recovered` | `sessionRef` | Dispara a reconciliação; `health` vira `starting` até o fim dela |
+
+O mapeamento completo dos eventos para o `health` do DTO está em "Saúde do executor no DTO", no ADR de despacho. A ordem de emissão de `executor.ready` e `executor.recovered` no Codex é suposição a confirmar no F2-11.
 
 ### Erros
 
 | Código | Quando | Efeito no despacho |
 | --- | --- | --- |
-| `executor.start_failed` | Spawn, bind ou prontidão falharam depois de 3 tentativas | O despacho fica `queued` até os reinícios se esgotarem |
-| `executor.unavailable` | Processo fora do ar ou reiniciando | A fila espera |
-| `executor.busy` | Turno em curso | A fila espera; o pedido nem chega ao serviço |
+| `executor.start_failed` | Spawn, bind ou prontidão falharam depois de 3 tentativas | O despacho fica `queued` até os reinícios se esgotarem e então vira `failed(not_sent)` com aviso |
+| `executor.unavailable` | Processo fora do ar ou reiniciando | O despacho `queued` espera; a admissão aceita um novo só quando não há outro em aberto |
+| `executor.busy` | Turno em curso | O despacho `queued` espera; o pedido nem chega ao serviço |
 | `executor.rejected` | O serviço recusou `turn/start` antes de aceitar | `failed(not_sent)` com rodada devolvida |
 | `executor.send_uncertain` | Conexão caiu ou prazo esgotou depois da escrita e antes da resposta | `uncertain` |
 | `executor.session_lost` | Resume falhou | Sessão nova só pela política de reuso, com aviso |

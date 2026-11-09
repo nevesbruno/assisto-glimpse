@@ -59,7 +59,7 @@ A causa provável dos hooks `untrusted` na prova é a limpeza legada, que apagav
 2. Hook `trusted` ou `managed` não pede nada.
 3. Hook `untrusted` ou `modified` com aprovação no Glimpse para o mesmo par (`key`, `currentHash`) entra como override por chave, `-c 'hooks.state={"<key>"={trusted_hash="<hash>"}}'`, no próximo início do serviço. Com o executor ocioso, o Worker reinicia o serviço na hora e retoma a thread.
 4. Sem aprovação, o hook não roda. `orch status` e a interface mostram quantos hooks do usuário aguardam confiança, e nada é aprovado sozinho.
-5. Hash diferente invalida a aprovação.
+5. Hash diferente invalida a aprovação. A aprovação é global e vale para o par (`key`, `currentHash`) em qualquer executor, gravada com `eventName`, `sourcePath` e `approvedBy`. Não há revogação nesta fase, e fechar um vínculo não apaga a aprovação.
 
 V3 foi parcial: a forma pontilhada `hooks.state."<key>".trusted_hash` é ignorada, e só a tabela inline funciona. A tabela via `-c` mescla com o `config.toml`, então a confiança do usuário se mantém e o resolvedor da janela comum não precisa mudar.
 
