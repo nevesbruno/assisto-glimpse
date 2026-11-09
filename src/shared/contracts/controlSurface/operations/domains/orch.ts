@@ -65,7 +65,6 @@ export const orchDispatchOperation = defineOperation({
       .optional()
       .describe('Deadline in milliseconds after acceptance; default 30 minutes'),
     fresh: z.boolean().optional().describe('Start a fresh executor session for this dispatch'),
-    allowRepeat: z.boolean().optional().describe('Allow the same text again within 10 minutes'),
   }),
 })
 
@@ -74,7 +73,7 @@ export const orchStatusOperation = defineOperation({
   kind: 'query',
   scope: 'interact',
   availability: 'always',
-  summary: 'Show executor links with health, rounds, queue and pending approvals',
+  summary: 'Show executor links with health, rounds, admission and pending approvals',
   errors: ['orch.forbidden', 'orch.not_linked'],
   input: z.strictObject({ to: executorTarget.optional() }),
 })

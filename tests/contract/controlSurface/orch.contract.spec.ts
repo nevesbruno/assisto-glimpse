@@ -69,11 +69,17 @@ describe('orch.* operations contract (C-02)', () => {
     ).toBe(false)
   })
 
+  it('describes orch.status by admission, not by queue', () => {
+    expect(byId['orch.status'].summary).toContain('admission')
+    expect(byId['orch.status'].summary).not.toMatch(/queue/i)
+  })
+
   it('requires uuid ids and strict objects', () => {
     const ok = { dispatchId: uuid, to: 'exec', text: 'x' }
     expect(byId['orch.dispatch'].input.safeParse(ok).success).toBe(true)
     expect(byId['orch.dispatch'].input.safeParse({ ...ok, dispatchId: 'nope' }).success).toBe(false)
     expect(byId['orch.dispatch'].input.safeParse({ ...ok, extra: 1 }).success).toBe(false)
+    expect(byId['orch.dispatch'].input.safeParse({ ...ok, allowRepeat: true }).success).toBe(false)
     expect(byId['orch.cancel'].input.safeParse({ dispatchId: 'nope' }).success).toBe(false)
     expect(
       byId['orch.spawn'].input.safeParse({ requestId: 'nope', provider: 'codex' }).success,

@@ -92,6 +92,7 @@ const events: Record<string, DispatchEvent> = {
   turn_finished: { type: 'turn_finished', now: later, ...finished },
   turn_absent: { type: 'turn_absent', now: later },
   executor_down: { type: 'executor_down', now: later },
+  executor_unavailable: { type: 'executor_unavailable', now: later },
 }
 
 interface Row {
@@ -105,6 +106,13 @@ interface Row {
 const TABLE: readonly Row[] = [
   { from: 'queued', event: 'reserve', to: 'reserved', reason: null, refund: false },
   { from: 'queued', event: 'cancel', to: 'cancelled', reason: null, refund: true },
+  {
+    from: 'queued',
+    event: 'executor_unavailable',
+    to: 'failed',
+    reason: 'not_sent',
+    refund: true,
+  },
   { from: 'reserved', event: 'service_accepted', to: 'sent', reason: null, refund: false },
   { from: 'reserved', event: 'service_rejected', to: 'failed', reason: 'not_sent', refund: true },
   { from: 'reserved', event: 'send_uncertain', to: 'uncertain', reason: null, refund: false },
@@ -257,13 +265,11 @@ describe('dispatch state machine (U-04)', () => {
   })
 })
 
-describe('dispatch idempotency (D5 and D6)', () => {
+describe('dispatch idempotency (D5)', () => {
   const identity = (overrides = {}) => ({
     id: 'd2',
     executorNodeId: 'exec',
     textSha256: sha256('faça isso'),
-    allowRepeat: false,
-    now: later,
     ...overrides,
   })
 
@@ -281,22 +287,8 @@ describe('dispatch idempotency (D5 and D6)', () => {
     ).toThrowError(expect.objectContaining({ code: 'orch.dispatch_conflict' }))
   })
 
-  it('D6: same content on a non final dispatch within 10 min is a duplicate', () => {
-    const existing = queued()
-    expect(classifyDispatchRequest(identity(), [existing])).toEqual({
-      kind: 'duplicate',
-      dispatch: existing,
-    })
-  })
-
-  it('D6: allowRepeat, final state, other executor or older than 10 min are new', () => {
-    const existing = queued()
-    expect(classifyDispatchRequest(identity({ allowRepeat: true }), [existing]).kind).toBe('new')
+  it('D6: same content with another id is new, whatever the state or the age', () => {
+    expect(classifyDispatchRequest(identity(), [queued()]).kind).toBe('new')
     expect(classifyDispatchRequest(identity(), [reach('completed')]).kind).toBe('new')
-    expect(classifyDispatchRequest(identity({ executorNodeId: 'other' }), [existing]).kind).toBe(
-      'new',
-    )
-    const old = new Date('2026-11-09T12:10:01.000Z')
-    expect(classifyDispatchRequest(identity({ now: old }), [existing]).kind).toBe('new')
   })
 })

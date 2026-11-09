@@ -115,7 +115,8 @@ function createMessageMap(): Record<AppErrorCode, string> {
     'orch.executor_unavailable': 'The executor is unavailable.',
     'orch.round_limit_reached': 'The link reached its round limit. Only the user can extend it.',
     'orch.dispatch_conflict': 'This dispatch id was already used with a different payload.',
-    'orch.dispatch_in_flight': 'A dispatch is in flight. Retry with force to proceed.',
+    'orch.dispatch_in_flight':
+      'The executor already has an open dispatch. Wait for its notice, or cancel it while queued.',
     'orch.limit_reached': 'The executor limit was reached.',
     'orch.protocol_mismatch': 'The executor service version is outside the validated subset.',
     'orch.approval_not_found': 'The approval request was already resolved or does not exist.',

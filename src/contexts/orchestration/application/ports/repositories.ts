@@ -19,7 +19,7 @@ export type InsertLinkResult =
 
 export type InsertDispatchResult =
   | { readonly ok: true; readonly value: Dispatch }
-  | { readonly ok: false; readonly reason: 'id_exists' }
+  | { readonly ok: false; readonly reason: 'id_exists' | 'executor_busy' }
 
 export type UpdateDispatchResult =
   | CasResult<Dispatch>
@@ -47,16 +47,12 @@ export interface DispatchRepository {
   update: (next: Dispatch) => Promise<UpdateDispatchResult>
   findById: (dispatchId: string) => Promise<Dispatch | null>
   findInFlightByExecutor: (executorNodeId: string) => Promise<Dispatch | null>
-  /** FIFO by `createdAt`. */
+  /** The only `queued` dispatch of the executor, since D1 allows one open dispatch. */
   findOldestQueuedByExecutor: (executorNodeId: string) => Promise<Dispatch | null>
   listByLink: (linkId: string) => Promise<readonly Dispatch[]>
   listByStates: (states: readonly DispatchState[]) => Promise<readonly Dispatch[]>
-  /** Non final dispatches of an executor with the same content hash created since the date (D6). */
-  listRecentNonFinalByHash: (
-    executorNodeId: string,
-    textSha256: string,
-    since: Date,
-  ) => Promise<readonly Dispatch[]>
+  /** The dispatch of the executor outside a final state, at most one (D1). */
+  findNonFinalByExecutor: (executorNodeId: string) => Promise<Dispatch | null>
 }
 
 export type NoticeDeliveryState = 'pending' | 'delivered' | 'uncertain'
@@ -91,14 +87,23 @@ export interface NoticeOutboxRepository {
 }
 
 export interface HookApproval {
-  readonly executorNodeId: string
   readonly key: string
-  readonly approvedHash: string
+  /** A different hash is another approval. */
+  readonly currentHash: string
+  readonly eventName: string
+  readonly sourcePath: string
   readonly approvedAt: string
+  readonly approvedBy: string
+}
+
+export interface HookKeyHash {
+  readonly key: string
+  readonly currentHash: string
 }
 
 export interface HookApprovalRepository {
-  list: (executorNodeId: string) => Promise<readonly HookApproval[]>
-  upsertMany: (approvals: readonly HookApproval[]) => Promise<void>
-  deleteByExecutor: (executorNodeId: string) => Promise<void>
+  /** Idempotent: an existing pair keeps its original `approvedAt` and `approvedBy`. */
+  record: (approvals: readonly HookApproval[]) => Promise<void>
+  /** Only approvals that match the exact pair; another hash does not match. */
+  findApproved: (pairs: readonly HookKeyHash[]) => Promise<readonly HookApproval[]>
 }

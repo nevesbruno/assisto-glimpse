@@ -65,6 +65,11 @@ export type OrchestratorReadiness =
 
 export interface OrchestratorReadinessPort {
   readReadiness: (orchestratorNodeId: string) => Promise<OrchestratorReadiness>
+  /** Notifies every readiness change of the orchestrator; returns the canceller. */
+  watchReadiness: (
+    orchestratorNodeId: string,
+    listener: (readiness: OrchestratorReadiness) => void,
+  ) => () => void
 }
 
 export interface TurnStartedRecord {

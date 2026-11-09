@@ -241,7 +241,7 @@ export const agentLinks = sqliteTable(
   {
     id: text('id').primaryKey(),
     projectId: text('project_id').notNull(),
-    spaceId: text('space_id'),
+    spaceId: text('space_id').notNull(),
     orchestratorNodeId: text('orchestrator_node_id').notNull(),
     executorNodeId: text('executor_node_id').notNull(),
     kind: text('kind').notNull().default('executor'),
@@ -294,7 +294,7 @@ export const orchestrationDispatches = sqliteTable(
     text: text('text'),
     textSha256: text('text_sha256').notNull(),
     textBytes: integer('text_bytes').notNull(),
-    deadlineAt: text('deadline_at'),
+    deadlineAt: text('deadline_at').notNull(),
     turnRef: text('turn_ref'),
     glimpseTurnId: text('glimpse_turn_id'),
     outcome: text('outcome'),
@@ -307,9 +307,9 @@ export const orchestrationDispatches = sqliteTable(
     revision: integer('revision').notNull().default(1),
   },
   table => ({
-    inFlightExecutorIdx: uniqueIndex('orchestration_dispatches_in_flight_executor_unique_idx')
+    openExecutorIdx: uniqueIndex('orchestration_dispatches_open_executor_unique_idx')
       .on(table.executorNodeId)
-      .where(sql`state IN ('reserved', 'sent', 'uncertain')`),
+      .where(sql`state IN ('queued', 'reserved', 'sent', 'uncertain')`),
     executorStateCreatedIdx: index('orchestration_dispatches_executor_state_created_idx').on(
       table.executorNodeId,
       table.state,

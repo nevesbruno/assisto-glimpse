@@ -63,6 +63,7 @@ function link(raw: DatabaseSync, values: Record<string, SqlValue>): void {
   insert(raw, 'agent_links', {
     id: `link-${sequence}`,
     project_id: 'project-1',
+    space_id: 'space-1',
     orchestrator_node_id: 'orchestrator-1',
     executor_node_id: 'executor-1',
     provider: 'codex',
@@ -82,6 +83,7 @@ function dispatch(raw: DatabaseSync, values: Record<string, SqlValue>): void {
     round: 1,
     text_sha256: 'hash',
     text_bytes: 4,
+    deadline_at: 'later',
     created_at: 'now',
     ...values,
   })
@@ -95,6 +97,13 @@ describe('persistence schema 14 for orchestration (C-01)', () => {
   afterEach(() => {
     open?.close()
     open = null
+  })
+
+  it('refuses a link without space_id and a dispatch without deadline_at', () => {
+    const { raw } = openMigrated()
+
+    expect(() => link(raw, { space_id: null })).toThrow(/NOT NULL/)
+    expect(() => dispatch(raw, { deadline_at: null })).toThrow(/NOT NULL/)
   })
 
   it('creates the four tables with the documented columns and the revision key', () => {
@@ -144,20 +153,111 @@ describe('persistence schema 14 for orchestration (C-01)', () => {
     link(raw, { state: 'closed' })
   })
 
-  it('refuses a second in-flight dispatch per executor and ignores queued and final states', () => {
+  it('refuses a second open dispatch per executor, queued included, and ignores final states', () => {
     const { raw } = openMigrated()
 
     dispatch(raw, { state: 'queued' })
-    dispatch(raw, { state: 'queued' })
-    dispatch(raw, { state: 'completed' })
-    dispatch(raw, { state: 'reserved' })
-    for (const state of ['reserved', 'sent', 'uncertain']) {
+    for (const state of ['queued', 'reserved', 'sent', 'uncertain']) {
       expect(() => dispatch(raw, { state })).toThrow(/UNIQUE/)
     }
+    dispatch(raw, { state: 'completed' })
+    dispatch(raw, { state: 'cancelled' })
+    dispatch(raw, { state: 'failed' })
     dispatch(raw, { executor_node_id: 'executor-2', state: 'sent' })
 
-    raw.exec(`UPDATE orchestration_dispatches SET state = 'failed' WHERE state = 'reserved'`)
-    dispatch(raw, { state: 'sent' })
+    raw.exec(`UPDATE orchestration_dispatches SET state = 'cancelled' WHERE state = 'queued'`)
+    dispatch(raw, { state: 'reserved' })
+    expect(() => dispatch(raw, { state: 'queued' })).toThrow(/UNIQUE/)
+  })
+
+  it('names the index orchestration_dispatches_open_executor_unique_idx and drops the old one', () => {
+    const { raw } = openMigrated()
+    const names = (
+      raw.prepare(`SELECT name FROM sqlite_master WHERE type = 'index'`).all() as {
+        name: string
+      }[]
+    ).map(row => row.name)
+
+    expect(names).toContain('orchestration_dispatches_open_executor_unique_idx')
+    expect(names).not.toContain('orchestration_dispatches_in_flight_executor_unique_idx')
+  })
+
+  describe('repair of a development database 14 that still has the old index', () => {
+    function openOldIndexDb() {
+      const handles = openMigrated()
+      handles.raw.exec(`
+        DROP INDEX orchestration_dispatches_open_executor_unique_idx;
+        CREATE UNIQUE INDEX orchestration_dispatches_in_flight_executor_unique_idx
+          ON orchestration_dispatches (executor_node_id)
+          WHERE state IN ('reserved', 'sent', 'uncertain');
+      `)
+      return handles
+    }
+
+    const states = (raw: DatabaseSync) =>
+      raw
+        .prepare('SELECT id, state, text, revision FROM orchestration_dispatches ORDER BY id')
+        .all()
+
+    it('keeps the oldest queued per executor, cancels the rest and returns their rounds', () => {
+      const { raw, db } = openOldIndexDb()
+      link(raw, { id: 'link-a', rounds_used: 3 })
+      dispatch(raw, { id: 'a1', link_id: 'link-a', state: 'queued', created_at: '1', text: 't' })
+      dispatch(raw, { id: 'a2', link_id: 'link-a', state: 'queued', created_at: '2', text: 't' })
+      dispatch(raw, { id: 'a3', link_id: 'link-a', state: 'queued', created_at: '3', text: 't' })
+
+      expect(() => migrate(db)).not.toThrow()
+
+      expect(states(raw)).toEqual([
+        { id: 'a1', state: 'queued', text: 't', revision: 1 },
+        { id: 'a2', state: 'cancelled', text: null, revision: 2 },
+        { id: 'a3', state: 'cancelled', text: null, revision: 2 },
+      ])
+      expect(raw.prepare(`SELECT rounds_used, revision FROM agent_links`).get()).toEqual({
+        rounds_used: 1,
+        revision: 2,
+      })
+      expect(
+        raw.prepare(`SELECT value FROM app_meta WHERE key = 'orchestration_links_revision'`).get(),
+      ).toEqual({ value: '1' })
+      expect(() => dispatch(raw, { state: 'queued' })).toThrow(/UNIQUE/)
+    })
+
+    it('cancels every queued dispatch of an executor that already has one in flight', () => {
+      const { raw, db } = openOldIndexDb()
+      link(raw, { id: 'link-a', rounds_used: 2 })
+      dispatch(raw, { id: 'a1', link_id: 'link-a', state: 'sent', created_at: '1' })
+      dispatch(raw, { id: 'a2', link_id: 'link-a', state: 'queued', created_at: '2', text: 't' })
+
+      migrate(db)
+
+      expect(states(raw).map(row => (row as { state: string }).state)).toEqual([
+        'sent',
+        'cancelled',
+      ])
+      expect(raw.prepare(`SELECT rounds_used FROM agent_links`).get()).toEqual({ rounds_used: 1 })
+    })
+
+    it('is idempotent and leaves a clean database alone', () => {
+      const { raw, db } = openOldIndexDb()
+      link(raw, { id: 'link-a', rounds_used: 2 })
+      dispatch(raw, { id: 'a1', link_id: 'link-a', state: 'queued', created_at: '1' })
+      dispatch(raw, { id: 'a2', link_id: 'link-a', state: 'queued', created_at: '2' })
+
+      migrate(db)
+      const once = [
+        schemaSnapshot(raw),
+        states(raw),
+        raw.prepare('SELECT * FROM agent_links').all(),
+      ]
+      migrate(db)
+
+      expect([
+        schemaSnapshot(raw),
+        states(raw),
+        raw.prepare('SELECT * FROM agent_links').all(),
+      ]).toEqual(once)
+    })
   })
 
   it('makes spawn_request_id unique per orchestrator and lets null repeat', () => {

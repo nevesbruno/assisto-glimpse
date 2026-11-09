@@ -15,7 +15,6 @@ export type DispatchOutcome = 'completed' | 'failed' | 'interrupted'
 
 export const DISPATCH_TEXT_MAX_BYTES = 32_768
 export const DEFAULT_DEADLINE_MS = 30 * 60_000
-export const CONTENT_DEDUPE_WINDOW_MS = 10 * 60_000
 
 const FINAL_STATES: readonly DispatchState[] = ['completed', 'failed', 'cancelled']
 
@@ -148,6 +147,7 @@ export type DispatchEvent =
   | TurnFinishedEvent
   | { readonly type: 'turn_absent'; readonly now: Date }
   | { readonly type: 'executor_down'; readonly now: Date }
+  | { readonly type: 'executor_unavailable'; readonly now: Date }
 
 export interface DispatchTransition {
   readonly dispatch: Dispatch
@@ -233,6 +233,8 @@ function applyEvent(dispatch: Dispatch, event: DispatchEvent): DispatchTransitio
       return state === 'uncertain'
         ? refund(finish(dispatch, 'failed', 'not_sent', event.now))
         : null
+    case 'executor_unavailable':
+      return state === 'queued' ? refund(finish(dispatch, 'failed', 'not_sent', event.now)) : null
     case 'executor_down':
       return state === 'uncertain' || state === 'sent'
         ? keep(finish(dispatch, 'failed', 'executor_down', event.now))
@@ -259,8 +261,6 @@ export interface DispatchRequestIdentity {
   readonly id: string
   readonly executorNodeId: string
   readonly textSha256: string
-  readonly allowRepeat: boolean
-  readonly now: Date
 }
 
 export type DispatchRequestClassification =
@@ -281,16 +281,5 @@ export function classifyDispatchRequest(
     }
     return { kind: 'duplicate', dispatch: sameId }
   }
-  if (request.allowRepeat) {
-    return { kind: 'new' }
-  }
-  const since = request.now.getTime() - CONTENT_DEDUPE_WINDOW_MS
-  const repeated = existing.find(
-    dispatch =>
-      dispatch.executorNodeId === request.executorNodeId &&
-      dispatch.textSha256 === request.textSha256 &&
-      !isFinalDispatchState(dispatch.state) &&
-      Date.parse(dispatch.createdAt) >= since,
-  )
-  return repeated ? { kind: 'duplicate', dispatch: repeated } : { kind: 'new' }
+  return { kind: 'new' }
 }

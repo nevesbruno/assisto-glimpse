@@ -2,11 +2,49 @@ import type Database from 'better-sqlite3'
 
 export const ORCHESTRATION_LINKS_REVISION_KEY = 'orchestration_links_revision'
 
+/**
+ * Development databases of schema 14 may hold the previous index, which let a queued dispatch
+ * coexist with an open one. Per executor the in-flight dispatch wins, else the oldest queued one;
+ * the surplus queued dispatches are cancelled and their rounds returned. A no-op on a clean base.
+ */
+function surplusQueued(alias: string): string {
+  return `${alias}.state = 'queued' AND EXISTS (
+    SELECT 1 FROM orchestration_dispatches o
+    WHERE o.executor_node_id = ${alias}.executor_node_id AND o.id <> ${alias}.id AND (
+      o.state IN ('reserved', 'sent', 'uncertain') OR
+      (o.state = 'queued' AND (
+        o.created_at < ${alias}.created_at OR (o.created_at = ${alias}.created_at AND o.id < ${alias}.id)
+      ))
+    )
+  )`
+}
+
+const OPEN_DISPATCH_REPAIR_SQL = `
+  DROP INDEX IF EXISTS orchestration_dispatches_in_flight_executor_unique_idx;
+  UPDATE app_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
+    WHERE key = '${ORCHESTRATION_LINKS_REVISION_KEY}'
+      AND EXISTS (SELECT 1 FROM orchestration_dispatches s WHERE ${surplusQueued('s')});
+  UPDATE agent_links SET
+    rounds_used = MAX(0, rounds_used - (
+      SELECT COUNT(*) FROM orchestration_dispatches s
+      WHERE s.link_id = agent_links.id AND ${surplusQueued('s')}
+    )),
+    revision = revision + 1
+    WHERE EXISTS (
+      SELECT 1 FROM orchestration_dispatches s
+      WHERE s.link_id = agent_links.id AND ${surplusQueued('s')}
+    );
+  UPDATE orchestration_dispatches SET
+    state = 'cancelled', text = NULL, revision = revision + 1,
+    finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE ${surplusQueued('orchestration_dispatches')};
+`
+
 const ORCHESTRATION_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS agent_links (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
-    space_id TEXT,
+    space_id TEXT NOT NULL,
     orchestrator_node_id TEXT NOT NULL,
     executor_node_id TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'executor',
@@ -43,7 +81,7 @@ const ORCHESTRATION_TABLES_SQL = `
     text TEXT,
     text_sha256 TEXT NOT NULL,
     text_bytes INTEGER NOT NULL,
-    deadline_at TEXT,
+    deadline_at TEXT NOT NULL,
     turn_ref TEXT,
     glimpse_turn_id TEXT,
     outcome TEXT,
@@ -86,8 +124,10 @@ const ORCHESTRATION_TABLES_SQL = `
     ON agent_links (orchestrator_node_id, spawn_request_id);
   CREATE INDEX IF NOT EXISTS agent_links_orchestrator_state_idx
     ON agent_links (orchestrator_node_id, state);
-  CREATE UNIQUE INDEX IF NOT EXISTS orchestration_dispatches_in_flight_executor_unique_idx
-    ON orchestration_dispatches (executor_node_id) WHERE state IN ('reserved', 'sent', 'uncertain');
+  ${OPEN_DISPATCH_REPAIR_SQL}
+  CREATE UNIQUE INDEX IF NOT EXISTS orchestration_dispatches_open_executor_unique_idx
+    ON orchestration_dispatches (executor_node_id)
+    WHERE state IN ('queued', 'reserved', 'sent', 'uncertain');
   CREATE INDEX IF NOT EXISTS orchestration_dispatches_executor_state_created_idx
     ON orchestration_dispatches (executor_node_id, state, created_at);
   CREATE INDEX IF NOT EXISTS orchestration_dispatches_link_idx
