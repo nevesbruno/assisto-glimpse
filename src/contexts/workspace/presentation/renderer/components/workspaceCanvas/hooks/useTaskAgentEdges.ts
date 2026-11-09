@@ -2,14 +2,19 @@ import { useMemo } from 'react'
 import { MarkerType, type Edge, type Node } from '@xyflow/react'
 import { useTranslation } from '@app/renderer/i18n'
 import type { TerminalNodeData } from '../../../types'
+import type { OrchestrationLinkDto } from '@shared/contracts/dto/orchestration'
 import { isAgentWorking } from '../helpers'
 
 export function resolveWorkspaceCanvasAgentEdges({
   nodes,
+  links = [],
   formatRoleEdgeLabel,
+  formatLinkDegradedLabel = () => '',
 }: {
   nodes: Node<TerminalNodeData>[]
+  links?: OrchestrationLinkDto[]
   formatRoleEdgeLabel: (roleName: string) => string
+  formatLinkDegradedLabel?: () => string
 }): Edge[] {
   const nodeById = new Map(nodes.map(node => [node.id, node]))
   const taskEdges = nodes
@@ -107,16 +112,69 @@ export function resolveWorkspaceCanvasAgentEdges({
       ]
     })
 
-  return [...taskEdges, ...roleEdges]
+  const linkEdges = links
+    .filter(link => link.state === 'active')
+    .flatMap(link => {
+      const orchestratorNode = nodeById.get(link.orchestratorNodeId)
+      const executorNode = nodeById.get(link.executorNodeId)
+      if (!orchestratorNode || !executorNode) {
+        return []
+      }
+
+      const isDegraded = link.health === 'unavailable'
+      const isWorking = isAgentWorking(executorNode.data.status)
+      const variant = isDegraded ? 'degraded' : isWorking ? 'active' : 'idle'
+      const markerColor = isWorking ? 'rgba(121, 197, 255, 0.95)' : 'rgba(130, 168, 214, 0.78)'
+      const degradedLabel = isDegraded ? formatLinkDegradedLabel() : ''
+
+      return [
+        {
+          id: `orch-link-${link.id}`,
+          source: orchestratorNode.id,
+          target: executorNode.id,
+          type: 'default',
+          animated: isWorking,
+          className: `workspace-orchestration-edge workspace-orchestration-edge--${variant}`,
+          selectable: false,
+          focusable: false,
+          ...(degradedLabel
+            ? {
+                label: degradedLabel,
+                labelStyle: { fill: 'var(--cove-text)', fontSize: 11, fontWeight: 600 },
+                labelBgPadding: [6, 4] as [number, number],
+                labelBgBorderRadius: 5,
+                labelBgStyle: {
+                  fill: 'var(--cove-surface-strong)',
+                  fillOpacity: 0.92,
+                  stroke: 'rgba(130, 168, 214, 0.35)',
+                },
+              }
+            : {}),
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: markerColor,
+            width: 22,
+            height: 22,
+          },
+        },
+      ]
+    })
+
+  return [...taskEdges, ...roleEdges, ...linkEdges]
 }
 
-export function useWorkspaceCanvasTaskAgentEdges(nodes: Node<TerminalNodeData>[]): Edge[] {
+export function useWorkspaceCanvasTaskAgentEdges(
+  nodes: Node<TerminalNodeData>[],
+  links: OrchestrationLinkDto[] = [],
+): Edge[] {
   const { t } = useTranslation()
 
   return useMemo(() => {
     return resolveWorkspaceCanvasAgentEdges({
       nodes,
+      links,
       formatRoleEdgeLabel: roleName => t('roleNode.edgeLabel', { role: roleName }),
+      formatLinkDegradedLabel: () => t('orchestration.link.degradedLabel'),
     })
-  }, [nodes, t])
+  }, [nodes, links, t])
 }

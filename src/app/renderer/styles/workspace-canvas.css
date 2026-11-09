@@ -359,6 +359,31 @@
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--cove-label-green) 38%, transparent));
 }
 
+.workspace-canvas .workspace-orchestration-edge .react-flow__edge-path {
+  stroke: color-mix(in srgb, var(--cove-label-blue) 72%, transparent);
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--cove-label-blue) 45%, transparent));
+}
+
+.workspace-canvas .workspace-orchestration-edge--active .react-flow__edge-path {
+  stroke: color-mix(in srgb, var(--cove-label-blue) 88%, var(--cove-text));
+  stroke-dasharray: 7 3;
+  animation: workspace-task-cable-flow 0.9s linear infinite;
+}
+
+.workspace-canvas .workspace-orchestration-edge--idle .react-flow__edge-path,
+.workspace-canvas .workspace-orchestration-edge--degraded .react-flow__edge-path {
+  stroke: color-mix(in srgb, var(--cove-label-blue) 54%, var(--cove-text-muted));
+}
+
+.workspace-canvas .workspace-orchestration-edge--degraded .react-flow__edge-path {
+  stroke-dasharray: 2 5;
+}
+
+.workspace-canvas .workspace-orchestration-edge .react-flow__arrowhead {
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--cove-label-blue) 45%, transparent));
+}
+
 @keyframes workspace-task-cable-flow {
   to {
     stroke-dashoffset: -20;

@@ -9,6 +9,7 @@ import { enWebsiteNode } from './en.websiteNode'
 import { enIssueReport } from './en.issueReport'
 import { enPerformanceMonitor } from './en.performanceMonitor'
 import { enRole } from './en.role'
+import { enOrchestration } from './en.orchestration'
 import { enWorkspaceCanvas } from './en.workspaceCanvas'
 import { enSidebarView } from './en.sidebarView'
 import { enSidebarRail } from './en.sidebarRail'
@@ -467,6 +468,7 @@ export const en = {
     hideAdvanced: 'Hide Advanced',
   },
   ...enRole,
+  ...enOrchestration,
   taskPromptTemplates: {
     openMenu: 'Prompt templates',
     globalSection: 'Global Templates',

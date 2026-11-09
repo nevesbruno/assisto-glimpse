@@ -14,6 +14,7 @@ import {
 } from '@contexts/workspace/presentation/renderer/utils/persistence'
 import { stripLocalViewStateFromPersistedState } from '@contexts/workspace/presentation/renderer/utils/persistence/viewState'
 import { useAppStore } from '../store/useAppStore'
+import { orchestrationLinks } from '@contexts/orchestration/presentation/renderer/orchestrationLinksStore'
 import { canonicalContent } from '@shared/sync/mergeValue'
 import type { SyncEventPayload } from '@shared/contracts/dto'
 import { toShellWorkspaceStateForSync } from './workerSync/mergeWorkspaceStateForSync'
@@ -219,6 +220,12 @@ export function useWorkerSyncStateUpdates(options: { enabled: boolean }): void {
               typeof event.revision === 'number' && Number.isFinite(event.revision)
                 ? Math.floor(event.revision)
                 : null
+
+            // The link mirror is display-only and read apart from the app-state refresh below.
+            orchestrationLinks.handleSyncEvent(event)
+            if (event.type === 'orchestration.links.updated') {
+              return
+            }
 
             if (event.type === 'canvas.focus') {
               const store = useAppStore.getState()

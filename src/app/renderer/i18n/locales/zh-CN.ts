@@ -20,6 +20,7 @@ import { zhCNWebsiteNode } from './zh-CN.websiteNode'
 import { zhCNIssueReport } from './zh-CN.issueReport'
 import { zhCNPerformanceMonitor } from './zh-CN.performanceMonitor'
 import { zhCNRole } from './zh-CN.role'
+import { zhCNOrchestration } from './zh-CN.orchestration'
 import { zhCNWorkspaceCanvas } from './zh-CN.workspaceCanvas'
 
 export const zhCN = {
@@ -458,6 +459,7 @@ export const zhCN = {
     hideAdvanced: '隐藏高级设置',
   },
   ...zhCNRole,
+  ...zhCNOrchestration,
   taskPromptTemplates: {
     openMenu: '提示词模板',
     globalSection: '全局模板',

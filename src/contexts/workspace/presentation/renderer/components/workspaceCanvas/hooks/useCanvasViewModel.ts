@@ -7,6 +7,7 @@ import {
   resolveTaskTitleProvider,
   type AgentSettings,
 } from '@contexts/settings/domain/agentSettings'
+import { useOrchestrationLinks } from '@contexts/orchestration/presentation/renderer/useOrchestrationLinks'
 import type { TerminalNodeData, WorkspaceSpaceState } from '../../../types'
 import { useWorkspaceCanvasTaskAgentEdges } from './useTaskAgentEdges'
 import { useWorkspaceCanvasViewportMoveEnd } from './useViewportMoveEnd'
@@ -64,7 +65,8 @@ export function useWorkspaceCanvasViewModel({
   })
   const minimapNodeColor = resolveWorkspaceMinimapNodeColor
 
-  const taskAgentEdges = useWorkspaceCanvasTaskAgentEdges(flowNodes)
+  const orchestrationLinks = useOrchestrationLinks()
+  const taskAgentEdges = useWorkspaceCanvasTaskAgentEdges(flowNodes, orchestrationLinks)
 
   const spaceUi = useWorkspaceCanvasSpaceUi({
     contextMenu,
