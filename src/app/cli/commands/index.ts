@@ -2,6 +2,7 @@ import { agentHistoryClearCommand } from './agentHistory'
 import type { GetSpaceResult } from '../../../shared/contracts/dto'
 import { agentDeliveryCommand } from './agentDelivery'
 import { agentPromptCommand } from './agent'
+import { orchCommands } from './orch'
 import { agentQueryCommands } from './agentQueries'
 import { skillCommand } from '../skill/command'
 import { declaredOutput } from './declaredOutput'
@@ -29,6 +30,7 @@ export const commands: Command[] = [
   agentHistoryClearCommand,
   ...agentQueryCommands,
   skillCommand,
+  ...orchCommands,
   ...nodeCommands,
   ...lifecycleCommands,
   ptyAttach,
