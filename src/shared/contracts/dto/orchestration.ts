@@ -102,3 +102,104 @@ export type OrchestrationLinkDto = z.infer<typeof orchestrationLinkDtoSchema>
 export type OrchestrationLinksMirror = z.infer<typeof orchestrationLinksMirrorSchema>
 export type OrchestrationDispatchState = z.infer<typeof orchestrationDispatchStateSchema>
 export type OrchestrationLinkHealth = z.infer<typeof orchestrationLinkHealthSchema>
+
+const roundSchema = z.number().int().min(1)
+const countSchema = z.number().int().min(0)
+
+export const orchestrationDispatchFailureReasonSchema = z.enum([
+  'not_sent',
+  'executor_down',
+  'turn_failed',
+  'interrupted',
+])
+export const orchestrationDispatchOutcomeSchema = z.enum(['completed', 'failed', 'interrupted'])
+export const orchestrationAdmissionReasonSchema = z.enum([
+  'round_limit_reached',
+  'executor_unavailable',
+  'dispatch_in_flight',
+])
+
+export const orchestrationBlockingDispatchSchema = z.strictObject({
+  dispatchId: z.uuid(),
+  state: z.enum(['queued', 'reserved', 'sent', 'uncertain']),
+  round: roundSchema,
+})
+
+export const orchestrationAdmissionSchema = z
+  .strictObject({
+    canDispatch: z.boolean(),
+    reason: orchestrationAdmissionReasonSchema.nullable(),
+    blocking: orchestrationBlockingDispatchSchema.nullable(),
+    willWait: z.boolean(),
+  })
+  .refine(a => a.canDispatch === (a.reason === null), 'reason is null if and only if canDispatch')
+  .refine(a => !a.willWait || a.canDispatch, 'willWait requires canDispatch')
+  .refine(
+    a => (a.blocking !== null) === (a.reason === 'dispatch_in_flight'),
+    'blocking exists if and only if reason is dispatch_in_flight',
+  )
+
+export const orchestrationDispatchAcceptedSchema = z.strictObject({
+  dispatchId: z.uuid(),
+  state: orchestrationDispatchStateSchema,
+  round: roundSchema,
+  roundsLimit: roundSchema,
+})
+
+export const orchestrationDispatchViewSchema = z
+  .strictObject({
+    dispatchId: z.uuid(),
+    state: orchestrationDispatchStateSchema,
+    round: roundSchema,
+    reason: orchestrationDispatchFailureReasonSchema.nullable(),
+    outcome: orchestrationDispatchOutcomeSchema.nullable(),
+    createdAt: z.string().min(1),
+    deadlineAt: z.string().min(1),
+    finishedAt: z.string().min(1).nullable(),
+  })
+  .refine(
+    v => (v.reason !== null) === (v.state === 'failed'),
+    'reason exists if and only if state is failed',
+  )
+
+export const orchestrationDispatchResultSchema = orchestrationDispatchAcceptedSchema.extend({
+  duplicate: z.boolean(),
+  admission: orchestrationAdmissionSchema,
+})
+
+export const orchestrationSpawnResultSchema = z.strictObject({
+  executorNodeId: z.string().min(1),
+  linkId: z.uuid(),
+  runtimeMode: orchestrationRuntimeModeSchema,
+  duplicate: z.boolean(),
+  dispatch: orchestrationDispatchAcceptedSchema.nullable(),
+  admission: orchestrationAdmissionSchema,
+})
+
+export const orchestrationStatusLinkSchema = z.strictObject({
+  linkId: z.uuid(),
+  executorNodeId: z.string().min(1),
+  title: z.string(),
+  provider: z.string().min(1),
+  runtimeMode: orchestrationRuntimeModeSchema,
+  health: orchestrationLinkHealthSchema,
+  roundsUsed: countSchema,
+  roundsLimit: roundSchema,
+  admission: orchestrationAdmissionSchema,
+  current: orchestrationDispatchViewSchema.nullable(),
+  last: orchestrationDispatchViewSchema.nullable(),
+  pendingApprovals: countSchema,
+  pendingHooks: countSchema,
+  notices: z.strictObject({ pending: countSchema, uncertain: countSchema }),
+})
+
+export const orchestrationStatusResultSchema = z.strictObject({
+  linksRevision: countSchema,
+  links: z.array(orchestrationStatusLinkSchema),
+})
+
+export type OrchestrationAdmission = z.infer<typeof orchestrationAdmissionSchema>
+export type OrchestrationDispatchView = z.infer<typeof orchestrationDispatchViewSchema>
+export type OrchestrationDispatchResult = z.infer<typeof orchestrationDispatchResultSchema>
+export type OrchestrationSpawnResult = z.infer<typeof orchestrationSpawnResultSchema>
+export type OrchestrationStatusResult = z.infer<typeof orchestrationStatusResultSchema>
