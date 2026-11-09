@@ -33,6 +33,7 @@ import { registerSyncHandlers } from './handlers/syncHandlers'
 import { registerTopologyHandlers } from './handlers/topologyHandlers'
 import { registerAuthHandlers } from './handlers/authHandlers'
 import { registerNodeControlHandlers } from './handlers/nodeControlHandlers'
+import { registerOrchestrationProvisionalHandlers } from './handlers/orchestrationProvisionalHandlers'
 import { registerPluginHandlers } from './handlers/pluginHandlers'
 import { registerPluginCommandHandlers } from './handlers/pluginCommandHandlers'
 import type { EndpointHealthService } from './topology/endpointHealthService'
@@ -165,6 +166,7 @@ export function registerControlSurfaceHandlers(
     closeWebsiteNode: deps.closeWebsiteNode,
     closePluginNode: nodeId => deps.plugins.closeNodeViews(nodeId),
   })
+  registerOrchestrationProvisionalHandlers(controlSurface)
   registerPluginHostHandlers(controlSurface, deps)
   registerPluginHandlers(controlSurface, deps.plugins, deps.pluginDistribution)
   registerPluginCommandHandlers(controlSurface, {
