@@ -1,6 +1,6 @@
 # Riscos e testes da orquestração
 
-Matriz de riscos e testes obrigatórios da fase 2 do [ADR da orquestração](ADR-orchestration-executor-service.md). Cada teste tem um id estável, citado como critério de aceite na [partição da fase 2](ORCHESTRATION_PHASE2_CARDS.md). Onde o texto diz opencode, vale a v2, que na máquina do Bruno passa a ser a única instalada, chamada como `opencode`.
+Matriz de riscos e testes obrigatórios da fase 2 do [ADR da orquestração](ADR-orchestration-executor-service.md) ([adaptadores](ADR-orchestration-executor-adapters.md) e [despacho e superfície](ADR-orchestration-dispatch-and-surface.md)). Cada teste tem um id estável, citado como critério de aceite na [partição da fase 2](ORCHESTRATION_PHASE2_CARDS.md). Onde o texto diz opencode, vale a v2, que na máquina do Bruno passa a ser a única instalada, chamada como `opencode`.
 
 ## Matriz de riscos
 
@@ -59,7 +59,7 @@ Os dois cenários pedidos no plano, reinício do Worker no meio do despacho e mo
 | U-06 | Supervisor e entrega | Janela de 2 s com relógio falso; entrega só com run state ocioso e fresco, sem entrega em voo, sem aprovação aberta e 10 s sem digitação; recusa por ocupação mantém o lote; travado vira `uncertain` sem reenvio; evento durante entrega vai para o lote seguinte; aviso de aprovação aos 120 s uma vez; marca d'água de entrada do PTY | F2-12 |
 | U-07 | Processo do app-server | Argumentos do comando do ADR com o hash e nunca o token; ambiente sem `OPENCOVE_*`; até 3 portas novas se o bind falhar; prontidão em 10 s; encerramento com SIGTERM, 3 s e SIGKILL | F2-06 |
 | U-08 | Cliente JSON-RPC | Correlação de ids; request do servidor separado de notificação; fronteira do envio (falha antes da escrita dá `rejected`, depois dela dá `send_uncertain`); -32601 para método desconhecido; até 3 reconexões com o mesmo token; métodos de escrita de config recusados antes do socket | F2-06 |
-| U-09 | Autorização | Matriz do ADR para cada principal (usuário, orquestrador ligado, orquestrador sem ligação, executor e janela comum) em cada operação; `orch.not_linked` igual para nó inexistente e nó alheio (A4); `admin` fora do alcance do grant (A6); `orch.use_dispatch` (A7) | F2-01, F2-08 |
+| U-09 | Autorização | Matriz do ADR para cada principal (usuário, orquestrador ligado, orquestrador sem ligação, executor e janela comum) em cada operação; `orch.not_linked` igual para nó inexistente e nó alheio (A4); `admin` fora do alcance do grant (A6); `orch.use_dispatch` (A7) para `agent.prompt` e `session.writeNode`, no teste de unidade, além do I-01 | F2-01, F2-08 |
 | U-10 | Seta no canvas | Uma aresta por ligação ativa; animação com o executor trabalhando; aresta some ao fechar; nenhuma duplicação com a aresta tarefa-agente; aresta não selecionável | F2-10 |
 | U-11 | Alerta de executor parado | Espera com motivo `permission` em executor ligado dispara o alerta uma vez, com nome e resumo; `unavailable` também; agente comum em espera segue sem alerta; "precisa de você" até a pendência acabar; repetição desligada por padrão e, ligada, no intervalo escolhido até a pendência acabar | F2-17 |
 

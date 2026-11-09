@@ -1,6 +1,6 @@
 # Partição da fase 2 da orquestração
 
-Cards pequenos para entregar a fase 2 do [ADR da orquestração](ADR-orchestration-executor-service.md), com o Codex como executor. Cada arquivo tem um card dono por onda, e dois cards da mesma onda nunca tocam o mesmo arquivo. Os testes citados por id (U, C, I, E) estão em [Riscos e testes](ORCHESTRATION_RISKS_AND_TESTS.md).
+Cards pequenos para entregar a fase 2 do [ADR da orquestração](ADR-orchestration-executor-service.md) ([adaptadores](ADR-orchestration-executor-adapters.md) e [despacho e superfície](ADR-orchestration-dispatch-and-surface.md)), com o Codex como executor. Cada arquivo tem um card dono por onda, e dois cards da mesma onda nunca tocam o mesmo arquivo. Os testes citados por id (U, C, I, E) estão em [Riscos e testes](ORCHESTRATION_RISKS_AND_TESTS.md).
 
 Critério de aceite da fase, vindo do plano: o Claude Code cria dois executores Codex, despacha, recebe um aviso agregado, lê o resultado e encerra, sem clique. Reiniciar o Glimpse no meio não duplica despacho, e executor morto vira aviso de falha.
 
@@ -117,15 +117,14 @@ Aceite verificável:
 | Objetivo | Declarar as doze operações `orch.*`, os erros, os DTOs e o evento `orchestration.links.updated` |
 | Papel | dev-backend |
 | Depende de | Nenhum |
-| Arquivos donos | `src/shared/contracts/controlSurface/operations/domains/orch.ts`, `src/shared/contracts/dto/orchestration.ts`, `src/shared/contracts/controlSurface/operations/registry.ts`, `src/shared/contracts/dto/sync.ts`, `src/shared/contracts/persistedAppState.ts` e os arquivos de `src/shared/sync/` que o campo do espelho de ligações tocar; `tests/contract/controlSurface/orch.contract.spec.ts` e `tests/unit/contexts/controlSurface.operations.spec.ts` |
+| Arquivos donos | `src/shared/contracts/controlSurface/operations/domains/orch.ts`, `src/shared/contracts/dto/orchestration.ts`, `src/shared/contracts/dto/error.ts`, `src/shared/errors/appError.ts`, `src/shared/contracts/dto/sync.ts`, `src/shared/contracts/persistedAppState.ts`, `src/shared/sync/persistedAppStateValidation.ts`, `normalizePersistedAppStateForMerge.ts` e `mergePersistedAppStates.ts`, e `src/shared/contracts/dto/index.ts` se reexportar; `tests/contract/controlSurface/orch.contract.spec.ts`, `tests/unit/shared/persistedAppStateValidation.spec.ts` e `mergePersistedAppStates.spec.ts` |
 
 Aceite verificável:
 
 - C-02 verde.
-- `system.operations` lista as doze operações com os escopos da matriz do ADR (interact, read e admin).
+- `orch.ts` exporta as doze operações com os escopos da matriz do ADR (interact, read e admin); o registro no `registry.ts` fica com o F2-14.
 - O zod recusa texto acima de 32.768 bytes, caractere de controle fora de tab e quebra de linha, e `dispatchId` fora do formato uuid.
 - O DTO de ligação traz `kind`, `state` e `health`.
-- `controlSurface.operations.spec.ts` passa a esperar 162 operações `schema` (150 mais as doze `orch.*` da fase 2).
 - O estado persistido ganha o campo do espelho de ligações, só para exibição, e a validação e a mesclagem de `src/shared/sync/` o aceitam e deixam o valor do Worker prevalecer.
 - `pnpm build:cli` passa.
 
@@ -136,7 +135,7 @@ Aceite verificável:
 | Objetivo | Subir o esquema para 14 com as quatro tabelas, os índices e a chave `orchestration_links_revision` |
 | Papel | dev-backend |
 | Depende de | Nenhum |
-| Arquivos donos | `src/platform/persistence/sqlite/constants.ts`, `schema.ts` e `migrate.ts`; `tests/contract/platform/persistenceInstalledUpgradeSupport.ts`, `persistenceSchemaColumns.ts` e `persistenceStore.orchestrationSchema.spec.ts` (novo); `docs/architecture/PERSISTENCE.md` |
+| Arquivos donos | `src/platform/persistence/sqlite/constants.ts`, `schema.ts` e `migrate.ts`; `tests/contract/platform/persistenceInstalledUpgradeSupport.ts`, `persistenceSchemaColumns.ts` e `persistenceStore.orchestrationSchema.spec.ts` (novo); `src/platform/persistence/sqlite/orchestrationTables.ts`; `tests/contract/platform/persistenceStore.migrations.spec.ts` e `persistenceStoreSortOrderMigration.spec.ts`; `docs/architecture/PERSISTENCE.md` |
 
 Aceite verificável:
 
@@ -153,7 +152,7 @@ Aceite verificável:
 | Objetivo | Versionar só o pedaço do esquema do Codex que o adaptador usa, com manifesto e teste de contrato |
 | Papel | dev-backend |
 | Depende de | F2-00 (lista de métodos e campos confirmada, inclusive o eco do V4) |
-| Arquivos donos | `scripts/codex-protocol/extract-subset.mjs`; `src/contexts/orchestration/infrastructure/codex/protocol/codex-protocol.subset.json`, `manifest.json` e `codexProtocol.ts`; `tests/fixtures/codex-protocol/*.json`; `tests/contract/orchestration/codexProtocolSubset.spec.ts` e `codexProtocolInstalled.spec.ts` |
+| Arquivos donos | `scripts/codex-protocol/extract-subset.mjs`; `src/contexts/orchestration/infrastructure/codex/protocol/codex-protocol.subset.json`, `manifest.json` e `codexProtocol.ts`; `tests/fixtures/codex-protocol/*.json`; `tests/contract/orchestration/codexProtocolSubset.spec.ts` e `codexProtocolInstalled.spec.ts`; `.prettierignore` (só a entrada do subconjunto gerado) |
 
 Aceite verificável:
 
@@ -342,13 +341,14 @@ Aceite verificável:
 | Objetivo | Expor `orch.*` no Control Surface, compor o contexto no Worker, aplicar a matriz de autorização e fechar o atalho do `agent.prompt` |
 | Papel | dev-backend |
 | Depende de | F2-02, F2-05, F2-07, F2-08, F2-09, F2-10, F2-11, F2-12 e F2-13 |
-| Arquivos donos | `src/app/main/controlSurface/handlers/orchestrationHandlers.ts` e `orchestrationHandlers.support.ts`; `src/app/main/controlSurface/orchestration/composeOrchestration.ts`; `src/app/main/controlSurface/registerControlSurfaceHandlers.ts`; `src/app/main/controlSurface/handlers/agentPromptHandlers.ts` e `sessionInputHandlers.ts`; `docs/architecture/CONTROL_SURFACE.md` e `ARCHITECTURE.md`; `tests/integration/orchestration/authorization.spec.ts` e `nodeDeletion.spec.ts` |
+| Arquivos donos | `src/app/main/controlSurface/handlers/orchestrationHandlers.ts` e `orchestrationHandlers.support.ts`; `src/app/main/controlSurface/orchestration/composeOrchestration.ts`; `src/app/main/controlSurface/orchestration/orchestrationLinksMirror.ts` (novo, grava o espelho de ligações no estado sincronizado do Worker); `src/app/main/controlSurface/registerControlSurfaceHandlers.ts`; `src/shared/contracts/controlSurface/operations/registry.ts`; `src/app/main/controlSurface/handlers/agentPromptHandlers.ts` e `sessionInputHandlers.ts`; `docs/architecture/CONTROL_SURFACE.md` e `ARCHITECTURE.md`; `tests/integration/orchestration/authorization.spec.ts` e `nodeDeletion.spec.ts`; `tests/unit/contexts/controlSurface.operations.spec.ts` |
 
 Aceite verificável:
 
 - I-01 e I-07 verdes, com grants reais.
+- `registry.ts` registra as doze `orch.*`; `system.operations` as lista com os escopos da matriz; `controlSurface.operations.spec.ts` espera 162 operações `schema`; `operationRegistry.spec.ts` e `controlSurface.introspection.spec.ts` verdes.
 - `agent.prompt` e `session.writeNode` de agente contra executor ligado devolvem `orch.use_dispatch`, e a escrita no PTY não acontece.
-- O Worker grava o espelho de ligações no estado sincronizado a cada mudança de ligação e na reconciliação; escrita forjada no espelho via `sync.writeState` não muda o resultado de `orch.dispatch` e some na próxima reconciliação.
+- O Worker grava o espelho de ligações (`orchestrationLinksMirror.ts`) no estado sincronizado a cada mudança de ligação e na reconciliação; escrita forjada no espelho via `sync.writeState` não muda o resultado de `orch.dispatch` e some na próxima reconciliação.
 - A reconciliação do boot roda antes da bomba.
 - O evento `orchestration.links.updated` também sai quando a saúde do executor vai para `unavailable` e quando volta.
 - `pnpm arch:test` e `pnpm verify:quick` verdes, inclusive a checagem de sincronia dos documentos de contrato.

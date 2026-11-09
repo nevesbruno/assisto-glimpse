@@ -26,7 +26,7 @@ O hash é `find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum`.
 | V10 | Negativo | O raiz rejeita as três flags com `Unrecognized flag` e exit 1 |
 | V11 | Sim | Sessão e as 2 mensagens voltam após reiniciar o `serve` com a mesma pasta de dados |
 | V12 | Sim | `permission.asked` e `permission.replied` chegam pelo SSE de `/api/event` |
-| V13 | Não testado, sem custo | Nenhum modelo pago ficou disponível no ambiente isolado; a rota falhou com custo zero |
+| V13 | Medido com deepseek/deepseek-flash | A segunda sessão no mesmo diretório saiu cerca de 20 vezes mais barata pelo cache automático (US$ 0,00132 contra US$ 0,00006) |
 
 ## V7 OPENCODE_SERVER_PASSWORD
 
@@ -81,7 +81,16 @@ Saída: as duas tentativas terminaram com `outcome: failed` e `provider.no-route
 | Primeira | não medido (0 token faturado) | US$ 0 |
 | Segunda | não medido (0 token faturado) | US$ 0 |
 
-Veredito: não testado. A rodada paga autorizada não foi consumida, porque nenhum token chegou ao provedor. Ler a credencial do dado real do usuário (`~/.local/share/opencode`) foi bloqueado pelo controle de permissões, e não foi contornado. O Bruno decide se aponta um modelo disponível no `auth.json` ou se libera o uso do diretório de dados real; depois basta `OC00_PROVIDER=<provedor> OC00_MODEL=<modelo> node viabilidade-opencode.mjs --paid`.
+Veredito: a tentativa isolada não mediu nada, porque nenhum token chegou ao provedor e ler a credencial do dado real do usuário foi bloqueado pelo controle de permissões, sem contorno.
+
+Medição de 09/11/2026, feita pelo serviço do opencode do Bruno, modelo `deepseek/deepseek-flash`, com duas sessões no mesmo diretório. Log local em `scripts/spikes/executor-service/v13-deepseek-servico.log` (não versionado).
+
+| Sessão | Entrada sem cache | Lido do cache | Custo |
+| --- | --- | --- | --- |
+| Primeira | 8.772 tokens | 1.408 tokens | US$ 0,00132 |
+| Segunda | 196 tokens | 9.984 tokens | US$ 0,00006 |
+
+Com DeepSeek a segunda sessão sai cerca de 20 vezes mais barata pelo cache automático, então reabrir sessão quase não custa. A política de uma sessão por ligação continua, porque protege provedores com escrita de cache cara, como a Anthropic (cerca de US$ 0,022 por sessão nova na prova de 08/11).
 
 Referência anterior, da prova de 08/11: o prompt trivial custou US$ 0,022, com cerca de 17,6 mil tokens de cache write na primeira sessão.
 
@@ -89,4 +98,4 @@ Referência anterior, da prova de 08/11: o prompt trivial custou US$ 0,022, com 
 
 - V7, V8, V11 e V12 passam, então os caminhos principais do adaptador valem sem o "se falhar".
 - V10 negativo fixa a correção mínima na forma do `serve` supervisionado com `--server` na TUI.
-- V13 segue em aberto, e a política de reuso de sessão continua como está até a medição.
+- V13 medido com DeepSeek: reabrir sessão quase não custa, mas a política de uma sessão por ligação continua, porque protege provedores com escrita de cache cara.
