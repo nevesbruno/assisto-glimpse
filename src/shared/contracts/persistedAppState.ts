@@ -3,6 +3,7 @@ import type {
   AgentProviderId,
   BrowserMode,
   CanvasImageMimeType,
+  OrchestrationLinksMirror,
   TaskPriority,
   TerminalPtyGeometry,
   TerminalRuntimeKind,
@@ -386,4 +387,6 @@ export interface PersistedAppStateContract<TSettings extends object> {
   activeWorkspaceId: string | null
   workspaces: PersistedWorkspaceContract[]
   settings: TSettings
+  /** Display-only mirror written by the Worker; never consulted for authorization. */
+  orchestrationLinks?: OrchestrationLinksMirror
 }

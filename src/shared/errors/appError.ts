@@ -109,6 +109,20 @@ function createMessageMap(): Record<AppErrorCode, string> {
     'update.download_failed': 'Unable to download the update.',
     'update.install_failed': 'Unable to install the update.',
     'release_notes.get_current_failed': 'Unable to load release notes.',
+    'orch.forbidden': 'This credential does not permit the orchestration operation.',
+    'orch.not_linked': 'The target is not linked to this orchestrator.',
+    'orch.link_invalid': 'The link violates the orchestration rules.',
+    'orch.executor_unavailable': 'The executor is unavailable.',
+    'orch.round_limit_reached': 'The link reached its round limit. Only the user can extend it.',
+    'orch.dispatch_conflict': 'This dispatch id was already used with a different payload.',
+    'orch.dispatch_in_flight': 'A dispatch is in flight. Retry with force to proceed.',
+    'orch.limit_reached': 'The executor limit was reached.',
+    'orch.protocol_mismatch': 'The executor service version is outside the validated subset.',
+    'orch.approval_not_found': 'The approval request was already resolved or does not exist.',
+    'orch.use_dispatch':
+      'This agent is a linked executor. Use orch dispatch instead of agent prompt.',
+    'orch.link_declined': 'The connection request was declined.',
+    'orch.message_limit_reached': 'The conversation reached its message limit.',
   }
 }
 

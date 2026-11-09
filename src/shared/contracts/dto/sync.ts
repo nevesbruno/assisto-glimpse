@@ -12,6 +12,12 @@ export type SyncEventPayload =
       operationId: string
     }
   | {
+      type: 'orchestration.links.updated'
+      revision: number
+      linksRevision: number
+      operationId: string
+    }
+  | {
       type: 'resync_required'
       revision: number
     }

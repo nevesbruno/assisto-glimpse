@@ -421,10 +421,15 @@ export function mergePersistedAppStates<TSettings extends object>(
     mergedWorkspaces.push(localWorkspace)
   }
 
+  const { orchestrationLinks: _windowMirror, ...merged } = baseSnapshot
+    ? mergeValue(base, local, baseSnapshot)
+    : { ...base, ...local }
   return {
-    ...(baseSnapshot ? mergeValue(base, local, baseSnapshot) : { ...base, ...local }),
+    ...merged,
     // View state belongs to each client; retain the latest shared placeholder.
     activeWorkspaceId: base.activeWorkspaceId,
     workspaces: mergedWorkspaces,
+    // The Worker owns the mirror; a window write never overrides it.
+    ...(base.orchestrationLinks ? { orchestrationLinks: base.orchestrationLinks } : {}),
   }
 }
