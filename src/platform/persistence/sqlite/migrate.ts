@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { DB_SCHEMA_VERSION, LEGACY_WORKSPACE_STATE_KEY } from './constants'
 import { normalizePersistedAppState } from './normalize'
+import { createOrchestrationTables } from './orchestrationTables'
 import { safeJsonParse } from './utils'
 import { writeNormalizedAppState, writeNormalizedScrollbacks } from './write'
 
@@ -199,6 +200,8 @@ function createTables(db: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS browser_permissions_profile_origin_permission_unique_idx
       ON browser_permission_decisions (profile_key, origin, permission);
   `)
+
+  createOrchestrationTables(db)
 }
 
 function readLegacyRawFromKv(db: Database.Database): string | null {

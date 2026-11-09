@@ -10,9 +10,10 @@ SQLite:
 - Store：`src/platform/persistence/sqlite/PersistenceStore.ts`
 - Schema：`src/platform/persistence/sqlite/schema.ts`
 - Migration：`src/platform/persistence/sqlite/migrate.ts`
-- 当前 `DB_SCHEMA_VERSION = 13`
+- 当前 `DB_SCHEMA_VERSION = 14`
 - Agent/Terminal node Worker binding：`nodes.worker_binding_json`
 - Terminal durable recovery：`terminal_recovery_records`
+- Orchestration (v14)：`agent_links`、`orchestration_dispatches`、`orchestration_notices`、`orchestration_hook_approvals`，DDL 在 `src/platform/persistence/sqlite/orchestrationTables.ts`
 - Legacy terminal presentation/scrollback mirror：`node_scrollback`（兼容读取，不是独立 truth owner）
 
 Topology files:
@@ -296,6 +297,13 @@ the Sidebar does not maintain a second local persistence store.
   repository is the only durable write path.
 - `node_scrollback` terminal rows：Worker repository compatibility mirror；generic persistence may
   read them but must not overwrite recovery-owned rows.
+- Orchestration tables (v14)：`agent_links`、`orchestration_dispatches`、`orchestration_notices`、
+  `orchestration_hook_approvals` 的 owner 是 Worker，写入走 optimistic CAS（`revision`）；通用
+  app-state 写入不得触碰这四张表。`app_meta.orchestration_links_revision`（初始 `0`）在同一事务内随每次
+  link 变更递增。迁移 13→14 只创建（`IF NOT EXISTS`，additive、幂等）；`agent_links` 已含 phase 3 列
+  （`kind`、`request_reason`、`requested_at`、`messages_*`）与 `spawn_request_id`，默认值对 phase 2 中性。
+  部分唯一索引：每个 executor 至多一条 `active` link，至多一个在途 dispatch（`reserved`/`sent`/`uncertain`）；
+  唯一索引 `(orchestrator_node_id, spawn_request_id)` 保证 `orch.spawn` 幂等。回退到 13 的 App 会忽略这四张表并保留数据。
 - Browser profile data：客户端本地 SQLite browser profile store；历史、书签、下载记录、主页和权限决定默认不进入 Worker/WebUI 同步。
 
 ## Required Checks For Persistence Changes
