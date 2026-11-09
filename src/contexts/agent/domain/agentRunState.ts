@@ -1,4 +1,9 @@
-import type { AgentProviderId, TerminalSessionStateSource } from '../../../shared/contracts/dto'
+import type {
+  AgentHookStateSource,
+  AgentProviderId,
+  ExecutorStateSource,
+  TerminalSessionStateSource,
+} from '../../../shared/contracts/dto'
 import { resolveAgentRunStateAuthority, type AgentRunStateSignal } from './agentRunStateArbiter'
 
 export type {
@@ -87,6 +92,12 @@ export function mirrorAgentRunModel(
   return { ...model, snapshot, observations: {}, lastTurnEnd: null, nextTransitionAtMs: null }
 }
 
+function isLeasedSource(
+  source: AgentRunObservation['source'],
+): source is AgentHookStateSource | ExecutorStateSource {
+  return source.endsWith('_hook') || source === 'executor_service'
+}
+
 function signal(observation: AgentRunObservation | undefined): AgentRunStateSignal | null {
   if (!observation || observation.state === 'unknown' || observation.state === 'exited') {
     return null
@@ -95,9 +106,7 @@ function signal(observation: AgentRunObservation | undefined): AgentRunStateSign
     state: observation.state === 'idle' ? 'standby' : observation.state,
     observedAtMs: observation.observedAt,
     degraded: observation.degraded,
-    ...(observation.source.endsWith('_hook')
-      ? { source: observation.source as 'claude_hook' | 'codex_hook' | 'pi_hook' }
-      : {}),
+    ...(isLeasedSource(observation.source) ? { source: observation.source } : {}),
   }
 }
 
@@ -134,7 +143,12 @@ export function transitionAgentRun(
   const observations = observation
     ? { ...model.observations, [observation.source]: observation }
     : model.observations
-  const hook = [observations.claude_hook, observations.codex_hook, observations.pi_hook]
+  const hook = [
+    observations.claude_hook,
+    observations.codex_hook,
+    observations.pi_hook,
+    observations.executor_service,
+  ]
     .filter((value): value is AgentRunObservation => Boolean(value))
     .sort((a, b) => b.observedAt - a.observedAt)[0]
   const decision = resolveAgentRunStateAuthority({

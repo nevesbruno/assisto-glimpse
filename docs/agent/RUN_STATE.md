@@ -21,6 +21,8 @@ remains explicit in the Control Surface snapshot, not a new UI label or durable 
 An unknown snapshot leaves the legacy UI observation/node-status projection unchanged. Persisted nodes alone do not create live
 agent sessions. A session needs live provider metadata or a provider observation before registration.
 
+The orchestration executor feeds the same registry as source `executor_service` through `ExecutorRunStateIngress`: a leased source with hook authority (working lease of 180 s, renewed every 60 s while a turn runs; without renewal the state falls to unknown, never idle). Turn start, approval and end map to working, waiting (`permission`) and idle; the final message (up to 64 KiB) goes to the turn history and archive like a hook end. I1 to I3 apply unchanged.
+
 ## Invariants
 
 - **I1:** One arbiter decides agent run state for renderer, plugin host and Control Surface. The

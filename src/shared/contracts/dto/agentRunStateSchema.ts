@@ -16,7 +16,15 @@ export const agentRunSnapshotSchema = z.object({
     .nullable(),
   lastTransitionAt: z.number().finite(),
   source: z
-    .enum(['launch', 'session_file', 'claude_hook', 'codex_hook', 'pi_hook', 'exit'])
+    .enum([
+      'launch',
+      'session_file',
+      'claude_hook',
+      'codex_hook',
+      'pi_hook',
+      'executor_service',
+      'exit',
+    ])
     .nullable(),
   quality: z.enum(['authoritative', 'inferred', 'degraded']),
   turnOutcome: z.enum(['completed', 'failed', 'aborted', 'unknown']).nullable(),

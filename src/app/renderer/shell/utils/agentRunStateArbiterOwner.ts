@@ -151,7 +151,7 @@ export function createAgentRunStateArbiterOwner(options: {
             ? event.observedAtMs
             : now(),
       }
-      if (isAgentHookStateSource(source)) {
+      if (isAgentHookStateSource(source) || source === 'executor_service') {
         signal.source = source
         state.lastHookSignal = signal
       } else if (source === 'session_file') {

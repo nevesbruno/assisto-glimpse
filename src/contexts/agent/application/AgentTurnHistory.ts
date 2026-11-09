@@ -197,12 +197,13 @@ export class AgentTurnHistory {
   ): void {
     if (ended && !this.revoked) {
       const correlated =
-        observation?.source === 'claude_hook' &&
-        observation.boundary?.kind === 'end' &&
-        this.active?.promptId !== undefined &&
-        this.active.promptId === evidence?.promptId &&
-        this.active.providerSessionId !== undefined &&
-        this.active.providerSessionId === evidence?.providerSessionId
+        observation?.boundary?.kind === 'end' &&
+        (observation.source === 'executor_service' ||
+          (observation.source === 'claude_hook' &&
+            this.active?.promptId !== undefined &&
+            this.active.promptId === evidence?.promptId &&
+            this.active.providerSessionId !== undefined &&
+            this.active.providerSessionId === evidence?.providerSessionId))
       const content = correlated || intermediate ? evidence?.finalMessage : undefined
       this.ended.push({
         ...captureTurn(

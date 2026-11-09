@@ -203,7 +203,14 @@ export type TerminalSessionState = 'working' | 'waiting' | 'standby'
 
 export type AgentHookStateSource = 'claude_hook' | 'codex_hook' | 'pi_hook'
 
-export type TerminalSessionStateSource = 'launch' | 'session_file' | AgentHookStateSource
+/** Executor service of the orchestration context: a leased source with hook-like authority. */
+export type ExecutorStateSource = 'executor_service'
+
+export type TerminalSessionStateSource =
+  | 'launch'
+  | 'session_file'
+  | AgentHookStateSource
+  | ExecutorStateSource
 
 /** Actual telemetry configured for one invocation; never inferred from observations. */
 export type AgentHookCoverage = 'lifecycle' | 'notify_only' | 'none' | 'unverified_executable'
