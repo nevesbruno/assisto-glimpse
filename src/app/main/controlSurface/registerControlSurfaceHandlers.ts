@@ -1,3 +1,4 @@
+import type { PromptDeliveryService } from '../../../contexts/agent/application/PromptDeliveryService'
 import { registerAgentPromptHandlers } from './handlers/agentPromptHandlers'
 import { registerWorkspaceBootstrapHandlers } from './handlers/workspaceBootstrapHandlers'
 import { registerAgentRunStateHandlers } from './handlers/agentRunStateHandlers'
@@ -33,7 +34,16 @@ import { registerSyncHandlers } from './handlers/syncHandlers'
 import { registerTopologyHandlers } from './handlers/topologyHandlers'
 import { registerAuthHandlers } from './handlers/authHandlers'
 import { registerNodeControlHandlers } from './handlers/nodeControlHandlers'
-import { registerOrchestrationProvisionalHandlers } from './handlers/orchestrationProvisionalHandlers'
+import {
+  createStatePersistedHook,
+  notifyAfterStateWrite,
+} from './orchestration/nodeDeletionTrigger'
+import { registerOrchestrationHandlers } from './handlers/orchestrationHandlers'
+import { createDirectInputGuard } from './handlers/directInputGuard'
+import {
+  createNodeProviderReader,
+  type OrchestrationBackend,
+} from './handlers/orchestrationHandlers.support'
 import { registerPluginHandlers } from './handlers/pluginHandlers'
 import { registerPluginCommandHandlers } from './handlers/pluginCommandHandlers'
 import type { EndpointHealthService } from './topology/endpointHealthService'
@@ -72,15 +82,29 @@ export function registerControlSurfaceHandlers(
     terminalSpawnAdmission: TerminalSpawnAdmission
     terminalRecoverySpawnAdmission: TerminalRecoverySpawnAdmission
     agentProviderRegistry: AgentProviderRegistry
+    promptDelivery: PromptDeliveryService
     terminalAgentActivity?: TerminalAgentActivityEnvironmentService
+    orchestration?: () =>
+      | (OrchestrationBackend & {
+          reviveExecutorTui?: (nodeId: string) => Promise<string | null>
+          reconcileDeletedNodes?: () => Promise<void>
+        })
+      | null
   },
 ): void {
-  const deliveries = registerAgentPromptHandlers(
+  const orchestrationDeps = {
+    backend: deps.orchestration ?? (() => null),
+    providerOfNode: createNodeProviderReader(deps.getPersistenceStore),
+  }
+  const guardDirectInput = createDirectInputGuard(orchestrationDeps)
+  const reconcileNodes = () => deps.orchestration?.()?.reconcileDeletedNodes?.()
+  registerAgentPromptHandlers(
     controlSurface,
     deps.ptyStreamHub,
-    deps.agentProviderRegistry,
+    deps.promptDelivery,
+    guardDirectInput,
   )
-  registerAgentRunStateHandlers(controlSurface, deps.ptyStreamHub, deliveries)
+  registerAgentRunStateHandlers(controlSurface, deps.ptyStreamHub, deps.promptDelivery)
   registerSystemHandlers(controlSurface, {
     appVersion: deps.appVersion,
     deploymentId: deps.deploymentId,
@@ -140,6 +164,8 @@ export function registerControlSurfaceHandlers(
     terminalSpawnAdmission: deps.terminalSpawnAdmission,
     terminalRecoverySpawnAdmission: deps.terminalRecoverySpawnAdmission,
     agentProviderRegistry: deps.agentProviderRegistry,
+    reviveExecutorTui: async nodeId =>
+      (await deps.orchestration?.()?.reviveExecutorTui?.(nodeId)) ?? null,
   })
   registerSessionStreamingHandlers(controlSurface, {
     approvedWorkspaces: deps.approvedWorkspaces,
@@ -149,6 +175,7 @@ export function registerControlSurfaceHandlers(
     topology: deps.topology,
     terminalSpawnAdmission: deps.terminalSpawnAdmission,
     terminalAgentActivity: deps.terminalAgentActivity,
+    guardDirectInput,
   })
   registerTerminalAgentActivityHandlers(controlSurface, { ptyStreamHub: deps.ptyStreamHub })
   registerPtyMountHandlers(controlSurface, {
@@ -161,12 +188,12 @@ export function registerControlSurfaceHandlers(
   })
   registerNodeControlHandlers(controlSurface, {
     topology: deps.topology,
-    getPersistenceStore: deps.getPersistenceStore,
+    getPersistenceStore: notifyAfterStateWrite(deps.getPersistenceStore, reconcileNodes),
     publishSyncEvent: deps.publishSyncEvent,
     closeWebsiteNode: deps.closeWebsiteNode,
     closePluginNode: nodeId => deps.plugins.closeNodeViews(nodeId),
   })
-  registerOrchestrationProvisionalHandlers(controlSurface)
+  registerOrchestrationHandlers(controlSurface, orchestrationDeps)
   registerPluginHostHandlers(controlSurface, deps)
   registerPluginHandlers(controlSurface, deps.plugins, deps.pluginDistribution)
   registerPluginCommandHandlers(controlSurface, {
@@ -175,6 +202,6 @@ export function registerControlSurfaceHandlers(
     publishSyncEvent: deps.publishSyncEvent,
   })
   registerSyncHandlers(controlSurface, deps.getPersistenceStore, {
-    onStatePersisted: deps.onStatePersisted,
+    onStatePersisted: createStatePersistedHook(deps.onStatePersisted, reconcileNodes),
   })
 }

@@ -10,10 +10,8 @@ function setup(deliver: (request: unknown) => Promise<unknown>) {
   return { service, delivery }
 }
 
-const refusal = (
-  code: 'agent.busy' | 'agent.blocked' | 'agent.delivery_unsettled',
-  paste: boolean,
-) => createAppError(code, { details: { pasteDispatchAttempted: paste } })
+const refusal = (code: 'agent.busy' | 'agent.blocked', paste: boolean) =>
+  createAppError(code, { details: { pasteDispatchAttempted: paste } })
 
 describe('orchestrator delivery (U-06)', () => {
   it('delivers with whenBusy refuse, the batch delivery id and the node', async () => {
@@ -45,9 +43,23 @@ describe('orchestrator delivery (U-06)', () => {
     await expect(delivery.deliver(INPUT)).resolves.toBe('uncertain')
   })
 
-  it('maps an unsettled delivery and an unknown failure to uncertain', async () => {
+  it.each(['delivery_in_progress', 'delivery_capacity'])(
+    'maps an unsettled delivery refused before any paste (%s) to refused_busy',
+    async reason => {
+      const { delivery } = setup(async () => {
+        throw createAppError('agent.delivery_unsettled', {
+          details: { pasteDispatchAttempted: false, reason },
+        })
+      })
+      await expect(delivery.deliver(INPUT)).resolves.toBe('refused_busy')
+    },
+  )
+
+  it('maps an unsettled delivery after a paste attempt and an unknown failure to uncertain', async () => {
     const unsettled = setup(async () => {
-      throw refusal('agent.delivery_unsettled', false)
+      throw createAppError('agent.delivery_unsettled', {
+        details: { pasteDispatchAttempted: true, reason: 'delivery_in_progress' },
+      })
     })
     await expect(unsettled.delivery.deliver(INPUT)).resolves.toBe('uncertain')
     const unknown = setup(async () => {

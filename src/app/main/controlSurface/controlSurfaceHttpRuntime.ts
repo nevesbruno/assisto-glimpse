@@ -26,6 +26,8 @@ import { createMultiEndpointPtyRuntime } from './ptyStream/multiEndpointPtyRunti
 import type { RegisterControlSurfaceHttpServerOptions } from './controlSurfaceHttpServerOptions'
 import { createWorkerTopologyStore } from './topology/topologyStore'
 import { registerControlSurfaceHandlers } from './registerControlSurfaceHandlers'
+import { createAgentPromptDelivery } from './handlers/agentPromptHandlers'
+import { lazyOrchestration } from './orchestration/composeOrchestration'
 import { createManagedSshEndpointRuntime } from './topology/managedSshEndpointRuntime'
 import { createEndpointHealthService } from './topology/endpointHealthService'
 import { createControlSurfaceTerminalRecoveryRuntime } from './terminalRecovery/controlSurfaceTerminalRecoveryRuntime'
@@ -210,7 +212,18 @@ export function createControlSurfaceHttpRuntime(
   })
   const getPersistenceStore = withAgentRunBindings(turnArchive.getPersistenceStore, agentRuns)
   const terminalRuntimeAvailability = new TerminalRuntimeAvailability()
+  const promptDelivery = createAgentPromptDelivery(ptyStreamService.hub, agentProviderRegistry)
+  const orch = lazyOrchestration({
+    options,
+    getPersistenceStore,
+    topology,
+    ptyRuntime,
+    hub: ptyStreamService.hub,
+    delivery: promptDelivery,
+    publish: payload => publishSyncEventToLiveClients(payload),
+  })
   let runtimeReady = false
+  void orch.boot()
   void plugins.start()
   const ready = (async () => {
     if (options.strictPersistence) {
@@ -306,7 +319,9 @@ export function createControlSurfaceHttpRuntime(
     terminalSpawnAdmission: terminalRuntimeAvailability,
     terminalRecoverySpawnAdmission: terminalRuntimeAvailability,
     agentProviderRegistry,
+    promptDelivery,
     terminalAgentActivity: terminalAgents.activity,
+    orchestration: orch.get,
   })
 
   let closed = false
@@ -470,6 +485,7 @@ export function createControlSurfaceHttpRuntime(
         turnArchive.dispose()
 
         try {
+          await orch.dispose()
           await persistence.dispose()
         } catch {
           // ignore

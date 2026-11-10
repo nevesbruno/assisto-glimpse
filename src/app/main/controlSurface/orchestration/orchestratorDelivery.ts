@@ -20,13 +20,25 @@ export type OrchestratorDelivery = OrchestratorDeliveryPort & {
   inFlight: (orchestratorNodeId: string) => boolean
 }
 
+const BEFORE_PASTE_BUSY_REASONS: ReadonlySet<string> = new Set([
+  'delivery_in_progress',
+  'delivery_capacity',
+])
+
 /** Only a refusal before any paste is a plain "busy"; anything after the write is uncertain. */
 function resultOfFailure(error: unknown): OrchestratorDeliveryResult {
-  if (!(error instanceof OpenCoveAppError) || !BUSY_CODES.has(error.code)) {
+  if (!(error instanceof OpenCoveAppError)) {
     return 'uncertain'
   }
-  const details = error.details as { pasteDispatchAttempted?: boolean } | undefined
-  return details?.pasteDispatchAttempted === false ? 'refused_busy' : 'uncertain'
+  const details = error.details as { pasteDispatchAttempted?: boolean; reason?: string } | undefined
+  if (details?.pasteDispatchAttempted !== false) {
+    return 'uncertain'
+  }
+  const busy =
+    BUSY_CODES.has(error.code) ||
+    (error.code === 'agent.delivery_unsettled' &&
+      BEFORE_PASTE_BUSY_REASONS.has(details.reason ?? ''))
+  return busy ? 'refused_busy' : 'uncertain'
 }
 
 /** Delivers the batch as one prompt with `whenBusy: 'refuse'`, so an occupied orchestrator gets nothing. */
