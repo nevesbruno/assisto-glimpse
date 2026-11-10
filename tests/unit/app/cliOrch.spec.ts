@@ -238,9 +238,34 @@ it('status shows admissao= instead of fila=', async () => {
   const s = server({ status: { linksRevision: 1, links: [link()] } })
   expect(await run(['orch', 'status'], s.io)).toBe(0)
   expect(s.out()).toBe(
-    'exec-api codex serviço ocupado r2/3 d=91c2 3m admissao=bloqueada(d=91c2) aprov=0 hooks=0\n',
+    'exec-api codex serviço ocupado r2/3 d=91c2aaaa-0000-4000-8000-000000000001 3m admissao=bloqueada(d=91c2) aprov=0 hooks=0\n',
   )
   expect(s.out()).not.toContain('fila=')
+})
+
+it('status prints the whole dispatchId in d= and cancel accepts it', async () => {
+  const s = server({ status: { linksRevision: 1, links: [link()] } })
+  await run(['orch', 'status'], s.io)
+  const id = / d=([0-9a-f-]{36}) /.exec(s.out())?.[1] as string
+  const c = server()
+  expect(await run(['orch', 'cancel', '--id', id], c.io)).toBe(0)
+  expect(c.out()).toBe('despacho 91c2 cancelado\n')
+})
+
+it('status adds avisos=talvez(N) only when notices.uncertain is above zero', async () => {
+  const uncertain = link({ notices: { pending: 1, uncertain: 2 } })
+  const s = server({ status: { linksRevision: 1, links: [uncertain, link()] } })
+  await run(['orch', 'status'], s.io)
+  const [a, b] = s.out().trimEnd().split('\n')
+  expect(a).toContain(' hooks=0 avisos=talvez(2)')
+  expect(b).not.toContain('avisos=')
+})
+
+it('status help points to -o json and never to --json', async () => {
+  const s = server()
+  await run(['orch', 'status', '--help'], s.io)
+  expect(s.out()).toContain('-o json')
+  expect(s.out()).not.toContain('--json')
 })
 
 it('status shows a free executor and the willWait case', async () => {

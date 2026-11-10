@@ -47,6 +47,7 @@ type StatusLink = {
   roundsLimit: number
   admission: Admission
   current: { dispatchId: string; createdAt: string } | null
+  notices: { uncertain: number }
   pendingApprovals: number
   pendingHooks: number
 }
@@ -83,10 +84,11 @@ function statusLine(link: StatusLink) {
     link.runtimeMode === 'service' ? 'serviço' : link.runtimeMode,
     healthLabel[link.health] ?? link.health,
     `r${link.roundsUsed}/${link.roundsLimit}`,
-    ...(current ? [`d=${short(current.dispatchId)}`, age(current.createdAt)] : ['d=-']),
+    ...(current ? [`d=${current.dispatchId}`, age(current.createdAt)] : ['d=-']),
     `admissao=${admissionLabel(link.admission)}`,
     `aprov=${link.pendingApprovals}`,
     `hooks=${link.pendingHooks}`,
+    ...(link.notices.uncertain > 0 ? [`avisos=talvez(${link.notices.uncertain})`] : []),
   ].join(' ')
 }
 
