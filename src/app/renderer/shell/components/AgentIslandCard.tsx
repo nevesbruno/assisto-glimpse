@@ -180,8 +180,22 @@ export function AgentIslandCard({
             </span>
             <span className="agent-island-card__status">
               <span className="agent-island-card__light" aria-hidden="true" />
-              {t('agentIsland.waitingForInput')}
+              {notification.alert
+                ? t(
+                    notification.alert.reason === 'permission'
+                      ? 'orchestration.attention.permission'
+                      : 'orchestration.attention.unavailable',
+                  )
+                : t('agentIsland.waitingForInput')}
             </span>
+            {notification.alert?.summary ? (
+              <span
+                className="app-notification__body agent-island-card__summary"
+                data-testid="app-notification-summary"
+              >
+                {notification.alert.summary}
+              </span>
+            ) : null}
             <span className="agent-island-card__chips">
               <Chip
                 testId="app-notification-chip-project"

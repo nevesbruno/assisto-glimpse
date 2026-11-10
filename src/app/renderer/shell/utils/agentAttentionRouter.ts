@@ -33,14 +33,21 @@ export function createAgentAttentionRouter<T extends { sessionId: string }>({
   channels,
   emit,
   createId = () => crypto.randomUUID(),
+  repeatIntervalMs = () => null,
 }: {
   channels: () => AgentAttentionChannels
   emit: (effect: AgentAttentionEffect<T>) => void
   createId?: () => string
+  /** Read at each step: ms until the item repeats its sound and system notification, or null. */
+  repeatIntervalMs?: (item: T) => number | null
 }): AgentAttentionRouter<T> {
   // Announced and still waiting, including Agents inside their rework debounce.
   const waiting = new Map<string, T>()
   const reworkTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const repeatTimers = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; systemId: string | null }
+  >()
   let batch: Batch<T> | null = null
 
   const closeBatch = (): void => {
@@ -57,6 +64,41 @@ export function createAgentAttentionRouter<T extends { sessionId: string }>({
     emit({ kind: 'system', id: createId(), items: stillWaiting, replacesId: closing.systemId })
   }
 
+  const stopRepeat = (sessionId: string): void => {
+    const repeat = repeatTimers.get(sessionId)
+    if (repeat) {
+      clearTimeout(repeat.timer)
+      repeatTimers.delete(sessionId)
+    }
+  }
+
+  // While the pendency lasts the item keeps calling, one sound and one notification per step.
+  const scheduleRepeat = (item: T): void => {
+    const intervalMs = repeatIntervalMs(item)
+    if (intervalMs === null || !waiting.has(item.sessionId)) {
+      return
+    }
+    const previous = repeatTimers.get(item.sessionId)
+    const timer = setTimeout(() => {
+      const open = channels()
+      if (open.sound) {
+        emit({ kind: 'play-sound' })
+      }
+      const systemId = open.system ? createId() : null
+      if (systemId) {
+        emit({
+          kind: 'system',
+          id: systemId,
+          items: [item],
+          replacesId: previous?.systemId ?? null,
+        })
+      }
+      repeatTimers.set(item.sessionId, { timer, systemId: systemId ?? previous?.systemId ?? null })
+      scheduleRepeat(item)
+    }, intervalMs)
+    repeatTimers.set(item.sessionId, { timer, systemId: previous?.systemId ?? null })
+  }
+
   return {
     needsYou: item => {
       const rework = reworkTimers.get(item.sessionId)
@@ -70,6 +112,7 @@ export function createAgentAttentionRouter<T extends { sessionId: string }>({
       }
 
       waiting.set(item.sessionId, item)
+      scheduleRepeat(item)
       const open = channels()
       if (open.inApp) {
         emit({ kind: 'show-card', item })
@@ -103,6 +146,7 @@ export function createAgentAttentionRouter<T extends { sessionId: string }>({
         setTimeout(() => {
           reworkTimers.delete(sessionId)
           waiting.delete(sessionId)
+          stopRepeat(sessionId)
           emit({ kind: 'clear-card', sessionId })
         }, AGENT_ATTENTION_REWORK_DEBOUNCE_MS),
       )
@@ -115,6 +159,8 @@ export function createAgentAttentionRouter<T extends { sessionId: string }>({
       }
       reworkTimers.forEach(timer => clearTimeout(timer))
       reworkTimers.clear()
+      repeatTimers.forEach(repeat => clearTimeout(repeat.timer))
+      repeatTimers.clear()
       waiting.clear()
     },
   }

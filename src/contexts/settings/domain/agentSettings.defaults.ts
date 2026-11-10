@@ -76,6 +76,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   notificationSoundEnabled: true,
   notificationSound: 'bit',
   notificationSoundVolume: 60,
+  executorAlertRepeatEnabled: false,
+  executorAlertRepeatMinutes: 5,
   disableAppShortcutsWhenTerminalFocused: true,
   keybindings: {},
   canvasInputMode: 'auto',

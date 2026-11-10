@@ -81,6 +81,10 @@ export interface NotificationSettings {
   notificationSound: NotificationSound
   /** 0–100. */
   notificationSoundVolume: number
+  /** Repeats the alert of a stopped executor while it stays pending. Off by default. */
+  executorAlertRepeatEnabled: boolean
+  /** Minutes between two repeats, 1–60. */
+  executorAlertRepeatMinutes: number
 }
 
 export interface AgentSettings

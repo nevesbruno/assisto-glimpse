@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
-import { agentAttentionKey } from '../utils/sidebarAgents'
+import { agentAttentionKey, executorAttentionKey } from '../utils/sidebarAgents'
 import type { AgentStandbyNotification } from '../utils/agentStandbyNotification'
 
 /** Unanswered Agents kept at most; the oldest fall away first. */
@@ -53,7 +53,8 @@ export function useAgentsNeedingYou(): ReadonlyMap<string, number> {
     const needsYou = new Map<string, number>()
     // Newest first, so an Agent announced twice keeps its first wait.
     for (const item of notifications) {
-      needsYou.set(agentAttentionKey(item.workspaceId, item.nodeId), item.createdAt)
+      const key = item.alert ? executorAttentionKey : agentAttentionKey
+      needsYou.set(key(item.workspaceId, item.nodeId), item.createdAt)
     }
     return needsYou
   }, [notifications])

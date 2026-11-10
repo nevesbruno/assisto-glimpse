@@ -52,3 +52,27 @@ describe('notification settings', () => {
     ).toMatchObject({ standbyBannerEnabled: false, systemNotificationsEnabled: false })
   })
 })
+
+describe('executor alert repeat settings', () => {
+  it('starts off, every 5 minutes', () => {
+    expect(normalizeAgentSettings({})).toMatchObject({
+      executorAlertRepeatEnabled: false,
+      executorAlertRepeatMinutes: 5,
+    })
+  })
+
+  it('keeps a saved switch and clamps the interval to 1 to 60 minutes', () => {
+    expect(
+      normalizeAgentSettings({ executorAlertRepeatEnabled: true, executorAlertRepeatMinutes: 15 }),
+    ).toMatchObject({ executorAlertRepeatEnabled: true, executorAlertRepeatMinutes: 15 })
+    expect(
+      normalizeAgentSettings({ executorAlertRepeatMinutes: 0 }).executorAlertRepeatMinutes,
+    ).toBe(1)
+    expect(
+      normalizeAgentSettings({ executorAlertRepeatMinutes: 999 }).executorAlertRepeatMinutes,
+    ).toBe(60)
+    expect(
+      normalizeAgentSettings({ executorAlertRepeatMinutes: 'x' }).executorAlertRepeatMinutes,
+    ).toBe(5)
+  })
+})

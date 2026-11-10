@@ -19,17 +19,27 @@ export function agentAttentionKey(workspaceId: string, nodeId: string): string {
   return `${workspaceId}\u0000${nodeId}`
 }
 
+/** Keys a linked executor's alert, which holds until the pendency ends, whatever its status. */
+export function executorAttentionKey(workspaceId: string, nodeId: string): string {
+  return `executor\u0000${agentAttentionKey(workspaceId, nodeId)}`
+}
+
 const NO_ONE_NEEDS_YOU: ReadonlyMap<string, number> = new Map()
 
 /**
  * Since when an Agent has waited for you because you have not answered the turn it ended, or
  * undefined. Only an Agent in standby can: working, blocked on a prompt or gone outranks the card.
+ * A linked executor's alert is the exception: it holds until its pendency ends.
  */
 export function resolveNeedsYouSinceMs(
   workspaceId: string,
   node: Node<TerminalNodeData>,
   needsYou: ReadonlyMap<string, number>,
 ): number | undefined {
+  const executorSinceMs = needsYou.get(executorAttentionKey(workspaceId, node.id))
+  if (executorSinceMs !== undefined) {
+    return executorSinceMs
+  }
   return resolveAgentPresentation(node.data).status === 'standby'
     ? needsYou.get(agentAttentionKey(workspaceId, node.id))
     : undefined

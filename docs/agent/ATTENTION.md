@@ -51,6 +51,25 @@ signals on the canvas keep following the runtime status.
 The renderer cannot trust its own focus signals for the foreground gate, so main decides it at the
 moment it would show the notification.
 
+## Linked executors
+
+An executor linked to an orchestrator (an active `executor` link in `orchestrationLinksStore`)
+calls you in two more cases, through the same router and the same three channels. A common Agent
+waiting on a permission still raises nothing.
+
+- **Stopped on a request.** Run state `waiting` with `blockedReason: 'permission'`. The card and
+  the system notification carry the executor name and `blockedSummary`, read only together with
+  `state === 'waiting'` (the ingress can clear the reason without clearing the summary).
+- **Unavailable.** The link health turns `unavailable` (no run state says it). The first read of
+  the link mirror is a baseline.
+- The alert is a `show-card` item with `alert: { reason, summary }`. Its "needs you" entry is keyed
+  by `executorAttentionKey`, so `resolveNeedsYouSinceMs` keeps it whatever the status shows, in the
+  sidebar and the Space, until the pendency ends (the executor leaves the wait or recovers).
+- Clicking the notification or the card goes to the executor node.
+- **Repeat.** Off by default (`executorAlertRepeatEnabled`). On, every `executorAlertRepeatMinutes`
+  (1 to 60) the sound and a replacing notification fire again while the pendency lasts; the card is
+  not shown again. Switches and interval are read at each step.
+
 ## Invariants
 
 - **One alert per wait.** An Agent already announced is not announced again until it has worked for
@@ -68,6 +87,7 @@ moment it would show the notification.
 
 - Decision table, coalescing, debounce: `agentAttentionRouter.spec.ts`.
 - Unanswered Agents: `useAgentAttentionStore.spec.ts`, `agentActivitySummary.spec.ts`.
+- Executor alerts (U-11): `tests/unit/app/executorAttention.spec.ts`.
 - Startup baseline: `tests/unit/app/agentStandbyTerminalNotification.spec.ts`.
 - Foreground gate, silent delivery, replacement and click: `tests/contract/ipc/systemNotificationIpc.spec.ts`.
 - End to end, in front and behind: `tests/e2e/workspace-canvas.agent-attention-routing.spec.ts`.
