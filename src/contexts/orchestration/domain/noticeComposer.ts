@@ -102,7 +102,10 @@ function buildLine(entry: NoticeEntry, excerpt: string, older: number): string {
     entry.round === null || entry.roundsLimit === null
       ? ''
       : ` r${entry.round}/${entry.roundsLimit}`
-  const dispatch = entry.dispatchId ? ` d=${entry.dispatchId.slice(0, DISPATCH_TAG_LENGTH)}` : ''
+  const free = READABLE_KINDS.includes(entry.kind) ? ' (livre)' : ''
+  const dispatch = entry.dispatchId
+    ? ` d=${entry.dispatchId.slice(0, DISPATCH_TAG_LENGTH)}${free}`
+    : ''
   const detail = FIXED_DETAIL[entry.kind] ?? (excerpt ? `"${excerpt}"` : '')
   const head = `- ${name} (${cleanText(entry.provider)}) ${VERBS[entry.kind]}${round}${dispatch}`
   const body = detail ? `${head}: ${detail}` : head

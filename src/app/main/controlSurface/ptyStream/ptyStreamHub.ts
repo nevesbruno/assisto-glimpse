@@ -61,6 +61,15 @@ export class PtyStreamHub {
   private readonly onPresentationMutation: ((sessionId: string) => void) | undefined
 
   private readonly inputEvidence: PtyStreamInputEvidence
+  private readonly typedRuntime: ControlSurfacePtyRuntime
+  private readonly typedAt = new Map<string, number>()
+  private readonly now: () => number
+
+  /** Instant of the last write typed by a client, never of an automation paste; null when none. */
+  public inputWatermark(sessionId: string): number | null {
+    return this.typedAt.get(sessionId) ?? null
+  }
+
   public watchInput(
     sessionId: string,
     listener: (deliveryId?: string, data?: string) => void,
@@ -92,6 +101,14 @@ export class PtyStreamHub {
   }) {
     this.inputEvidence = new PtyStreamInputEvidence(options.ptyRuntime)
     this.ptyRuntime = this.inputEvidence.observedRuntime()
+    this.now = options.now ?? Date.now
+    this.typedRuntime = {
+      ...this.ptyRuntime,
+      write: (sessionId, data) => {
+        this.typedAt.set(sessionId, this.now())
+        this.ptyRuntime.write(sessionId, data)
+      },
+    }
     this.replayWindowMaxBytes = Math.max(64_000, Math.floor(options.replayWindowMaxBytes))
     this.onPresentationMutation = options.onPresentationMutation
     this.agentRuns =
@@ -422,7 +439,7 @@ export class PtyStreamHub {
     writePtyStreamSession({
       clients: this.clients,
       sessions: this.sessions,
-      ptyRuntime: this.ptyRuntime,
+      ptyRuntime: this.typedRuntime,
       ...options,
       broadcastControlChanged: sessionId => this.broadcast.controlChanged(sessionId),
     })

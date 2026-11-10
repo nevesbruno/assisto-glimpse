@@ -495,3 +495,5 @@ memory-only (`retention_backlog`) while bounded cleanup makes room for future re
 Deleting the node removes queryable OpenCove history, including caches; it does not
 erase provider transcripts, existing backups or forensic remnants.
 `opencove agent history clear --node <selector>` (`agent.history.clear`, interact scope) deletes the node’s archived and in-memory replies across retained incarnations, leaving the node, provider transcripts, backups, run state, active turns and delivery records unchanged; later ends store normally, and archive unavailability clears memory but exits 1. Unqualified reads, prompt-ID selectors and transcript fallback keep current-incarnation semantics; remote history stays on its executing Worker.
+
+Glimpse notices to a linked orchestrator use this same delivery with `whenBusy: refuse`, one batch per delivery id, and only after 10 s without typing in its terminal. A batch that stalls after the paste is marked uncertain and is never resent.
