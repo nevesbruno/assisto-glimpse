@@ -1,5 +1,6 @@
 /* eslint-disable no-await-in-loop -- sequential assertions. */
 // @vitest-environment node
+import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   agentMessage,
@@ -314,6 +315,30 @@ describe('CodexExecutorRuntime (F2-11)', () => {
       await runtime.ensureSession({ resumeRef: null, fresh: false })
       const start = env.client().requests.find(entry => entry.method === 'thread/start')!
       expect(start.params).toMatchObject({ sandbox: 'danger-full-access', approvalPolicy: 'never' })
+    })
+  })
+
+  describe('service identity', () => {
+    it('gives pid and token hash and never the token', async () => {
+      const { runtime } = await ready()
+      const identity = await runtime.serviceIdentity()
+      expect(identity).toEqual({
+        pid: 4242,
+        tokenSha256: createHash('sha256').update('tok').digest('hex'),
+      })
+      expect(JSON.stringify(identity)).not.toContain('"tok"')
+    })
+
+    it.each([-1, 0, 1])('gives null for pid %i', async pid => {
+      const { runtime } = await ready({ pid })
+      await expect(runtime.serviceIdentity()).resolves.toBeNull()
+    })
+
+    it('gives null once the service exited', async () => {
+      const { runtime, processes } = await ready()
+      processes[0].exit(0, null)
+      await flush()
+      await expect(runtime.serviceIdentity()).resolves.toBeNull()
     })
   })
 })

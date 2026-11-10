@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { createHash } from 'node:crypto'
 import { vi } from 'vitest'
 import type {
   ExecutorRuntime,
@@ -91,7 +92,11 @@ class FakeClient {
 }
 
 export function setup(
-  options: { fullAccess?: () => boolean; approved?: { key: string; currentHash: string }[] } = {},
+  options: {
+    fullAccess?: () => boolean
+    approved?: { key: string; currentHash: string }[]
+    pid?: number
+  } = {},
 ) {
   const log: string[] = []
   const clients: FakeClient[] = []
@@ -112,7 +117,15 @@ export function setup(
         log.push('sigterm')
       })
       processes.push({ exit: (code, signal) => resolveExit({ code, signal }), close })
-      return { pid: 4242, port: 5, url: 'ws://127.0.0.1:5', token: 'tok', exited, close }
+      return {
+        pid: options.pid ?? 4242,
+        port: 5,
+        url: 'ws://127.0.0.1:5',
+        token: 'tok',
+        tokenSha256: createHash('sha256').update('tok').digest('hex'),
+        exited,
+        close,
+      }
     },
     createClient: () => {
       const client = new FakeClient(log)

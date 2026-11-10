@@ -25,6 +25,7 @@ import {
 } from '../process/ExecutorProcessSupervisor'
 import type { CodexAppServerProcess, CodexAppServerStartInput } from './CodexAppServerProcess'
 import { runtimeError, startPingLoop, type CodexJsonRpcClient } from './CodexJsonRpcClient'
+import { serviceIdentityOf } from './codexServiceIdentity'
 import { findPendingHooks, hookOverridesFromApproved } from './CodexHookTrust'
 import {
   APPROVAL_METHODS,
@@ -233,6 +234,8 @@ export class CodexExecutorRuntime implements ExecutorRuntime {
       cwd: this.config.spec.cwd,
     }
   }
+
+  serviceIdentity = async () => this.current && serviceIdentityOf(this.current.process)
 
   async close(reason: ExecutorCloseReason): Promise<void> {
     this.closing = true

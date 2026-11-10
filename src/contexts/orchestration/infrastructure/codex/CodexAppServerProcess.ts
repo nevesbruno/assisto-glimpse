@@ -49,6 +49,8 @@ export interface CodexAppServerProcess {
   readonly url: string
   /** Only in memory: the command line carries the SHA-256 and nothing else. */
   readonly token: string
+  /** SHA-256 hex of `token`, the same value the command line carries. */
+  readonly tokenSha256: string
   readonly exited: Promise<ServiceExit>
   close: () => Promise<void>
 }
@@ -181,6 +183,7 @@ export async function startCodexAppServer(
         port,
         url: `ws://127.0.0.1:${port}`,
         token,
+        tokenSha256,
         exited: attempt.exited,
         close,
       }

@@ -43,6 +43,9 @@ async function reapOne(
   pid: number,
   tokenSha256: string,
 ): Promise<void> {
+  if (pid <= 1) {
+    return
+  }
   const commandLine = await deps.readCommandLine(pid)
   if (!commandLine?.includes(`--ws-token-sha256 ${tokenSha256}`)) {
     return

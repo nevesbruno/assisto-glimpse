@@ -69,4 +69,10 @@ describe('CodexOrphanReaper (F2-11)', () => {
     await reap([link(1, 'abc'), link(2, 'abc')])
     expect(signals).toEqual([2])
   })
+
+  it.each([-1, 0, 1])('never signals pid %i even when the command line matches', async pid => {
+    const { reap, signals } = setup({ [pid]: cmd('abc') })
+    await reap([link(pid, 'abc')])
+    expect(signals).toEqual([])
+  })
 })
