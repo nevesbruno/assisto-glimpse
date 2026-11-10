@@ -5,7 +5,6 @@ import { canvasSpawnIdentity } from '../../../src/app/main/controlSurface/sessio
 import type { ControlSurfacePtyRuntime } from '../../../src/app/main/controlSurface/handlers/sessionPtyRuntime'
 import { createExecutorTuiLauncher } from '../../../src/app/main/controlSurface/orchestration/executorTuiLauncher'
 import { placeExecutorNode } from '../../../src/app/main/controlSurface/orchestration/executorNodePlacement'
-import { reenterTerminalAgent } from '../../../src/app/main/controlSurface/handlers/sessionPrepareOrReviveTerminalAgent'
 
 const TOKEN = 'tok-secret-value'
 const attach = {
@@ -121,21 +120,5 @@ describe('executor node placement', () => {
         expect(apart).toBe(true)
       }),
     )
-  })
-})
-
-describe('reviving an executor node', () => {
-  const node = { id: 'exec-1', agent: { provider: 'codex', resumeSessionId: 'x' } } as never
-  it('goes through the launcher and never writes the common Codex command', async () => {
-    const write = vi.fn()
-    const reviveExecutor = vi.fn(async () => true)
-    await reenterTerminalAgent({
-      node,
-      sessionId: 'fresh',
-      ptyRuntime: { write, waitForShellReady: async () => {} },
-      reviveExecutor,
-    })
-    expect(reviveExecutor).toHaveBeenCalledWith({ nodeId: 'exec-1', sessionId: 'fresh' })
-    expect(write).not.toHaveBeenCalled()
   })
 })

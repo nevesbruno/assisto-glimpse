@@ -36,6 +36,7 @@ export function registerSessionPrepareOrReviveHandler(
     >
     restoreTerminalSession?: (input: { nodeId: string; sessionId: string }) => Promise<boolean>
     terminalRecoverySpawnAdmission: TerminalRecoverySpawnAdmission
+    reviveExecutorTui?: (nodeId: string) => Promise<string | null>
   },
 ): void {
   const inFlightNodes = new Map<string, Promise<PreparedRuntimeNodeResult | null>>()
@@ -161,6 +162,7 @@ export function registerSessionPrepareOrReviveHandler(
                     workspace,
                     node,
                     space,
+                    reviveExecutorTui: deps.reviveExecutorTui,
                   })
                 },
               ),

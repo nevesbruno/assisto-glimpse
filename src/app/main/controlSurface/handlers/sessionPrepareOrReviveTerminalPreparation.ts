@@ -31,6 +31,8 @@ export async function prepareTerminalNode(options: {
   workspace: NormalizedPersistedWorkspace
   node: NormalizedPersistedNode
   space: NormalizedPersistedSpace | null
+  /** Session of the executor TUI relaunched by the orchestration, or null without an active link. */
+  reviveExecutorTui?: (nodeId: string) => Promise<string | null>
 }): Promise<PreparedRuntimeNodeResult> {
   const cwd = resolveTerminalRecoveryCwd(options.node, options.workspace.path)
   const spawnGeometry = options.node.terminalGeometry ?? {
@@ -70,6 +72,27 @@ export async function prepareTerminalNode(options: {
   }
 
   try {
+    const executorSessionId = await options.reviveExecutorTui?.(options.node.id)
+    if (executorSessionId) {
+      return toPreparedNodeResult(options.node, {
+        recoveryState: 'restarted',
+        sessionId: executorSessionId,
+        isLiveSessionReattach: true,
+        profileId: resolveNodeProfileId(options.node),
+        runtimeKind: resolveNodeRuntimeKind(options.node),
+        status: null,
+        startedAt: null,
+        endedAt: null,
+        exitCode: null,
+        lastError: null,
+        scrollback,
+        terminalGeometry: preparedTerminalGeometry,
+        workerBinding: launchContext.workerBinding,
+        executionDirectory: normalizeOptionalString(options.node.executionDirectory),
+        expectedDirectory: normalizeOptionalString(options.node.expectedDirectory),
+        agent: null,
+      })
+    }
     const spawned = await spawnFallbackTerminal({
       controlSurface: options.controlSurface,
       ctx: options.ctx,

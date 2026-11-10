@@ -75,6 +75,7 @@ export function registerSessionHandlers(
     terminalSpawnAdmission: TerminalSpawnAdmission
     terminalRecoverySpawnAdmission: TerminalRecoverySpawnAdmission
     agentProviderRegistry: AgentProviderRegistry
+    reviveExecutorTui?: (nodeId: string) => Promise<string | null>
   },
 ): void {
   const sessions = new Map<string, SessionRecord>()
@@ -432,6 +433,7 @@ export function registerSessionHandlers(
     ptyRuntime: deps.ptyRuntime,
     restoreTerminalSession: deps.restoreTerminalSession,
     terminalRecoverySpawnAdmission: deps.terminalRecoverySpawnAdmission,
+    reviveExecutorTui: deps.reviveExecutorTui,
   })
 
   registerOperation(controlSurface, sessionGetOperation, {
