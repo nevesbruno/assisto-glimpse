@@ -36,6 +36,7 @@ it('refuses input to a replacement session when the host captured an older bindi
   registerSessionInputHandlers(control, {
     getPersistenceStore: async () => store,
     ptyStreamHub: { writeAutomation } as unknown as PtyStreamHub,
+    guardDirectInput: async () => undefined,
   })
   const result = await control.invoke(
     { now: () => new Date() },
@@ -84,6 +85,7 @@ describe('queued node binding validation', () => {
     registerSessionInputHandlers(control, {
       getPersistenceStore: async () => store,
       ptyStreamHub: { writeAutomation } as unknown as PtyStreamHub,
+      guardDirectInput: async () => undefined,
     })
     const result = await control.invoke(
       { now: () => new Date() },

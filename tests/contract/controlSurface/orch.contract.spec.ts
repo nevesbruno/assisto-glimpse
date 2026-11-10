@@ -43,7 +43,7 @@ describe('orch.* operations contract (C-02)', () => {
     }
     for (const op of orchOperations) {
       for (const code of op.errors) {
-        expect(code.startsWith('orch.')).toBe(true)
+        expect(code.startsWith('orch.') || code === 'common.invalid_input').toBe(true)
       }
     }
   })

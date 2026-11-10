@@ -47,11 +47,13 @@ export const orchDispatchOperation = defineOperation({
   availability: 'always',
   summary: 'Queue a task for a linked executor',
   errors: [
+    'common.invalid_input',
     'orch.forbidden',
     'orch.not_linked',
     'orch.executor_unavailable',
     'orch.round_limit_reached',
     'orch.dispatch_conflict',
+    'orch.dispatch_in_flight',
   ],
   input: z.strictObject({
     dispatchId,
@@ -64,7 +66,10 @@ export const orchDispatchOperation = defineOperation({
       .max(86_400_000)
       .optional()
       .describe('Deadline in milliseconds after acceptance; default 30 minutes'),
-    fresh: z.boolean().optional().describe('Start a fresh executor session for this dispatch'),
+    fresh: z
+      .literal(false, 'fresh indisponível na fase 2')
+      .optional()
+      .describe('Reserved for a fresh executor session; refused in phase 2'),
   }),
 })
 
@@ -166,7 +171,12 @@ export const orchApprovalRespondOperation = defineOperation({
   scope: 'admin',
   availability: 'always',
   summary: 'Answer a pending executor approval request',
-  errors: ['orch.forbidden', 'orch.not_linked', 'orch.approval_not_found'],
+  errors: [
+    'orch.forbidden',
+    'orch.not_linked',
+    'orch.executor_unavailable',
+    'orch.approval_not_found',
+  ],
   input: z.strictObject({
     executorNodeId: id.describe('Executor node holding the request'),
     requestId: id.describe('Approval request identifier'),
@@ -182,7 +192,12 @@ export const orchHooksApproveOperation = defineOperation({
   scope: 'admin',
   availability: 'always',
   summary: 'Approve pending executor hooks and restart its service',
-  errors: ['orch.forbidden', 'orch.not_linked', 'orch.executor_unavailable'],
+  errors: [
+    'common.invalid_input',
+    'orch.forbidden',
+    'orch.not_linked',
+    'orch.executor_unavailable',
+  ],
   input: z.strictObject({
     executorNodeId: id.describe('Executor node with pending hooks'),
     keys: z.array(id).min(1).max(64).describe('Hook keys to approve'),

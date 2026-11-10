@@ -9,6 +9,7 @@ import type { PersistenceStore } from '../../../../platform/persistence/sqlite/P
 import { findNodeForNodeControl } from '../../../../contexts/workspace/application/nodeControl/nodeDtos'
 import type { ControlSurface } from '../controlSurface'
 import type { PtyStreamHub } from '../ptyStream/ptyStreamHub'
+import type { DirectInputGuard } from './directInputGuard'
 
 /** Exact durable node -> current PTY binding, rechecked after queued readiness work. */
 export function registerSessionInputHandlers(
@@ -16,6 +17,7 @@ export function registerSessionInputHandlers(
   deps: {
     getPersistenceStore(): Promise<PersistenceStore>
     ptyStreamHub: PtyStreamHub
+    guardDirectInput: DirectInputGuard
   },
 ) {
   async function binding(nodeId: string) {
@@ -48,6 +50,7 @@ export function registerSessionInputHandlers(
   })
   registerOperation(control, sessionWriteNodeOperation, {
     async handle(ctx, input) {
+      await deps.guardDirectInput(ctx, 'session.writeNode', input.nodeId)
       const sessionId = input.sessionId
       if ((await binding(input.nodeId)) !== sessionId) {
         throw new Error('Node session changed before input; read it again.')

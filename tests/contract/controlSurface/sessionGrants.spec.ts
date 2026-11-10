@@ -43,10 +43,21 @@ describe('session grants', () => {
 
   it('allows exactly registered read/interact operations, retaining private-only fences', () => {
     for (const op of CONTROL_SURFACE_OPERATIONS) {
-      const privateOnly = op.id.startsWith('worker.') || op.id === 'auth.issueWebSessionTicket'
+      const privateOnly =
+        op.id.startsWith('worker.') ||
+        op.id === 'auth.issueWebSessionTicket' ||
+        op.id === 'sync.writeState' ||
+        op.id === 'sync.writeWorkspaceStateRaw'
       expect(sessionGrantAllowsOperation(op.id)).toBe(!privateOnly && op.scope !== 'admin')
     }
     expect(sessionGrantAllowsOperation('unknown')).toBe(false)
+  })
+
+  it('denies state writes to a grant at both tiers', () => {
+    for (const id of ['sync.writeState', 'sync.writeWorkspaceStateRaw']) {
+      expect(sessionGrantAllowsOperation(id, 'interact')).toBe(false)
+      expect(sessionGrantAllowsOperation(id, 'read')).toBe(false)
+    }
   })
 
   it('authenticates grants only via bearer and never falls back from revoked bearer to cookie', () => {

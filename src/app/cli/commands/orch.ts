@@ -422,7 +422,7 @@ const userCommands: Command[] = [
     examples: [
       'opencove orch link extend --link 91c2f3a0-0000-4000-8000-000000000001 --rounds 1 --reason "Needs a retry"',
     ],
-    render: declaredOutput(['roundsLimit'], { roundsLimit: 4 }),
+    render: declaredOutput(['linkId', 'roundsLimit'], { linkId: 'l', roundsLimit: 4 }),
     buildInput: ({ options }) => ({
       linkId: options.link,
       rounds: options.rounds,
@@ -476,7 +476,7 @@ const userCommands: Command[] = [
       },
     },
     examples: ['opencove orch hooks approve --to exec-api --key hook-a --key hook-b'],
-    render: declaredOutput(['ok'], { ok: true }),
+    render: declaredOutput(['approved', 'restart'], { approved: 2, restart: 'scheduled' }),
     buildInput: ({ options }) => ({ executorNodeId: options.to, keys: [options.key].flat() }),
   }),
 ]

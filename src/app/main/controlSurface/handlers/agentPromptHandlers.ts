@@ -4,16 +4,16 @@ import type { PtyStreamHub } from '../ptyStream/ptyStreamHub'
 import type { AgentProviderRegistry } from '../../../../contexts/agent/application/services/AgentProviderRegistry'
 import { PromptDeliveryService } from '../../../../contexts/agent/application/PromptDeliveryService'
 import { registerOperation } from '../registerOperation'
+import type { DirectInputGuard } from './directInputGuard'
 import {
   agentDeliveryGetOperation,
   agentPromptOperation,
 } from '../../../../shared/contracts/controlSurface/operations/domains/agent'
 
-/** One service per Worker composition, never one reservation map per HTTP request. */
-export function registerAgentPromptHandlers(
-  surface: ControlSurface,
+/** The one service of the Worker: the reservation lives in the instance, so every writer must share it. */
+export function createAgentPromptDelivery(
   hub: PtyStreamHub,
-  providers: AgentProviderRegistry,
+  providers: Pick<AgentProviderRegistry, 'require'>,
 ): PromptDeliveryService {
   const service = new PromptDeliveryService({
     runs: hub.agentRuns.registry,
@@ -27,23 +27,32 @@ export function registerAgentPromptHandlers(
     },
   })
   hub.agentRuns.registry.onDispose(() => service.dispose())
+  return service
+}
+
+export function registerAgentPromptHandlers(
+  surface: ControlSurface,
+  hub: PtyStreamHub,
+  service: PromptDeliveryService,
+  guardDirectInput: DirectInputGuard,
+): void {
   registerOperation(surface, agentDeliveryGetOperation, {
     handle: (_ctx, input) => service.get(input.deliveryId),
     defaultErrorCode: 'common.unexpected',
   })
   registerOperation(surface, agentPromptOperation, {
-    handle: (ctx, input) =>
-      service.deliver(
-        {
-          ...input,
-          nodeId:
-            input.nodeId === '@self' && ctx.requestAuth?.kind === 'session-grant'
-              ? ctx.requestAuth.grant.nodeId
-              : input.nodeId,
-        },
-        ctx,
-      ),
+    handle: async (ctx, input) => {
+      const nodeId =
+        input.nodeId === '@self' && ctx.requestAuth?.kind === 'session-grant'
+          ? ctx.requestAuth.grant.nodeId
+          : input.nodeId
+      const targetNodeId =
+        nodeId ?? hub.agentRuns.registry.get({ sessionId: input.sessionId! })?.nodeId
+      if (targetNodeId) {
+        await guardDirectInput(ctx, 'agent.prompt', targetNodeId)
+      }
+      return service.deliver({ ...input, nodeId }, ctx)
+    },
     defaultErrorCode: 'common.unexpected',
   })
-  return service
 }

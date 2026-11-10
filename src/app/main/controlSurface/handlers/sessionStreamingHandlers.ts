@@ -31,6 +31,7 @@ import type { WorkerTopologyStore } from '../topology/topologyStore'
 import { resolveSpaceMountContext } from '../../../../contexts/space/application/resolveSpaceMountContext'
 import type { TerminalAgentActivityEnvironmentService } from '../../../../contexts/agent/infrastructure/terminal-activity/TerminalAgentActivityEnvironmentService'
 import { spawnTerminalWithActivity } from './terminalAgentActivitySpawn'
+import type { DirectInputGuard } from './directInputGuard'
 
 const terminalProfileResolver = new TerminalProfileResolver()
 
@@ -62,6 +63,7 @@ export function registerSessionStreamingHandlers(
     topology: WorkerTopologyStore
     terminalSpawnAdmission: TerminalSpawnAdmission
     terminalAgentActivity?: TerminalAgentActivityEnvironmentService
+    guardDirectInput: DirectInputGuard
   },
 ): void {
   registerSessionInputHandlers(controlSurface, deps)

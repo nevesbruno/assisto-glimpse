@@ -246,27 +246,3 @@ it('describes every input field in words an agent can act on', () => {
   }
   expect(problems).toEqual([])
 })
-
-it('registers a provisional handler that refuses every orch operation without effects', async () => {
-  const { orchOperations } =
-    await import('../../../src/shared/contracts/controlSurface/operations/domains/orch')
-  const { registerOrchestrationProvisionalHandlers } =
-    await import('../../../src/app/main/controlSurface/handlers/orchestrationProvisionalHandlers')
-  const registered = new Map<
-    string,
-    { handle: (ctx: never, payload: never) => unknown; kind: string }
-  >()
-  registerOrchestrationProvisionalHandlers({
-    register: (id: string, handler: never) => registered.set(id, handler),
-  } as unknown as ControlSurface)
-  expect([...registered.keys()].sort()).toEqual(orchOperations.map(op => op.id).sort())
-  await Promise.all(
-    orchOperations.map(async op => {
-      const handler = registered.get(op.id)!
-      expect(handler.kind).toBe(op.kind)
-      await expect(
-        Promise.resolve().then(() => handler.handle({} as never, {} as never)),
-      ).rejects.toMatchObject({ code: 'common.unavailable' })
-    }),
-  )
-})

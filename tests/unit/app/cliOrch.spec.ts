@@ -14,7 +14,14 @@ const blockedBy = (dispatchId: string, state = 'sent', round = 1) => ({
 })
 
 /** Fake Control Surface: counts one acceptance per dispatchId and logs stdout, stderr and fetch order. */
-function server(opts: { hang?: boolean; inFlight?: boolean; status?: unknown } = {}) {
+function server(
+  opts: {
+    hang?: boolean
+    inFlight?: boolean
+    status?: unknown
+    results?: Record<string, unknown>
+  } = {},
+) {
   const order: string[] = []
   const accepted = new Set<string>()
   const bodies: { id: string; payload: Record<string, string> }[] = []
@@ -70,7 +77,7 @@ function server(opts: { hang?: boolean; inFlight?: boolean; status?: unknown } =
     if (body.id === 'orch.cancel') {
       return reply({ dispatchId: body.payload.dispatchId, state: 'cancelled', round: 1 })
     }
-    return reply({})
+    return reply(opts.results?.[body.id] ?? {})
   })
   const io: CliIo = {
     stdout: { write: t => ((out += t), order.push('stdout')) },
@@ -336,3 +343,42 @@ it('spawn defaults the provider to codex and approval respond requires a decisio
   expect(await run(['orch', 'approval', 'respond', '--to', 'e', '--request', 'r1'], a.io)).toBe(2)
   expect(a.fetch).not.toHaveBeenCalled()
 })
+
+const realResults: [string[], string, Record<string, unknown>, string[]][] = [
+  [['interrupt', '--to', 'e'], 'orch.interrupt', { ok: true }, ['ok', 'to']],
+  [['close', '--to', 'e'], 'orch.close', { ok: true }, ['ok', 'to']],
+  [['link', 'close', '--link', ID], 'orch.link.close', { ok: true }, ['ok']],
+  [
+    ['approval', 'respond', '--to', 'e', '--request', 'r1', '--decision', 'accept'],
+    'orch.approval.respond',
+    { ok: true },
+    ['ok'],
+  ],
+  [
+    ['hooks', 'approve', '--to', 'e', '--key', 'a'],
+    'orch.hooks.approve',
+    { approved: 2, restart: 'scheduled' },
+    ['approved', 'restart'],
+  ],
+  [
+    ['link', 'extend', '--link', ID, '--rounds', '1', '--reason', 'more'],
+    'orch.link.extend',
+    { linkId: ID, roundsLimit: 4 },
+    ['linkId', 'roundsLimit'],
+  ],
+  [
+    ['link', 'create', '--orchestrator', 'o', '--executor', 'e'],
+    'orch.link.create',
+    { linkId: ID, runtimeMode: 'service' },
+    ['linkId', 'runtimeMode'],
+  ],
+]
+
+it.each(realResults)(
+  'orch %j selects every field of the real result with --fields',
+  async (argv, operation, result, fields) => {
+    const s = server({ results: { [operation]: result } })
+    expect(await run(['orch', ...argv, '-o', 'json', '--fields', fields.join(',')], s.io)).toBe(0)
+    expect(Object.keys(JSON.parse(s.out())).sort()).toEqual(fields.slice().sort())
+  },
+)

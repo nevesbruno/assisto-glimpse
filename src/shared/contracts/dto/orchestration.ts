@@ -198,6 +198,12 @@ export const orchestrationStatusResultSchema = z.strictObject({
   links: z.array(orchestrationStatusLinkSchema),
 })
 
+export const orchestrationHooksApproveResultSchema = z.strictObject({
+  approved: countSchema,
+  restart: z.enum(['done', 'scheduled']),
+})
+
+export type OrchestrationHooksApproveResult = z.infer<typeof orchestrationHooksApproveResultSchema>
 export type OrchestrationAdmission = z.infer<typeof orchestrationAdmissionSchema>
 export type OrchestrationDispatchView = z.infer<typeof orchestrationDispatchViewSchema>
 export type OrchestrationDispatchResult = z.infer<typeof orchestrationDispatchResultSchema>

@@ -7,7 +7,10 @@ import {
   agentPromptOperation as op,
 } from '../../../src/shared/contracts/controlSurface/operations/domains/agent'
 import { createControlSurface } from '../../../src/app/main/controlSurface/controlSurface'
-import { registerAgentPromptHandlers } from '../../../src/app/main/controlSurface/handlers/agentPromptHandlers'
+import {
+  createAgentPromptDelivery,
+  registerAgentPromptHandlers,
+} from '../../../src/app/main/controlSurface/handlers/agentPromptHandlers'
 import { PtyStreamHub } from '../../../src/app/main/controlSurface/ptyStream/ptyStreamHub'
 import { AgentProviderRegistry } from '../../../src/contexts/agent/application/services/AgentProviderRegistry'
 import { createBuiltinAgentProviderContributions } from '../../../src/contexts/agent/infrastructure/providers/catalog/BuiltinAgentProviderCatalog'
@@ -53,7 +56,12 @@ describe('agent.prompt contract', () => {
     })
     const surface = createControlSurface()
     const providers = new AgentProviderRegistry(createBuiltinAgentProviderContributions())
-    registerAgentPromptHandlers(surface, hub, providers)
+    registerAgentPromptHandlers(
+      surface,
+      hub,
+      createAgentPromptDelivery(hub, providers),
+      async () => undefined,
+    )
     hub.agentRuns.registry.register({
       sessionId: 's',
       nodeId: 'n',
