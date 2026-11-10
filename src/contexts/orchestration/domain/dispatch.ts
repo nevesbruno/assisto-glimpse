@@ -76,11 +76,8 @@ export interface CreatedDispatch {
   readonly rounds: RoundCounter
 }
 
-export function createDispatch(input: CreateDispatchInput): CreatedDispatch {
-  const { link, text, now } = input
-  if (link.state !== 'active') {
-    throw new OrchestrationError('orch.not_linked')
-  }
+/** Returns the size in utf-8 bytes of a text the dispatch accepts. */
+export function assertDispatchText(text: string): number {
   const bytes = new TextEncoder().encode(text).length
   if (bytes < 1 || bytes > DISPATCH_TEXT_MAX_BYTES) {
     throw new DispatchRuleError(
@@ -88,6 +85,15 @@ export function createDispatch(input: CreateDispatchInput): CreatedDispatch {
       `text must have 1 to ${DISPATCH_TEXT_MAX_BYTES} bytes`,
     )
   }
+  return bytes
+}
+
+export function createDispatch(input: CreateDispatchInput): CreatedDispatch {
+  const { link, text, now } = input
+  if (link.state !== 'active') {
+    throw new OrchestrationError('orch.not_linked')
+  }
+  const bytes = assertDispatchText(text)
   const rounds = consumeRound(link)
   const deadlineMs = input.deadlineMs ?? DEFAULT_DEADLINE_MS
   return {

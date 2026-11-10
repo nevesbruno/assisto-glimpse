@@ -1,27 +1,49 @@
-import { transitionDispatch, type Dispatch } from '../domain/dispatch'
+/* oxlint-disable no-await-in-loop -- each retry reads afresh, then writes, in order */
+import type { Dispatch, DispatchEvent, DispatchState } from '../domain/dispatch'
 import { sanitizeExcerpt } from '../domain/noticeComposer'
 import { executorHealthOf } from './executorHealth'
-import { failOpenDispatch, saveDispatch, settleDispatch } from './linkLifecycle'
+import { restartIfIdle } from './hookApprovals'
+import { failOpenDispatch, saveDispatch, settleDispatch, type SettleOptions } from './linkLifecycle'
 import type { ExecutorSlot, OrchestrationContext } from './OrchestrationService'
 import type { ExecutorRuntimeEvent } from './ports'
+import { isRefusedBeforeWrite } from './runtimeErrors'
 
 type TurnStarted = Extract<ExecutorRuntimeEvent, { type: 'turn.started' }>
 type TurnCompleted = Extract<ExecutorRuntimeEvent, { type: 'turn.completed' }>
 
-const REFUSED_BEFORE_WRITE = new Set([
-  'executor.rejected',
-  'executor.busy',
-  'executor.unavailable',
-  'executor.session_lost',
-  'executor.unsupported',
-])
+const SETTLE_ATTEMPTS = 3
 
-function isRefusedBeforeWrite(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code
-  return typeof code === 'string' && REFUSED_BEFORE_WRITE.has(code)
+/**
+ * Applies an event on a dispatch read afresh by id, so a write that failed, or committed and
+ * lost its answer, never leaves the retry on a stale revision. A dispatch no longer in one of
+ * the `from` states was settled already and is given back as it is.
+ */
+async function settleFresh(
+  ctx: OrchestrationContext,
+  dispatchId: string,
+  from: readonly DispatchState[],
+  event: DispatchEvent,
+  options?: SettleOptions,
+): Promise<Dispatch | null> {
+  let failure: unknown = null
+  for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt += 1) {
+    try {
+      const current = await ctx.deps.dispatches.findById(dispatchId)
+      if (!current || !from.includes(current.state)) {
+        return current
+      }
+      return await settleDispatch(ctx, current, event, options)
+    } catch (error) {
+      failure = error
+    }
+  }
+  throw failure
 }
 
-/** Reserves and sends the only `queued` dispatch of the executor, when nothing blocks it. */
+/**
+ * Sends the only `queued` dispatch of the executor when nothing blocks it. A service waiting for
+ * a restart is restarted first, and its start waking the pump again is what sends the work.
+ */
 export async function pumpExecutor(
   ctx: OrchestrationContext,
   executorNodeId: string,
@@ -50,18 +72,23 @@ export async function pumpExecutor(
   ) {
     return
   }
+  if (slot.restartPending) {
+    await restartIfIdle(ctx, slot).catch(() => undefined)
+    return
+  }
   const queued = await dispatches.findOldestQueuedByExecutor(executorNodeId)
   if (!queued?.text) {
     return
   }
-  const reserved = await saveDispatch(
+  const reserved = await settleDispatch(
     ctx,
-    transitionDispatch(queued, { type: 'reserve', now: clock.now() }).dispatch,
+    queued,
+    { type: 'reserve', now: clock.now() },
+    { notice: 'none' },
   )
-  if (!reserved) {
-    return
+  if (reserved.state === 'reserved') {
+    await sendReserved(ctx, slot, reserved)
   }
-  await sendReserved(ctx, slot, reserved)
 }
 
 async function sendReserved(
@@ -70,16 +97,17 @@ async function sendReserved(
   reserved: Dispatch,
 ): Promise<void> {
   const now = ctx.deps.clock.now()
+  let event: DispatchEvent
   try {
     const { turnRef } = await slot.runtime!.startTurn({
       dispatchId: reserved.id,
       text: reserved.text!,
     })
-    await settleDispatch(ctx, reserved, { type: 'service_accepted', turnRef, now })
+    event = { type: 'service_accepted', turnRef, now }
   } catch (error) {
-    const type = isRefusedBeforeWrite(error) ? 'service_rejected' : 'send_uncertain'
-    await settleDispatch(ctx, reserved, { type, now })
+    event = { type: isRefusedBeforeWrite(error) ? 'service_rejected' : 'send_uncertain', now }
   }
+  await settleFresh(ctx, reserved.id, ['reserved'], event)
 }
 
 async function dispatchOf(
@@ -95,6 +123,22 @@ async function dispatchOf(
   return open?.turnRef === event.turnRef ? open : null
 }
 
+/** The service says it runs the turn of a dispatch whose own acceptance was never recorded. */
+function acceptReserved(
+  ctx: OrchestrationContext,
+  reserved: Dispatch,
+  turnRef: string,
+  glimpseTurnId: string | null,
+): Promise<Dispatch | null> {
+  const event = {
+    type: 'service_accepted',
+    turnRef,
+    glimpseTurnId,
+    now: ctx.deps.clock.now(),
+  } as const
+  return settleFresh(ctx, reserved.id, ['reserved'], event)
+}
+
 async function onTurnStarted(ctx: OrchestrationContext, slot: ExecutorSlot, event: TurnStarted) {
   const { glimpseTurnId } = await ctx.deps.runState.recordTurnStarted({
     executorNodeId: slot.executorNodeId,
@@ -104,7 +148,9 @@ async function onTurnStarted(ctx: OrchestrationContext, slot: ExecutorSlot, even
   })
   slot.turns.set(event.turnRef, glimpseTurnId)
   const dispatch = await dispatchOf(ctx, slot, event)
-  if (dispatch?.state === 'sent' && !dispatch.glimpseTurnId) {
+  if (dispatch?.state === 'reserved' && event.dispatchId === dispatch.id) {
+    await acceptReserved(ctx, dispatch, event.turnRef, glimpseTurnId)
+  } else if (dispatch?.state === 'sent' && !dispatch.glimpseTurnId) {
     await saveDispatch(ctx, { ...dispatch, glimpseTurnId, revision: dispatch.revision + 1 })
   }
 }
@@ -125,7 +171,10 @@ async function onTurnCompleted(
       finalMessage: event.finalMessage,
     })
   }
-  const dispatch = await dispatchOf(ctx, slot, event)
+  let dispatch = await dispatchOf(ctx, slot, event)
+  if (dispatch?.state === 'reserved' && event.dispatchId === dispatch.id) {
+    dispatch = await acceptReserved(ctx, dispatch, event.turnRef, glimpseTurnId)
+  }
   if (dispatch && (dispatch.state === 'sent' || dispatch.state === 'uncertain')) {
     await settleDispatch(ctx, dispatch, {
       type: 'turn_finished',

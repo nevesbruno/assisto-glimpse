@@ -1,10 +1,12 @@
 import { createExecutorLink, OrchestrationError, type AgentLink } from '../domain/agentLink'
 import type { OrchestrationPrincipal } from '../domain/orchestrationAuthorization'
 import type { OrchestrationSpawnResult } from '../../../shared/contracts/dto/orchestration'
-import { acceptDispatch, acceptedOf } from './dispatchToExecutor'
+import { assertDispatchText } from '../domain/dispatch'
+import { acceptDispatch, acceptedOf, queuedDispatchOf } from './dispatchToExecutor'
 import { closeExecutorLink, updateLink } from './linkLifecycle'
 import type { OrchestrationContext } from './OrchestrationService'
 import type { ExecutorRuntimeProvider } from './ports'
+import { callRuntime, translateRuntimeError } from './runtimeErrors'
 import { currentAdmission } from './statusView'
 
 export interface SpawnInput {
@@ -22,16 +24,6 @@ export interface ServiceStart {
   readonly cwd: string
   readonly model: string | null
   readonly version: string
-}
-
-function asOrchestrationError(error: unknown): unknown {
-  const code = (error as { code?: unknown } | null)?.code
-  if (code === 'executor.protocol_mismatch') {
-    return new OrchestrationError('orch.protocol_mismatch')
-  }
-  return typeof code === 'string' && code.startsWith('executor.')
-    ? new OrchestrationError('orch.executor_unavailable')
-    : error
 }
 
 /** Starts the service of a link, resumes the session and marks the executor ready. */
@@ -80,26 +72,53 @@ export async function restartLinkedService(
   if (!node?.cwd) {
     throw new OrchestrationError('orch.executor_unavailable')
   }
-  const probe = await ctx.deps.runtimeFactory(link.provider as ExecutorRuntimeProvider).probe()
+  const probe = await callRuntime(() =>
+    ctx.deps.runtimeFactory(link.provider as ExecutorRuntimeProvider).probe(),
+  )
   if (!probe.compatible) {
     throw new OrchestrationError('orch.protocol_mismatch')
   }
   await startExecutorService(ctx, { link, cwd: node.cwd, version: probe.version, model: null })
 }
 
+/** Scoped by orchestrator, like the unique index of the spawn request. */
+function initialDispatchId(
+  ctx: OrchestrationContext,
+  orchestratorNodeId: string,
+  requestId: string,
+): string {
+  return ctx.deps.ids.uuidV5(`${orchestratorNodeId}:${requestId}`)
+}
+
+/** The resend of a spawn gives back the first dispatch, creating it when the link lacks it. */
 async function existingSpawn(
   ctx: OrchestrationContext,
   link: AgentLink,
-  requestId: string,
+  input: SpawnInput,
 ): Promise<OrchestrationSpawnResult> {
-  const first = await ctx.deps.dispatches.findById(ctx.deps.ids.uuidV5(requestId))
+  const { dispatches, links } = ctx.deps
+  const dispatchId = initialDispatchId(ctx, link.orchestratorNodeId, input.requestId)
+  const stored = await dispatches.findById(dispatchId)
+  let first = stored && acceptedOf(stored, link)
+  if (!stored && input.prompt && link.state === 'active') {
+    const {
+      dispatchId: id,
+      state,
+      round,
+      roundsLimit,
+    } = await ctx.runExclusive(link.executorNodeId, () =>
+      acceptDispatch(ctx, { dispatchId, link, text: input.prompt! }),
+    )
+    first = { dispatchId: id, state, round, roundsLimit }
+  }
+  const latest = (await links.findById(link.id)) ?? link
   return {
     executorNodeId: link.executorNodeId,
     linkId: link.id,
     runtimeMode: link.runtimeMode,
     duplicate: true,
-    dispatch: first ? acceptedOf(first, link) : null,
-    admission: await currentAdmission(ctx, link),
+    dispatch: first,
+    admission: await currentAdmission(ctx, latest),
   }
 }
 
@@ -111,7 +130,7 @@ async function createLinkedExecutor(
   const { nodes, links, ids, clock } = ctx.deps
   const factory = ctx.deps.runtimeFactory(input.provider)
   const probe = await factory.probe().catch((error: unknown) => {
-    throw asOrchestrationError(error)
+    throw translateRuntimeError(error)
   })
   if (!probe.compatible) {
     throw new OrchestrationError('orch.protocol_mismatch')
@@ -143,11 +162,23 @@ async function createLinkedExecutor(
     existingLinks: await links.listActive(),
     now: clock.now(),
   })
-  const inserted = await links.insert(link)
-  if (!inserted.ok) {
-    throw new OrchestrationError('orch.link_invalid', inserted.reason)
+  const first = input.prompt
+    ? queuedDispatchOf(ctx, {
+        dispatchId: initialDispatchId(ctx, orchestratorNodeId, input.requestId),
+        link,
+        text: input.prompt,
+      })
+    : null
+  const persisted = await ctx.deps.ledger.createLinkWithDispatch(link, first)
+  if (!persisted.ok) {
+    throw new OrchestrationError('orch.link_invalid', persisted.reason)
   }
-  return { link: inserted.value, cwd: executor.cwd, version: probe.version }
+  return {
+    link: persisted.link,
+    first: persisted.dispatch,
+    cwd: executor.cwd,
+    version: probe.version,
+  }
 }
 
 async function launchTui(ctx: OrchestrationContext, executorNodeId: string): Promise<void> {
@@ -166,41 +197,32 @@ export async function spawnExecutor(
   if (!orchestratorNodeId) {
     throw new OrchestrationError('orch.link_invalid', 'orchestratorNodeId is required')
   }
+  if (input.prompt) {
+    assertDispatchText(input.prompt)
+  }
   return ctx.runExclusive(`spawn:${orchestratorNodeId}`, async () => {
     const known = await ctx.deps.links.findBySpawnRequest(orchestratorNodeId, input.requestId)
     if (known) {
-      return existingSpawn(ctx, known, input.requestId)
+      return existingSpawn(ctx, known, input)
     }
-    const { link, cwd, version } = await createLinkedExecutor(ctx, orchestratorNodeId, input)
+    const { link, first, cwd, version } = await createLinkedExecutor(ctx, orchestratorNodeId, input)
     return ctx.runExclusive(link.executorNodeId, async () => {
       try {
         await startExecutorService(ctx, { link, cwd, version, model: input.model ?? null })
         await launchTui(ctx, link.executorNodeId)
       } catch (error) {
         await closeExecutorLink(ctx, link, 'spawn_failed', true)
-        throw asOrchestrationError(error)
+        throw translateRuntimeError(error)
       }
-      const current = (await ctx.deps.links.findById(link.id)) ?? link
-      const first = input.prompt
-        ? await acceptDispatch(ctx, {
-            dispatchId: ctx.deps.ids.uuidV5(input.requestId),
-            link: current,
-            text: input.prompt,
-          })
-        : null
-      const latest = (await ctx.deps.links.findById(link.id)) ?? current
+      ctx.wake(link.executorNodeId)
+      const latest = (await ctx.deps.links.findById(link.id)) ?? link
       return {
         executorNodeId: link.executorNodeId,
         linkId: link.id,
         runtimeMode: link.runtimeMode,
         duplicate: false,
-        dispatch: first && {
-          dispatchId: first.dispatchId,
-          state: first.state,
-          round: first.round,
-          roundsLimit: first.roundsLimit,
-        },
-        admission: first?.admission ?? (await currentAdmission(ctx, latest)),
+        dispatch: first && acceptedOf(first, latest),
+        admission: await currentAdmission(ctx, latest, first),
       }
     })
   })

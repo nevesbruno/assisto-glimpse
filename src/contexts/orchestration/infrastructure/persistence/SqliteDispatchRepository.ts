@@ -92,21 +92,65 @@ function toDispatch(row: Row): Dispatch {
   }
 }
 
+export function readDispatchRow(db: SqliteHandle, dispatchId: string): Dispatch | null {
+  const row = db
+    .prepare(`SELECT ${COLUMN_LIST} FROM orchestration_dispatches WHERE id = ?`)
+    .get(dispatchId as never)
+  return row ? toDispatch(row as Row) : null
+}
+
+export function findOpenDispatchRow(db: SqliteHandle, executorNodeId: string): Dispatch | null {
+  const row = db
+    .prepare(
+      `SELECT ${COLUMN_LIST} FROM orchestration_dispatches
+       WHERE executor_node_id = ? AND state IN ${NON_FINAL}`,
+    )
+    .get(executorNodeId as never)
+  return row ? toDispatch(row as Row) : null
+}
+
+/** Another dispatch of the executor already holds the turn, which D1 allows to only one. */
+export function hasOtherInFlightRow(db: SqliteHandle, dispatch: Dispatch): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM orchestration_dispatches
+         WHERE executor_node_id = ? AND id <> ? AND state IN ${IN_FLIGHT}`,
+      )
+      .get(...([dispatch.executorNodeId, dispatch.id] as never[])) !== undefined
+  )
+}
+
+export function insertDispatchRow(db: SqliteHandle, dispatch: Dispatch): void {
+  db.prepare(`INSERT INTO orchestration_dispatches (${COLUMN_LIST}) VALUES (${PLACEHOLDERS})`).run(
+    ...(toParams(dispatch) as never[]),
+  )
+}
+
+/** Compare and swap by `revision`: the row changes only when it holds the previous one. */
+export function casDispatchRow(
+  db: SqliteHandle,
+  next: Dispatch,
+): 'ok' | 'revision_conflict' | 'not_found' {
+  const [, ...assignedValues] = toParams(next)
+  const { changes } = db
+    .prepare(`UPDATE orchestration_dispatches SET ${ASSIGNMENTS} WHERE id = ? AND revision = ?`)
+    .run(...([...assignedValues, next.id, next.revision - 1] as never[]))
+  if (Number(changes) === 1) {
+    return 'ok'
+  }
+  return readDispatchRow(db, next.id) ? 'revision_conflict' : 'not_found'
+}
+
 export class SqliteDispatchRepository implements DispatchRepository {
   public constructor(private readonly db: SqliteHandle) {}
 
   public async insert(dispatch: Dispatch): Promise<InsertDispatchResult> {
-    if (
-      this.db
-        .prepare('SELECT 1 FROM orchestration_dispatches WHERE id = ?')
-        .get(dispatch.id as never)
-    ) {
+    if (readDispatchRow(this.db, dispatch.id)) {
       return { ok: false, reason: 'id_exists' }
     }
     try {
-      this.db
-        .prepare(`INSERT INTO orchestration_dispatches (${COLUMN_LIST}) VALUES (${PLACEHOLDERS})`)
-        .run(...(toParams(dispatch) as never[]))
+      insertDispatchRow(this.db, dispatch)
     } catch (error) {
       if (isUniqueViolation(error, 'orchestration_dispatches.executor_node_id')) {
         return { ok: false, reason: 'executor_busy' }
@@ -120,20 +164,11 @@ export class SqliteDispatchRepository implements DispatchRepository {
   }
 
   public async update(next: Dispatch): Promise<UpdateDispatchResult> {
-    if (next.state === 'reserved' && this.otherInFlight(next)) {
+    if (next.state === 'reserved' && hasOtherInFlightRow(this.db, next)) {
       return { ok: false, reason: 'in_flight_conflict' }
     }
-    const [, ...assignedValues] = toParams(next)
-    const { changes } = this.db
-      .prepare(`UPDATE orchestration_dispatches SET ${ASSIGNMENTS} WHERE id = ? AND revision = ?`)
-      .run(...([...assignedValues, next.id, next.revision - 1] as never[]))
-    if (Number(changes) === 1) {
-      return { ok: true, value: next }
-    }
-    const exists = this.db
-      .prepare('SELECT 1 FROM orchestration_dispatches WHERE id = ?')
-      .get(next.id as never)
-    return { ok: false, reason: exists ? 'revision_conflict' : 'not_found' }
+    const outcome = casDispatchRow(this.db, next)
+    return outcome === 'ok' ? { ok: true, value: next } : { ok: false, reason: outcome }
   }
 
   public async findById(dispatchId: string): Promise<Dispatch | null> {
@@ -161,17 +196,6 @@ export class SqliteDispatchRepository implements DispatchRepository {
       return []
     }
     return this.many(`state IN (${states.map(() => '?').join(', ')})`, ...states)
-  }
-
-  private otherInFlight(dispatch: Dispatch): boolean {
-    return (
-      this.db
-        .prepare(
-          `SELECT 1 FROM orchestration_dispatches
-           WHERE executor_node_id = ? AND id <> ? AND state IN ${IN_FLIGHT}`,
-        )
-        .get(...([dispatch.executorNodeId, dispatch.id] as never[])) !== undefined
-    )
   }
 
   private one(where: string, ...params: string[]): Dispatch | null {

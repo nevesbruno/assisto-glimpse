@@ -6,6 +6,7 @@ import {
   orchestrationStatusResultSchema,
 } from '../../../../../src/shared/contracts/dto/orchestration'
 import {
+  codedError,
   completedEvent,
   orchestratorPrincipal,
   sha256,
@@ -26,6 +27,36 @@ async function expectCode(promise: Promise<unknown>, code: string) {
 }
 
 describe('dispatchToExecutor (U-02)', () => {
+  it('T1: a limit extended by another writer after the read survives the accept', async () => {
+    const { harness, executorNodeId, linkId } = await spawnedHarness()
+    const stored = harness.dispatches.findById
+    let extended = false
+    harness.dispatches.findById = async id => {
+      if (!extended) {
+        extended = true
+        await harness.links.extendRounds(linkId, 2, '2026-11-09T12:00:01.000Z')
+      }
+      return stored(id)
+    }
+    const result = await harness.service.dispatch(orq, {
+      dispatchId: D1,
+      to: executorNodeId,
+      text: 'do it',
+    })
+    expect(result).toMatchObject({ round: 1, roundsLimit: 5 })
+    expect(harness.links.rows.get(linkId)).toMatchObject({ roundsUsed: 1, roundsLimit: 5 })
+  })
+
+  it('an extension asked during a dispatch waits for it and both are kept', async () => {
+    const { harness, executorNodeId, linkId } = await spawnedHarness()
+    const [dispatched] = await Promise.all([
+      harness.service.dispatch(orq, { dispatchId: D1, to: executorNodeId, text: 'do it' }),
+      harness.service.extendRounds(USER, { linkId, rounds: 2 }),
+    ])
+    expect(dispatched.round).toBe(1)
+    expect(harness.links.rows.get(linkId)).toMatchObject({ roundsUsed: 1, roundsLimit: 5 })
+  })
+
   it('accepts as queued, consumes a round and the pump reserves at once on a ready executor', async () => {
     const { harness, executorNodeId, runtime } = await spawnedHarness()
     const result = await harness.service.dispatch(orq, {
@@ -180,6 +211,17 @@ describe('dispatchToExecutor (U-02)', () => {
     )
     expect([...harness.links.rows.values()][0]).toEqual(before)
     expect(harness.dispatches.rows.has(D4)).toBe(false)
+  })
+
+  it('T16: interrupt translates an executor.unavailable error of the runtime', async () => {
+    const { harness, executorNodeId, runtime } = await spawnedHarness()
+    runtime.interrupt = async () => {
+      throw codedError('executor.unavailable')
+    }
+    await expectCode(
+      harness.service.interrupt(orq, { to: executorNodeId }),
+      'orch.executor_unavailable',
+    )
   })
 
   it('refuses with orch.executor_unavailable and writes nothing', async () => {

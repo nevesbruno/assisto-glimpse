@@ -139,7 +139,7 @@ describe('reconcileOnBoot matrix', () => {
     ],
     ['sent absent', 'sent', absent, 'failed', 'executor_down', 1, 'executor_down_in_turn'],
     ['sent unknown', 'sent', unknown, 'sent', null, 1, null],
-    ['reserved found running', 'reserved', found('running'), 'sent', null, 1, 'uncertain'],
+    ['reserved found running', 'reserved', found('running'), 'sent', null, 1, null],
     ['reserved found completed', 'reserved', found('completed'), 'completed', null, 1, 'completed'],
     ['reserved absent', 'reserved', absent, 'failed', 'not_sent', 0, 'failed_not_sent'],
     ['reserved unknown', 'reserved', unknown, 'uncertain', null, 1, 'uncertain'],
@@ -152,6 +152,11 @@ describe('reconcileOnBoot matrix', () => {
     expect(roundsUsed(harness)).toBe(rounds)
     expect(noticeKinds.at(-1) ?? null).toBe(lastNotice)
     expect(dispatch.state === 'reserved').toBe(false)
+  })
+
+  it('T11: a reserved dispatch resolved as completed queues only the completed notice', async () => {
+    const { noticeKinds } = await reboot('reserved', found('completed'))
+    expect(noticeKinds).toEqual(['completed'])
   })
 
   it.each(['reserved', 'uncertain', 'sent'] as const)(

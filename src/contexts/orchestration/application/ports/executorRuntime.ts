@@ -79,7 +79,8 @@ export type FindTurnResult =
   | { readonly kind: 'absent' }
   | { readonly kind: 'unknown' }
 
-export type ApprovalDecision = 'approve' | 'deny'
+/** `cancel` denies and also interrupts the turn; `approve_for_session` covers later prompts. */
+export type ApprovalDecision = 'approve' | 'approve_for_session' | 'deny' | 'cancel'
 
 export type RespondApprovalResult =
   | { readonly ok: true }

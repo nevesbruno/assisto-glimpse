@@ -28,6 +28,7 @@ import {
   type DispatchState,
 } from '../../../../../src/contexts/orchestration/domain/dispatch'
 import type { OrchestrationPrincipal } from '../../../../../src/contexts/orchestration/domain/orchestrationAuthorization'
+import { InMemoryDispatchLedger } from './inMemoryDispatchLedger'
 
 export const ORCHESTRATOR = 'orq'
 export const USER: OrchestrationPrincipal = { kind: 'user' }
@@ -106,6 +107,22 @@ export class InMemoryLinks {
   public listByProject = async (projectId: string | null) =>
     [...this.rows.values()].filter(r => projectId === null || r.projectId === projectId)
   public readLinksRevision = async () => this.revision
+
+  public extendRounds = async (linkId: string, by: number, at: string) => {
+    const stored = this.rows.get(linkId)
+    if (!stored) {
+      return null
+    }
+    const next = {
+      ...stored,
+      roundsLimit: stored.roundsLimit + by,
+      revision: stored.revision + 1,
+      updatedAt: at,
+    }
+    this.rows.set(linkId, next)
+    this.revision += 1
+    return next
+  }
 }
 
 export class InMemoryDispatches {
@@ -130,7 +147,19 @@ export class InMemoryDispatches {
     return { ok: true, value: dispatch }
   }
 
+  public hasOtherInFlight(next: Dispatch): boolean {
+    return [...this.rows.values()].some(
+      d =>
+        d.executorNodeId === next.executorNodeId &&
+        d.id !== next.id &&
+        isInFlightDispatchState(d.state),
+    )
+  }
+
   public update = async (next: Dispatch): Promise<UpdateDispatchResult> => {
+    if (next.state === 'reserved' && this.hasOtherInFlight(next)) {
+      return { ok: false, reason: 'in_flight_conflict' }
+    }
     const stored = this.rows.get(next.id)
     if (!stored) {
       return { ok: false, reason: 'not_found' }
@@ -324,6 +353,7 @@ export function createHarness(
   const deps: OrchestrationDeps = {
     links,
     dispatches,
+    ledger: new InMemoryDispatchLedger(links, dispatches, notices),
     notices,
     hookApprovals,
     clock,

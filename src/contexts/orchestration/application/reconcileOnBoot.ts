@@ -63,7 +63,12 @@ async function resolveInFlight(
 async function markReservedUncertain(ctx: OrchestrationContext, executorNodeId: string) {
   const open = await ctx.deps.dispatches.findInFlightByExecutor(executorNodeId)
   if (open?.state === 'reserved') {
-    await settleDispatch(ctx, open, { type: 'send_uncertain', now: ctx.deps.clock.now() })
+    await settleDispatch(
+      ctx,
+      open,
+      { type: 'send_uncertain', now: ctx.deps.clock.now() },
+      { notice: 'none' },
+    )
   }
 }
 

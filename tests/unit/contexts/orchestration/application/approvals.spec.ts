@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { OrchestrationError } from '../../../../../src/contexts/orchestration/domain/agentLink'
-import { orchestratorPrincipal, spawnedHarness, USER } from './fakes'
+import { codedError, orchestratorPrincipal, spawnedHarness, USER } from './fakes'
 
 const orq = orchestratorPrincipal()
 
@@ -39,9 +39,9 @@ describe('executor approvals', () => {
 
   it.each([
     ['accept', 'approve'],
-    ['acceptForSession', 'approve'],
+    ['acceptForSession', 'approve_for_session'],
     ['decline', 'deny'],
-    ['cancel', 'deny'],
+    ['cancel', 'cancel'],
   ] as const)('answers %s through the port as %s', async (decision, mapped) => {
     const spawned = await withPendingApproval()
     await spawned.harness.service.respondApproval(USER, {
@@ -64,6 +64,32 @@ describe('executor approvals', () => {
       }),
     ).rejects.toMatchObject({ code: 'orch.approval_not_found' })
     expect(await pendingCount(spawned)).toBe(0)
+  })
+
+  it('T15: an executor without a running service answers orch.executor_unavailable', async () => {
+    const spawned = await withPendingApproval()
+    const service = spawned.harness.restart()
+    await expect(
+      service.respondApproval(USER, {
+        executorNodeId: spawned.executorNodeId,
+        requestId: 'req-1',
+        decision: 'accept',
+      }),
+    ).rejects.toMatchObject({ code: 'orch.executor_unavailable' })
+  })
+
+  it('T16: an executor.unavailable error of the runtime is translated', async () => {
+    const spawned = await withPendingApproval()
+    spawned.runtime.respondApproval = async () => {
+      throw codedError('executor.unavailable')
+    }
+    await expect(
+      spawned.harness.service.respondApproval(USER, {
+        executorNodeId: spawned.executorNodeId,
+        requestId: 'req-1',
+        decision: 'accept',
+      }),
+    ).rejects.toMatchObject({ code: 'orch.executor_unavailable' })
   })
 
   it('refuses an executor without an active link', async () => {

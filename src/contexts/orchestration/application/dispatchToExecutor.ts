@@ -11,8 +11,10 @@ import type {
   OrchestrationDispatchResult,
   OrchestrationDispatchView,
 } from '../../../shared/contracts/dto/orchestration'
-import { blockingError, DispatchRefusedError, settleDispatch, updateLink } from './linkLifecycle'
+import { blockingError, DispatchRefusedError, settleDispatch } from './linkLifecycle'
 import type { OrchestrationContext } from './OrchestrationService'
+import { callRuntime } from './runtimeErrors'
+import type { AcceptRefusal } from './ports'
 import { currentAdmission, dispatchViewOf } from './statusView'
 
 export interface DispatchInput {
@@ -20,8 +22,6 @@ export interface DispatchInput {
   readonly to: string
   readonly text: string
   readonly deadlineMs?: number
-  /** Accepted and not persisted: the domain has no field for it yet. */
-  readonly fresh?: boolean
 }
 
 export function acceptedOf(dispatch: Dispatch, link: AgentLink) {
@@ -40,17 +40,48 @@ export interface AcceptInput {
   readonly deadlineMs?: number
 }
 
-/** Admission first, then the round and the dispatch. Runs inside the executor exclusion. */
+function sha256Of(text: string): string {
+  return createHash('sha256').update(text).digest('hex')
+}
+
+/** The `queued` dispatch of a link. Its `round` is provisional: the ledger sets the real one. */
+export function queuedDispatchOf(ctx: OrchestrationContext, input: AcceptInput): Dispatch {
+  const { dispatchId, link, text } = input
+  return createDispatch({
+    id: dispatchId,
+    link,
+    text,
+    textSha256: sha256Of(text),
+    deadlineMs: input.deadlineMs,
+    now: ctx.deps.clock.now(),
+  }).dispatch
+}
+
+async function refusalOf(
+  ctx: OrchestrationContext,
+  reason: AcceptRefusal,
+  link: AgentLink,
+): Promise<OrchestrationError> {
+  if (reason === 'link_not_active') {
+    return new OrchestrationError('orch.not_linked')
+  }
+  if (reason === 'round_limit_reached') {
+    return new DispatchRefusedError('orch.round_limit_reached', null)
+  }
+  const open = await ctx.deps.dispatches.findNonFinalByExecutor(link.executorNodeId)
+  return open ? blockingError(open) : new OrchestrationError('orch.dispatch_conflict')
+}
+
+/** Admission first, then the ledger takes the round and the dispatch in one step. */
 export async function acceptDispatch(
   ctx: OrchestrationContext,
   input: AcceptInput,
 ): Promise<OrchestrationDispatchResult> {
-  const { dispatches, clock } = ctx.deps
-  const { link, dispatchId, text } = input
-  const textSha256 = createHash('sha256').update(text).digest('hex')
+  const { dispatches } = ctx.deps
+  const { link, dispatchId } = input
   const stored = await dispatches.findById(dispatchId)
   const classified = classifyDispatchRequest(
-    { id: dispatchId, executorNodeId: link.executorNodeId, textSha256 },
+    { id: dispatchId, executorNodeId: link.executorNodeId, textSha256: sha256Of(input.text) },
     stored ? [stored] : [],
   )
   if (classified.kind === 'duplicate') {
@@ -69,25 +100,15 @@ export async function acceptDispatch(
       admission.blocking && { ...admission.blocking },
     )
   }
-  const { dispatch, rounds } = createDispatch({
-    id: dispatchId,
-    link,
-    text,
-    textSha256,
-    deadlineMs: input.deadlineMs,
-    now: clock.now(),
-  })
-  const inserted = await dispatches.insert(dispatch)
-  if (!inserted.ok) {
-    const open = await dispatches.findNonFinalByExecutor(link.executorNodeId)
-    throw open ? blockingError(open) : new OrchestrationError('orch.dispatch_conflict')
+  const accepted = await ctx.deps.ledger.acceptDispatch(queuedDispatchOf(ctx, input))
+  if (!accepted.ok) {
+    throw await refusalOf(ctx, accepted.reason, link)
   }
-  const updated = await updateLink(ctx, link.id, current => ({ ...current, ...rounds }))
   ctx.wake(link.executorNodeId)
   return {
-    ...acceptedOf(inserted.value, updated),
+    ...acceptedOf(accepted.dispatch, accepted.link),
     duplicate: false,
-    admission: await currentAdmission(ctx, updated, inserted.value),
+    admission: await currentAdmission(ctx, accepted.link, accepted.dispatch),
   }
 }
 
@@ -144,6 +165,6 @@ export async function interruptExecutor(
       throw new OrchestrationError('orch.executor_unavailable')
     }
     const open = await ctx.deps.dispatches.findInFlightByExecutor(to)
-    await runtime.interrupt(open?.turnRef ?? undefined)
+    await callRuntime(() => runtime.interrupt(open?.turnRef ?? undefined))
   })
 }

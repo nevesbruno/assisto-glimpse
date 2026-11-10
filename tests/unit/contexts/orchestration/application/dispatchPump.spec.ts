@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import type { OrchestrationContext } from '../../../../../src/contexts/orchestration/application/OrchestrationService'
+import type { InMemoryDispatchLedger } from './inMemoryDispatchLedger'
 import {
   createHarness,
   codedError,
@@ -28,7 +30,130 @@ async function queuedBehindScreenTurn() {
   return spawned
 }
 
+type Spawned = Awaited<ReturnType<typeof spawnedHarness>>
+
+const internals = (harness: Spawned['harness']) =>
+  harness.service as unknown as {
+    ctx: OrchestrationContext
+    deps: { ledger: InMemoryDispatchLedger; onBackgroundError?: (error: unknown) => void }
+  }
+
+/** Runs `inject` right after the service accepted the turn, before the dispatch is settled. */
+function afterAccept(spawned: Spawned, inject: () => void) {
+  const original = spawned.runtime.startTurn
+  spawned.runtime.startTurn = async input => {
+    const turn = await original(input)
+    inject()
+    return turn
+  }
+}
+
+function collectBackgroundErrors(harness: Spawned['harness']): unknown[] {
+  const errors: unknown[] = []
+  internals(harness).deps.onBackgroundError = error => errors.push(error)
+  return errors
+}
+
 describe('dispatchPump', () => {
+  it('T5: a settle that fails once after the accept still ends sent, with a single startTurn', async () => {
+    const spawned = await spawnedHarness()
+    const { harness, executorNodeId, runtime } = spawned
+    afterAccept(spawned, () => {
+      internals(harness).deps.ledger.failAt = 'settle'
+    })
+    await harness.service.dispatch(orq, { dispatchId: D1, to: executorNodeId, text: 'x' })
+    await harness.service.whenIdle()
+    expect(harness.dispatches.rows.get(D1)).toMatchObject({ state: 'sent', turnRef: 'turn-1' })
+    expect(runtime.startedTurns).toHaveLength(1)
+  })
+
+  it('T6: a settle that commits and then fails leaves sent and raises no background error', async () => {
+    const spawned = await spawnedHarness()
+    const { harness, executorNodeId, runtime } = spawned
+    const errors = collectBackgroundErrors(harness)
+    const { ledger } = internals(harness).deps
+    const settle = ledger.settleDispatch.bind(ledger)
+    let failed = false
+    ledger.settleDispatch = async input => {
+      const result = await settle(input)
+      if (!failed && input.next.state === 'sent') {
+        failed = true
+        throw new Error('lost after commit')
+      }
+      return result
+    }
+    await harness.service.dispatch(orq, { dispatchId: D1, to: executorNodeId, text: 'x' })
+    await harness.service.whenIdle()
+    expect(harness.dispatches.rows.get(D1)?.state).toBe('sent')
+    expect(runtime.startedTurns).toHaveLength(1)
+    expect(errors).toEqual([])
+  })
+
+  it('T7: a settle that always fails is healed by turn.started carrying the dispatch id', async () => {
+    const spawned = await spawnedHarness()
+    const { harness, executorNodeId, runtime } = spawned
+    collectBackgroundErrors(harness)
+    const { ledger } = internals(harness).deps
+    const settle = ledger.settleDispatch.bind(ledger)
+    let broken = false
+    ledger.settleDispatch = async input => {
+      if (broken && input.next.state !== 'reserved') {
+        throw new Error('write failed')
+      }
+      return settle(input)
+    }
+    afterAccept(spawned, () => {
+      broken = true
+    })
+    await harness.service.dispatch(orq, { dispatchId: D1, to: executorNodeId, text: 'x' })
+    await harness.service.whenIdle()
+    expect(harness.dispatches.rows.get(D1)?.state).toBe('reserved')
+    broken = false
+    runtime.emit(startedEvent('turn-1', D1))
+    await harness.service.whenIdle()
+    expect(harness.dispatches.rows.get(D1)).toMatchObject({ state: 'sent', turnRef: 'turn-1' })
+    expect(harness.dispatches.rows.get(D1)?.glimpseTurnId).toMatch(/^glimpse-/)
+  })
+
+  it('T10: an isolated service.unavailable wakes the pump, which fails the queued dispatch', async () => {
+    const { harness, executorNodeId } = await queuedBehindScreenTurn()
+    const { ctx } = internals(harness)
+    ctx.onRuntimeEvent(ctx.slotOf(executorNodeId), { type: 'service.unavailable' })
+    await harness.service.whenIdle()
+    expect(harness.dispatches.rows.get(D1)).toMatchObject({ state: 'failed', reason: 'not_sent' })
+  })
+
+  it('T12: an executor that goes down with a reserved dispatch queues only executor_down_in_turn', async () => {
+    const { harness, executorNodeId } = await queuedBehindScreenTurn()
+    const queued = harness.dispatches.rows.get(D1)!
+    harness.dispatches.rows.set(D1, {
+      ...queued,
+      state: 'reserved',
+      reservedAt: harness.clock.now().toISOString(),
+      revision: queued.revision + 1,
+    })
+    await harness.service.markExecutorUnavailable(executorNodeId)
+    expect(harness.dispatches.rows.get(D1)).toMatchObject({
+      state: 'failed',
+      reason: 'executor_down',
+    })
+    expect(harness.notices.rows.map(row => row.entry.kind)).toEqual(['executor_down_in_turn'])
+  })
+
+  it('T18: a reservation that finds another dispatch in flight answers null and sends nothing', async () => {
+    const { harness, executorNodeId, runtime } = await spawnedHarness()
+    await harness.service.dispatch(orq, { dispatchId: D1, to: executorNodeId, text: 'first' })
+    await harness.service.whenIdle()
+    expect(harness.dispatches.rows.get(D1)?.state).toBe('sent')
+    const queued = { ...harness.dispatches.rows.get(D1)!, id: D2, state: 'queued' as const }
+    harness.dispatches.rows.set(D2, { ...queued, text: 'second', turnRef: null, revision: 1 })
+    harness.dispatches.findInFlightByExecutor = async () => null
+    await harness.service.finishBoot()
+    await harness.service.whenIdle()
+    expect(runtime.startedTurns).toHaveLength(1)
+    expect(harness.dispatches.rows.get(D2)?.state).toBe('queued')
+  })
+
   it('never reserves before the boot work is done, and does once it finishes', async () => {
     const harness = createHarness()
     const result = await harness.service.spawn(orq, {

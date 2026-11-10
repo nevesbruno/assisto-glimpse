@@ -22,33 +22,38 @@ function toNotice(row: Row): StoredNotice {
   }
 }
 
+/** `INSERT OR IGNORE` by `dedupeKey`: false when the notice was already queued. */
+export function insertNoticeRow(db: SqliteHandle, notice: StoredNotice): boolean {
+  const { changes } = db
+    .prepare(
+      `INSERT OR IGNORE INTO orchestration_notices
+        (id, orchestrator_node_id, executor_node_id, dispatch_id, kind, dedupe_key,
+         payload_json, batch_id, delivery_state, created_at, delivered_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      ...([
+        notice.id,
+        notice.orchestratorNodeId,
+        notice.entry.executorNodeId,
+        notice.entry.dispatchId,
+        notice.entry.kind,
+        notice.dedupeKey,
+        JSON.stringify(notice.entry),
+        notice.batchId,
+        notice.state,
+        notice.createdAt,
+        notice.settledAt,
+      ] as never[]),
+    )
+  return Number(changes) === 1
+}
+
 export class SqliteNoticeOutboxRepository implements NoticeOutboxRepository {
   public constructor(private readonly db: SqliteHandle) {}
 
   public async enqueue(notice: StoredNotice): Promise<EnqueueNoticeResult> {
-    const { changes } = this.db
-      .prepare(
-        `INSERT OR IGNORE INTO orchestration_notices
-          (id, orchestrator_node_id, executor_node_id, dispatch_id, kind, dedupe_key,
-           payload_json, batch_id, delivery_state, created_at, delivered_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        ...([
-          notice.id,
-          notice.orchestratorNodeId,
-          notice.entry.executorNodeId,
-          notice.entry.dispatchId,
-          notice.entry.kind,
-          notice.dedupeKey,
-          JSON.stringify(notice.entry),
-          notice.batchId,
-          notice.state,
-          notice.createdAt,
-          notice.settledAt,
-        ] as never[]),
-      )
-    return { enqueued: Number(changes) === 1 }
+    return { enqueued: insertNoticeRow(this.db, notice) }
   }
 
   public async listPending(orchestratorNodeId: string): Promise<readonly StoredNotice[]> {

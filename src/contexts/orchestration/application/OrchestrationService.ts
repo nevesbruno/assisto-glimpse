@@ -11,29 +11,30 @@ import type { RoundExtension } from '../domain/roundPolicy'
 import { cancelDispatch, dispatchToExecutor, interruptExecutor } from './dispatchToExecutor'
 import type { DispatchInput } from './dispatchToExecutor'
 import { handleTurnEvent, pumpExecutor } from './dispatchPump'
+import { executorHealthOf, foldExecutorHealth, type HealthSignal } from './executorHealth'
 import {
-  foldExecutorHealth,
-  INITIAL_EXECUTOR_HEALTH,
-  type ExecutorHealthState,
-  type HealthSignal,
-} from './executorHealth'
+  chainOnSlot,
+  createSlot,
+  isRoutedSignal,
+  rememberSignal,
+  type ExecutorSlot,
+} from './executorSlots'
 import { respondApproval, recordApprovalEvent, type RespondApprovalInput } from './approvals'
-import { approveHooks, restartIfIdle, type ApproveHooksInput } from './hookApprovals'
+import { approveHooks, type ApproveHooksInput } from './hookApprovals'
 import { closeExecutorLink, extendLinkRounds } from './linkLifecycle'
 import type {
   AgentLinkRepository,
   Clock,
+  DispatchLedger,
   DispatchRepository,
   ExecutorNodePort,
   OrchestrationEventPublisher,
   ExecutorRunStateIngress,
-  ExecutorRuntime,
   ExecutorRuntimeEvent,
   ExecutorRuntimeFactory,
   ExecutorRuntimeProvider,
   ExecutorTuiLauncher,
   HookApprovalRepository,
-  HookTrustPending,
   IdGenerator,
   NoticeOutboxRepository,
 } from './ports'
@@ -44,6 +45,7 @@ import { buildStatus } from './statusView'
 export interface OrchestrationDeps {
   readonly links: AgentLinkRepository
   readonly dispatches: DispatchRepository
+  readonly ledger: DispatchLedger
   readonly notices: NoticeOutboxRepository
   readonly hookApprovals: HookApprovalRepository
   readonly clock: Clock
@@ -58,19 +60,8 @@ export interface OrchestrationDeps {
   readonly onBackgroundError?: (error: unknown) => void
 }
 
-export interface ExecutorSlot {
-  readonly executorNodeId: string
-  runtime: ExecutorRuntime | null
-  unsubscribe: (() => void) | null
-  health: ExecutorHealthState
-  tail: Promise<unknown>
-  /** `turnRef` to the turn id of the run state. */
-  readonly turns: Map<string, string>
-  readonly pendingApprovals: Set<string>
-  pendingHooks: readonly HookTrustPending[]
-  /** Hooks were approved and the service has not restarted to read them yet. */
-  restartPending: boolean
-}
+export type { ExecutorSlot } from './executorSlots'
+export type ExecutorEventListener = (executorNodeId: string, event: ExecutorRuntimeEvent) => void
 
 export interface OrchestrationContext {
   readonly deps: OrchestrationDeps
@@ -87,21 +78,11 @@ export interface OrchestrationContext {
   ) => Promise<void>
 }
 
-const RUNTIME_EVENT_TYPES = new Set([
-  'executor.ready',
-  'turn.started',
-  'turn.completed',
-  'approval.requested',
-  'approval.resolved',
-  'hooks.trust_pending',
-  'executor.down',
-  'executor.recovered',
-])
-
 export class OrchestrationService {
   private readonly slots = new Map<string, ExecutorSlot>()
   private booted = false
   private readonly ctx: OrchestrationContext
+  private readonly eventListeners = new Set<ExecutorEventListener>()
 
   public constructor(private readonly deps: OrchestrationDeps) {
     this.ctx = {
@@ -157,10 +138,16 @@ export class OrchestrationService {
     return extendLinkRounds(this.ctx, input.linkId, input.rounds)
   }
 
-  /** The supervisor gave up restarting: queued work fails and the open turn ends as down. */
+  /** The supervisor gave up restarting: the pump it wakes fails queued work and ends the open turn. */
   public markExecutorUnavailable(executorNodeId: string): Promise<void> {
     this.onRuntimeEvent(this.slotOf(executorNodeId), { type: 'service.unavailable' })
-    return this.runExclusive(executorNodeId, () => pumpExecutor(this.ctx, executorNodeId))
+    return this.whenIdle()
+  }
+
+  /** Publishes each routed event after the service handled it; returns the canceller. */
+  public subscribeEvents(listener: ExecutorEventListener): () => void {
+    this.eventListeners.add(listener)
+    return () => this.eventListeners.delete(listener)
   }
 
   public respondApproval(principal: OrchestrationPrincipal, input: RespondApprovalInput) {
@@ -211,52 +198,41 @@ export class OrchestrationService {
   private slotOf(executorNodeId: string): ExecutorSlot {
     let slot = this.slots.get(executorNodeId)
     if (!slot) {
-      slot = {
-        executorNodeId,
-        runtime: null,
-        unsubscribe: null,
-        health: INITIAL_EXECUTOR_HEALTH,
-        tail: Promise.resolve(),
-        turns: new Map(),
-        pendingApprovals: new Set(),
-        pendingHooks: [],
-        restartPending: false,
-      }
+      slot = createSlot(executorNodeId)
       this.slots.set(executorNodeId, slot)
     }
     return slot
   }
 
   private runExclusive<T>(executorNodeId: string, task: () => Promise<T>): Promise<T> {
-    const slot = this.slotOf(executorNodeId)
-    const result = slot.tail.then(task)
-    slot.tail = result.catch(() => undefined)
-    return result
+    return chainOnSlot(this.slotOf(executorNodeId), task)
   }
 
   private background(task: () => Promise<void>, executorNodeId: string): void {
     this.runExclusive(executorNodeId, task).catch(error => this.deps.onBackgroundError?.(error))
   }
 
+  /** One rule for waking the pump: any change of the derived health, whatever the signal. */
   private onRuntimeEvent(slot: ExecutorSlot, signal: HealthSignal): void {
+    const before = executorHealthOf(slot.health)
     slot.health = foldExecutorHealth(slot.health, signal)
-    if (!RUNTIME_EVENT_TYPES.has(signal.type)) {
-      return
+    if (isRoutedSignal(signal)) {
+      rememberSignal(slot, signal)
+      this.background(() => this.routeEvent(slot, signal), slot.executorNodeId)
     }
-    if (signal.type === 'approval.requested') {
-      slot.pendingApprovals.add(signal.requestId)
-    } else if (signal.type === 'approval.resolved') {
-      slot.pendingApprovals.delete(signal.requestId)
-    } else if (signal.type === 'hooks.trust_pending') {
-      slot.pendingHooks = signal.hooks
+    if (executorHealthOf(slot.health) !== before) {
+      this.ctx.wake(slot.executorNodeId)
     }
-    this.background(
-      () => this.routeEvent(slot, signal as ExecutorRuntimeEvent),
-      slot.executorNodeId,
-    )
   }
 
   private async routeEvent(slot: ExecutorSlot, event: ExecutorRuntimeEvent): Promise<void> {
+    await this.handleRoutedEvent(slot, event)
+    for (const listener of [...this.eventListeners]) {
+      listener(slot.executorNodeId, event)
+    }
+  }
+
+  private async handleRoutedEvent(slot: ExecutorSlot, event: ExecutorRuntimeEvent): Promise<void> {
     if (event.type === 'executor.down' || event.type === 'executor.recovered') {
       await handleExecutorIncident(this.ctx, slot, event)
       await pumpExecutor(this.ctx, slot.executorNodeId)
@@ -264,9 +240,6 @@ export class OrchestrationService {
     }
     await recordApprovalEvent(this.ctx, slot, event)
     await handleTurnEvent(this.ctx, slot, event)
-    if (event.type === 'turn.completed') {
-      await restartIfIdle(this.ctx, slot)
-    }
   }
 
   private async authorize(

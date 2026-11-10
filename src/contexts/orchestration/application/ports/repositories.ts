@@ -28,6 +28,8 @@ export type UpdateDispatchResult =
 export interface AgentLinkRepository {
   insert: (link: AgentLink) => Promise<InsertLinkResult>
   update: (next: AgentLink) => Promise<CasResult<AgentLink>>
+  /** Raises `roundsLimit` by delta in the store, so it never reverts a concurrent change. */
+  extendRounds: (linkId: string, by: number, at: string) => Promise<AgentLink | null>
   findById: (linkId: string) => Promise<AgentLink | null>
   findActiveByExecutor: (executorNodeId: string) => Promise<AgentLink | null>
   findBySpawnRequest: (

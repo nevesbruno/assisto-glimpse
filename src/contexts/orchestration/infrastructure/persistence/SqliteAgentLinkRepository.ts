@@ -5,7 +5,7 @@ import type {
 } from '../../application/ports/repositories'
 import type { AgentLink } from '../../domain/agentLink'
 import { ORCHESTRATION_LINKS_REVISION_KEY } from '../../../../platform/persistence/sqlite/orchestrationTables'
-import { isUniqueViolation, type SqliteHandle } from './sqliteHandle'
+import { isUniqueViolation, runInTransaction, type SqliteHandle } from './sqliteHandle'
 
 type Row = Record<string, string | number | null>
 
@@ -106,40 +106,96 @@ function toLink(row: Row): AgentLink {
   }
 }
 
+type InsertLinkRefusal = Extract<InsertLinkResult, { ok: false }>['reason']
+
+export function readLinkRow(db: SqliteHandle, linkId: string): AgentLink | null {
+  const row = db.prepare(`SELECT ${COLUMN_LIST} FROM agent_links WHERE id = ?`).get(linkId as never)
+  return row ? toLink(row as Row) : null
+}
+
+export function bumpLinksRevision(db: SqliteHandle): void {
+  db.prepare(
+    `UPDATE app_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = ?`,
+  ).run(ORCHESTRATION_LINKS_REVISION_KEY as never)
+}
+
+/** Writes the row and bumps the revision; a unique violation is mapped by `insertLinkRefusal`. */
+export function insertLinkRow(db: SqliteHandle, link: AgentLink): void {
+  db.prepare(`INSERT INTO agent_links (${COLUMN_LIST}) VALUES (${PLACEHOLDERS})`).run(
+    ...(toParams(link) as never[]),
+  )
+  bumpLinksRevision(db)
+}
+
+export function insertLinkRefusal(error: unknown): InsertLinkRefusal | null {
+  if (isUniqueViolation(error, 'agent_links.id')) {
+    return 'id_exists'
+  }
+  if (isUniqueViolation(error, 'agent_links.spawn_request_id')) {
+    return 'spawn_request_duplicate'
+  }
+  if (isUniqueViolation(error, 'agent_links.executor_node_id')) {
+    return 'executor_already_linked'
+  }
+  return null
+}
+
+/** Moves the counter by delta in the row itself, so no earlier read can be written back. */
+export function shiftLinkCounter(
+  db: SqliteHandle,
+  linkId: string,
+  change: 'consume' | 'refund' | { extendBy: number },
+  at: string,
+): boolean {
+  const assignment =
+    change === 'consume'
+      ? 'rounds_used = rounds_used + 1'
+      : change === 'refund'
+        ? 'rounds_used = MAX(0, rounds_used - 1)'
+        : 'rounds_limit = rounds_limit + ?'
+  const extra = typeof change === 'object' ? [change.extendBy] : []
+  const { changes } = db
+    .prepare(
+      `UPDATE agent_links SET ${assignment}, revision = revision + 1, updated_at = ? WHERE id = ?`,
+    )
+    .run(...([...extra, at, linkId] as never[]))
+  if (Number(changes) !== 1) {
+    return false
+  }
+  bumpLinksRevision(db)
+  return true
+}
+
 export class SqliteAgentLinkRepository implements AgentLinkRepository {
   public constructor(private readonly db: SqliteHandle) {}
 
   public async insert(link: AgentLink): Promise<InsertLinkResult> {
     try {
-      this.inTransaction(() => {
-        this.db
-          .prepare(`INSERT INTO agent_links (${COLUMN_LIST}) VALUES (${PLACEHOLDERS})`)
-          .run(...(toParams(link) as never[]))
-        this.bumpLinksRevision()
-      })
+      runInTransaction(this.db, () => insertLinkRow(this.db, link))
     } catch (error) {
-      if (isUniqueViolation(error, 'agent_links.id')) {
-        return { ok: false, reason: 'id_exists' }
-      }
-      if (isUniqueViolation(error, 'agent_links.spawn_request_id')) {
-        return { ok: false, reason: 'spawn_request_duplicate' }
-      }
-      if (isUniqueViolation(error, 'agent_links.executor_node_id')) {
-        return { ok: false, reason: 'executor_already_linked' }
+      const reason = insertLinkRefusal(error)
+      if (reason) {
+        return { ok: false, reason }
       }
       throw error
     }
     return { ok: true, value: link }
   }
 
+  public async extendRounds(linkId: string, by: number, at: string): Promise<AgentLink | null> {
+    return runInTransaction(this.db, () =>
+      shiftLinkCounter(this.db, linkId, { extendBy: by }, at) ? readLinkRow(this.db, linkId) : null,
+    )
+  }
+
   public async update(next: AgentLink): Promise<CasResult<AgentLink>> {
-    return this.inTransaction(() => {
+    return runInTransaction(this.db, () => {
       const [, ...assignedValues] = toParams(next)
       const { changes } = this.db
         .prepare(`UPDATE agent_links SET ${ASSIGNMENTS} WHERE id = ? AND revision = ?`)
         .run(...([...assignedValues, next.id, next.revision - 1] as never[]))
       if (Number(changes) === 1) {
-        this.bumpLinksRevision()
+        bumpLinksRevision(this.db)
         return { ok: true, value: next } as const
       }
       const exists = this.db.prepare('SELECT 1 FROM agent_links WHERE id = ?').get(next.id as never)
@@ -198,23 +254,5 @@ export class SqliteAgentLinkRepository implements AgentLinkRepository {
       .prepare(`SELECT ${COLUMN_LIST} FROM agent_links WHERE ${where} ORDER BY created_at, id`)
       .all(...(params as never[]))
       .map(row => toLink(row as Row))
-  }
-
-  private bumpLinksRevision(): void {
-    this.db
-      .prepare(`UPDATE app_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = ?`)
-      .run(ORCHESTRATION_LINKS_REVISION_KEY as never)
-  }
-
-  private inTransaction<T>(work: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE')
-    try {
-      const result = work()
-      this.db.exec('COMMIT')
-      return result
-    } catch (error) {
-      this.db.exec('ROLLBACK')
-      throw error
-    }
   }
 }

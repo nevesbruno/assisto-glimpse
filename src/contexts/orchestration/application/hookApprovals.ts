@@ -84,6 +84,9 @@ export async function approveHooks(
     )
     slot.restartPending = true
     const done = await restartIfIdle(ctx, slot)
+    if (!done) {
+      ctx.wake(executorNodeId)
+    }
     return { approved: keys.length, restart: done ? 'done' : 'scheduled' }
   })
 }

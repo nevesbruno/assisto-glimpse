@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { ORCHESTRATOR_PROVIDER } from '../../../../../src/contexts/orchestration/domain/agentLink'
 import { orchestrationSpawnResultSchema } from '../../../../../src/shared/contracts/dto/orchestration'
 import {
   bootedHarness,
@@ -13,6 +14,63 @@ import {
 const orq = orchestratorPrincipal()
 
 describe('spawnExecutor (U-02)', () => {
+  it('T2: two orchestrators with the same requestId get two distinct initial dispatches', async () => {
+    const harness = await bootedHarness()
+    harness.nodes.set('orq2', { nodeId: 'orq2', provider: ORCHESTRATOR_PROVIDER, title: 'orq2' })
+    const first = await harness.service.spawn(orq, {
+      requestId: SPAWN_REQUEST_ID,
+      provider: 'codex',
+      prompt: 'start here',
+    })
+    const second = await harness.service.spawn(USER, {
+      requestId: SPAWN_REQUEST_ID,
+      provider: 'codex',
+      prompt: 'start here',
+      orchestratorNodeId: 'orq2',
+    })
+    expect(second.duplicate).toBe(false)
+    expect(first.dispatch?.dispatchId).toBe(uuidFrom(`orq:${SPAWN_REQUEST_ID}`))
+    expect(second.dispatch?.dispatchId).toBe(uuidFrom(`orq2:${SPAWN_REQUEST_ID}`))
+    expect(harness.dispatches.rows.size).toBe(2)
+  })
+
+  it('T3: a prompt over 32768 bytes fails before any node, link or service exists', async () => {
+    const harness = await bootedHarness()
+    const nodes = harness.nodes.size
+    await expect(
+      harness.service.spawn(orq, {
+        requestId: SPAWN_REQUEST_ID,
+        provider: 'codex',
+        prompt: 'a'.repeat(32_769),
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_text' })
+    expect(harness.nodes.size).toBe(nodes)
+    expect(harness.links.rows.size).toBe(0)
+    expect(harness.starts).toHaveLength(0)
+  })
+
+  it('T4: a link left without its first dispatch gets it on the resend and the pump sends it', async () => {
+    const harness = await bootedHarness()
+    const first = await harness.service.spawn(orq, {
+      requestId: SPAWN_REQUEST_ID,
+      provider: 'codex',
+    })
+    await harness.service.whenIdle()
+    const again = await harness.service.spawn(orq, {
+      requestId: SPAWN_REQUEST_ID,
+      provider: 'codex',
+      prompt: 'start here',
+    })
+    expect(again).toMatchObject({
+      duplicate: true,
+      linkId: first.linkId,
+      dispatch: { dispatchId: uuidFrom(`orq:${SPAWN_REQUEST_ID}`), state: 'queued', round: 1 },
+    })
+    await harness.service.whenIdle()
+    expect(harness.dispatches.rows.get(uuidFrom(`orq:${SPAWN_REQUEST_ID}`))?.state).toBe('sent')
+    expect(harness.runtimes.get(first.executorNodeId)?.startedTurns).toHaveLength(1)
+  })
+
   it('creates the node, the link and the service, and launches the TUI', async () => {
     const { harness, result } = await spawnedHarness()
     expect(orchestrationSpawnResultSchema.parse(result)).toBeTruthy()
@@ -32,15 +90,15 @@ describe('spawnExecutor (U-02)', () => {
     })
   })
 
-  it('the initial dispatch id is the uuid v5 of the requestId', async () => {
+  it('the initial dispatch id is the uuid v5 of the orchestrator and the requestId', async () => {
     const { harness, result } = await spawnedHarness('start here')
     expect(result.dispatch).toMatchObject({
-      dispatchId: uuidFrom(SPAWN_REQUEST_ID),
+      dispatchId: uuidFrom(`orq:${SPAWN_REQUEST_ID}`),
       state: 'queued',
       round: 1,
     })
     expect(orchestrationSpawnResultSchema.parse(result)).toBeTruthy()
-    expect(harness.dispatches.rows.get(uuidFrom(SPAWN_REQUEST_ID))?.state).toBe('sent')
+    expect(harness.dispatches.rows.get(uuidFrom(`orq:${SPAWN_REQUEST_ID}`))?.state).toBe('sent')
   })
 
   it('the same requestId returns the existing link with duplicate and creates nothing new', async () => {
@@ -55,7 +113,7 @@ describe('spawnExecutor (U-02)', () => {
       duplicate: true,
       linkId: result.linkId,
       executorNodeId: result.executorNodeId,
-      dispatch: { dispatchId: uuidFrom(SPAWN_REQUEST_ID), state: 'sent' },
+      dispatch: { dispatchId: uuidFrom(`orq:${SPAWN_REQUEST_ID}`), state: 'sent' },
     })
     expect(orchestrationSpawnResultSchema.parse(again)).toBeTruthy()
     expect(harness.nodes.size).toBe(nodes)

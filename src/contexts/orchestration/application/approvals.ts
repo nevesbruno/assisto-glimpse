@@ -2,6 +2,7 @@ import { OrchestrationError } from '../domain/agentLink'
 import type { OrchestrationPrincipal } from '../domain/orchestrationAuthorization'
 import type { ExecutorSlot, OrchestrationContext } from './OrchestrationService'
 import type { ApprovalDecision, ExecutorRuntimeEvent } from './ports'
+import { callRuntime } from './runtimeErrors'
 
 export type ApprovalAnswer = 'accept' | 'acceptForSession' | 'decline' | 'cancel'
 
@@ -11,12 +12,11 @@ export interface RespondApprovalInput {
   readonly decision: ApprovalAnswer
 }
 
-/** The runtime port only knows approve and deny, so `acceptForSession` approves this request alone. */
 const PORT_DECISION: Record<ApprovalAnswer, ApprovalDecision> = {
   accept: 'approve',
-  acceptForSession: 'approve',
+  acceptForSession: 'approve_for_session',
   decline: 'deny',
-  cancel: 'deny',
+  cancel: 'cancel',
 }
 
 export async function respondApproval(
@@ -30,9 +30,13 @@ export async function respondApproval(
     throw new OrchestrationError('orch.not_linked')
   }
   const slot = ctx.slotOf(executorNodeId)
-  const result = slot.runtime
-    ? await slot.runtime.respondApproval(requestId, PORT_DECISION[input.decision])
-    : { ok: false as const }
+  const { runtime } = slot
+  if (!runtime) {
+    throw new OrchestrationError('orch.executor_unavailable')
+  }
+  const result = await callRuntime(() =>
+    runtime.respondApproval(requestId, PORT_DECISION[input.decision]),
+  )
   slot.pendingApprovals.delete(requestId)
   if (!result.ok) {
     await ctx.deps.runState.recordApprovalResolved(executorNodeId, requestId)

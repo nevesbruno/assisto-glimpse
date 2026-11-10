@@ -5,6 +5,7 @@ import {
   type AgentLink,
 } from '../../../../../src/contexts/orchestration/domain/agentLink'
 import {
+  assertDispatchText,
   classifyDispatchRequest,
   createDispatch,
   DispatchRuleError,
@@ -290,5 +291,22 @@ describe('dispatch idempotency (D5)', () => {
   it('D6: same content with another id is new, whatever the state or the age', () => {
     expect(classifyDispatchRequest(identity(), [queued()]).kind).toBe('new')
     expect(classifyDispatchRequest(identity(), [reach('completed')]).kind).toBe('new')
+  })
+})
+
+describe('assertDispatchText', () => {
+  it('accepts 1 to 32768 bytes counted in utf-8', () => {
+    expect(() => assertDispatchText('a')).not.toThrow()
+    expect(() => assertDispatchText('a'.repeat(32_768))).not.toThrow()
+    expect(() => assertDispatchText('é'.repeat(16_384))).not.toThrow()
+  })
+
+  it.each([
+    ['empty', ''],
+    ['over the limit', 'a'.repeat(32_769)],
+    ['multibyte over', 'é'.repeat(16_385)],
+  ])('refuses %s text as invalid_text', (_name, text) => {
+    expect(() => assertDispatchText(text)).toThrow(DispatchRuleError)
+    expect(() => assertDispatchText(text)).toThrowError(/1 to 32768 bytes/)
   })
 })

@@ -7,9 +7,10 @@ import {
   type DispatchEvent,
 } from '../domain/dispatch'
 import type { NoticeKind } from '../domain/noticeComposer'
-import { extendRounds, returnRound, type RoundExtension } from '../domain/roundPolicy'
+import type { RoundExtension } from '../domain/roundPolicy'
 import type { OrchestrationContext } from './OrchestrationService'
-import type { ExecutorCloseReason } from './ports'
+import { callRuntime } from './runtimeErrors'
+import type { ExecutorCloseReason, StoredNotice } from './ports'
 
 const CAS_ATTEMPTS = 5
 
@@ -96,19 +97,19 @@ function noticeKindOf(dispatch: Dispatch): NoticeKind | null {
   return dispatch.reason ? (byReason[dispatch.reason] ?? null) : null
 }
 
-export async function enqueueNotice(
+async function noticeOf(
   ctx: OrchestrationContext,
   dispatch: Dispatch,
   link: AgentLink,
-): Promise<void> {
+): Promise<StoredNotice | null> {
   const kind = noticeKindOf(dispatch)
   if (!kind) {
-    return
+    return null
   }
-  const { nodes, notices, clock, ids } = ctx.deps
+  const { nodes, clock, ids } = ctx.deps
   const node = await nodes.findNode(dispatch.executorNodeId)
   const createdAt = clock.now().toISOString()
-  await notices.enqueue({
+  return {
     id: ids.uuid(),
     orchestratorNodeId: dispatch.orchestratorNodeId,
     dedupeKey: `${dispatch.id}:${dispatch.state}`,
@@ -128,33 +129,59 @@ export async function enqueueNotice(
       excerpt: dispatch.finalExcerpt,
       createdAt,
     },
-  })
+  }
 }
 
-/** Applies one domain event: persists, returns the round when due, queues the notice. */
+export async function enqueueNotice(
+  ctx: OrchestrationContext,
+  dispatch: Dispatch,
+  link: AgentLink,
+): Promise<void> {
+  const notice = await noticeOf(ctx, dispatch, link)
+  if (notice) {
+    await ctx.deps.notices.enqueue(notice)
+  }
+}
+
+export interface SettleOptions {
+  /** `final` queues the notice the new state calls for; `none` queues nothing. */
+  readonly notice?: 'final' | 'none'
+}
+
+/** Applies one domain event: dispatch, round refund and notice are one step of the ledger. */
 export async function settleDispatch(
   ctx: OrchestrationContext,
   dispatch: Dispatch,
   event: DispatchEvent,
+  options: SettleOptions = {},
 ): Promise<Dispatch> {
+  const { ledger, links, events, clock } = ctx.deps
   const transition = transitionDispatch(dispatch, event)
-  const saved = await saveDispatch(ctx, transition.dispatch)
-  if (!saved) {
-    return dispatch
+  const before = await links.findById(dispatch.linkId)
+  const notice =
+    options.notice === 'none' || !before ? null : await noticeOf(ctx, transition.dispatch, before)
+  const result = await ledger.settleDispatch({
+    next: transition.dispatch,
+    refundRound: transition.returnsRound,
+    notice,
+    at: clock.now().toISOString(),
+  })
+  if (!result.ok) {
+    if (result.reason === 'in_flight_conflict') {
+      return dispatch
+    }
+    throw new Error(`dispatch ${dispatch.id} update failed: ${result.reason}`)
   }
-  const link = transition.returnsRound
-    ? await updateLink(ctx, saved.linkId, current => ({
-        ...current,
-        ...returnRound(current),
-      }))
-    : await ctx.deps.links.findById(saved.linkId)
-  if (link) {
-    await enqueueNotice(ctx, saved, link)
+  if (transition.returnsRound && result.link) {
+    events.publishLinksUpdated({
+      linksRevision: await links.readLinksRevision(),
+      projectIds: [result.link.projectId],
+    })
   }
   if (event.type === 'executor_down') {
-    await ctx.deps.runState.recordExecutorDown(saved.executorNodeId)
+    await ctx.deps.runState.recordExecutorDown(result.dispatch.executorNodeId)
   }
-  return saved
+  return result.dispatch
 }
 
 /** Fails the open dispatch of an executor that stopped being able to run it. */
@@ -169,7 +196,12 @@ export async function failOpenDispatch(
     return
   }
   if (current.state === 'reserved') {
-    current = await settleDispatch(ctx, current, { type: 'send_uncertain', now })
+    current = await settleDispatch(
+      ctx,
+      current,
+      { type: 'send_uncertain', now },
+      { notice: 'none' },
+    )
   }
   await settleDispatch(ctx, current, { type: 'executor_down', now })
 }
@@ -204,7 +236,9 @@ export async function closeExecutorLink(
   slot.unsubscribe = null
   const runtime = slot.runtime
   slot.runtime = null
-  await runtime?.close(RUNTIME_CLOSE_REASON[reason] ?? 'link_closed')
+  if (runtime) {
+    await callRuntime(() => runtime.close(RUNTIME_CLOSE_REASON[reason] ?? 'link_closed'))
+  }
   return closed
 }
 
@@ -213,10 +247,21 @@ export async function extendLinkRounds(
   linkId: string,
   rounds: RoundExtension,
 ): Promise<AgentLink> {
-  const link = await updateLink(ctx, linkId, current => ({
-    ...current,
-    ...extendRounds(current, rounds),
-  }))
-  ctx.wake(link.executorNodeId)
-  return link
+  const { links, events, clock } = ctx.deps
+  const known = await links.findById(linkId)
+  if (!known) {
+    throw new OrchestrationError('orch.not_linked')
+  }
+  return ctx.runExclusive(known.executorNodeId, async () => {
+    const link = await links.extendRounds(linkId, rounds, clock.now().toISOString())
+    if (!link) {
+      throw new OrchestrationError('orch.not_linked')
+    }
+    events.publishLinksUpdated({
+      linksRevision: await links.readLinksRevision(),
+      projectIds: [link.projectId],
+    })
+    ctx.wake(link.executorNodeId)
+    return link
+  })
 }
