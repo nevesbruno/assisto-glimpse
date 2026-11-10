@@ -2,8 +2,25 @@ import type Database from 'better-sqlite3'
 import type { DbAppMetaKey } from './schema'
 import type { NormalizedPersistedAppState } from './normalize'
 import { normalizeScrollback } from './normalize'
+import type { OrchestrationLinksMirror } from '../../../shared/contracts/dto/orchestration'
 import { safeJsonStringify } from './utils'
 import { PersistenceRevisionConflict } from './revisionConflict'
+
+const ORCHESTRATION_LINKS_MIRROR_KEY = 'orchestration_links_mirror' satisfies DbAppMetaKey
+
+/** Own write path: the Worker mirror must not rewrite workspaces nor move `app_state_revision`. */
+export function writeOrchestrationLinksMirror(
+  db: Pick<Database.Database, 'prepare'>,
+  mirror: OrchestrationLinksMirror,
+): void {
+  db.prepare(
+    `
+      INSERT INTO app_meta (key, value)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `,
+  ).run(ORCHESTRATION_LINKS_MIRROR_KEY, safeJsonStringify(mirror))
+}
 
 export function writeNormalizedAppState(
   db: Database.Database,
@@ -101,6 +118,9 @@ export function writeNormalizedAppState(
     upsertMeta.run('format_version' satisfies DbAppMetaKey, String(state.formatVersion))
     upsertMeta.run('active_workspace_id' satisfies DbAppMetaKey, state.activeWorkspaceId ?? '')
     upsertMeta.run('app_state_revision' satisfies DbAppMetaKey, String(nextRevision))
+    if (state.orchestrationLinks) {
+      upsertMeta.run(ORCHESTRATION_LINKS_MIRROR_KEY, safeJsonStringify(state.orchestrationLinks))
+    }
     upsertMeta.run(
       'canvas_collapse_state' satisfies DbAppMetaKey,
       safeJsonStringify(

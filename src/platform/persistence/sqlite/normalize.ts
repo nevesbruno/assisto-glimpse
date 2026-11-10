@@ -4,6 +4,10 @@ import {
   normalizeLabelColor,
   normalizeNodeLabelColorOverride,
 } from '../../../shared/types/labelColor'
+import {
+  orchestrationLinksMirrorSchema,
+  type OrchestrationLinksMirror,
+} from '../../../shared/contracts/dto/orchestration'
 import { normalizeProjectIconId, type ProjectIconId } from '../../../shared/types/projectIcon'
 import { normalizeSpaceBoundary, type SpaceBoundary } from '../../../shared/types/spaceBoundary'
 import {
@@ -159,6 +163,7 @@ export type NormalizedPersistedAppState = {
   activeWorkspaceId: string | null
   workspaces: NormalizedPersistedWorkspace[]
   settings: unknown
+  orchestrationLinks?: OrchestrationLinksMirror
 }
 
 function normalizeViewport(value: unknown): { x: number; y: number; zoom: number } {
@@ -425,10 +430,13 @@ export function normalizePersistedAppState(value: unknown): NormalizedPersistedA
     })
   }
 
+  const orchestrationLinks = orchestrationLinksMirrorSchema.safeParse(value.orchestrationLinks)
+
   return {
     formatVersion,
     activeWorkspaceId,
     workspaces: normalizedWorkspaces,
     settings: value.settings ?? {},
+    ...(orchestrationLinks.success ? { orchestrationLinks: orchestrationLinks.data } : {}),
   }
 }

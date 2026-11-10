@@ -8,6 +8,7 @@ import {
 import { normalizeProjectIconId } from '../../../shared/types/projectIcon'
 import { normalizeSpaceBoundary } from '../../../shared/types/spaceBoundary'
 import { normalizeNodeWorkerBinding } from '../../../shared/types/nodeWorkerBinding'
+import { orchestrationLinksMirrorSchema } from '../../../shared/contracts/dto/orchestration'
 import { normalizeTerminalGeometry } from './normalize'
 import {
   appMeta,
@@ -100,6 +101,10 @@ export function readAppStateFromDb(db: BetterSQLite3Database): NormalizedPersist
       ? (parsed as Record<string, unknown>)
       : {}
   })()
+
+  const orchestrationLinks = orchestrationLinksMirrorSchema.safeParse(
+    safeJsonParse(meta.get('orchestration_links_mirror') ?? ''),
+  )
 
   const nodesByWorkspaceId = new Map<string, typeof nodeRows>()
   for (const node of nodeRows) {
@@ -260,6 +265,7 @@ export function readAppStateFromDb(db: BetterSQLite3Database): NormalizedPersist
       }
     }),
     settings: settingsValue,
+    ...(orchestrationLinks.success ? { orchestrationLinks: orchestrationLinks.data } : {}),
   }
 }
 

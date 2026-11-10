@@ -15,6 +15,7 @@ export type DbAppMetaKey =
   | 'app_state_revision'
   | 'canvas_collapse_state'
   | 'orchestration_links_revision'
+  | 'orchestration_links_mirror'
 
 export const appMeta = sqliteTable('app_meta', {
   key: text('key').$type<DbAppMetaKey>().primaryKey(),
