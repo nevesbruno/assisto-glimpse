@@ -1,10 +1,12 @@
 import type { Dispatch, DispatchEvent } from '../domain/dispatch'
 import type { AgentLink } from '../domain/agentLink'
 import { sanitizeExcerpt } from '../domain/noticeComposer'
+import { reconcileDeletedNodes } from './nodeDeletion'
 import { executorHealthOf } from './executorHealth'
 import { enqueueNotice, failOpenDispatch, settleDispatch } from './linkLifecycle'
 import type { ExecutorSlot, OrchestrationContext } from './OrchestrationService'
 import type { ExecutorRuntimeEvent, ExecutorTurnSnapshot, FindTurnResult } from './ports'
+import { recordServiceIdentity } from './serviceIdentity'
 import { restartLinkedService } from './spawnExecutor'
 
 const UNKNOWN: FindTurnResult = { kind: 'unknown' }
@@ -41,6 +43,26 @@ function eventOf(dispatch: Dispatch, result: FindTurnResult, now: Date): Dispatc
   return { type: dispatch.state === 'uncertain' ? 'turn_absent' : 'executor_down', now }
 }
 
+/** The turn runs but the run state never saw it start: opens it, once per turn of this Worker. */
+async function adoptRunningTurn(
+  ctx: OrchestrationContext,
+  slot: ExecutorSlot,
+  turnRef: string,
+): Promise<string> {
+  const known = slot.turns.get(turnRef)
+  if (known) {
+    return known
+  }
+  const { glimpseTurnId } = await ctx.deps.runState.recordTurnStarted({
+    executorNodeId: slot.executorNodeId,
+    turnRef,
+    origin: 'glimpse',
+    text: null,
+  })
+  slot.turns.set(turnRef, glimpseTurnId)
+  return glimpseTurnId
+}
+
 /** Asks the service for the turn of an `uncertain` or `sent` dispatch and settles what it proves. */
 async function resolveInFlight(
   ctx: OrchestrationContext,
@@ -49,7 +71,11 @@ async function resolveInFlight(
 ): Promise<void> {
   const since = new Date(open.reservedAt ?? open.createdAt)
   const result = await slot.runtime!.findTurnByDispatch(open.id, since).catch(() => UNKNOWN)
-  const event = eventOf(open, result, ctx.deps.clock.now())
+  const running =
+    result.kind === 'found' && result.turn.status === 'running' ? result.turn.turnRef : null
+  const glimpseTurnId = running ? await adoptRunningTurn(ctx, slot, running) : null
+  const base = eventOf(open, result, ctx.deps.clock.now())
+  const event = base?.type === 'turn_found_running' ? { ...base, glimpseTurnId } : base
   if (event) {
     await settleDispatch(ctx, open, event)
     return
@@ -73,6 +99,9 @@ async function markReservedUncertain(ctx: OrchestrationContext, executorNodeId: 
 }
 
 async function reconcileLink(ctx: OrchestrationContext, link: AgentLink): Promise<void> {
+  if (ctx.deps.isStopped?.()) {
+    return
+  }
   const slot = ctx.slotOf(link.executorNodeId)
   try {
     await restartLinkedService(ctx, link)
@@ -92,12 +121,13 @@ async function reconcileLink(ctx: OrchestrationContext, link: AgentLink): Promis
 
 /** Steps 1 to 6 of the restart reconciliation; the pump only runs after the last one. */
 export async function reconcileOnBoot(ctx: OrchestrationContext): Promise<void> {
+  const each = (list: readonly AgentLink[], task: (link: AgentLink) => Promise<void>) =>
+    Promise.all(list.map(link => ctx.runExclusive(link.executorNodeId, () => task(link))))
   const links = await ctx.deps.links.listActive()
-  const each = (task: (link: AgentLink) => Promise<void>) =>
-    Promise.all(links.map(link => ctx.runExclusive(link.executorNodeId, () => task(link))))
-  await each(link => markReservedUncertain(ctx, link.executorNodeId))
+  await each(links, link => markReservedUncertain(ctx, link.executorNodeId))
   await ctx.deps.reapOrphanServices?.(links)
-  await each(link => reconcileLink(ctx, link))
+  await reconcileDeletedNodes(ctx)
+  await each(await ctx.deps.links.listActive(), link => reconcileLink(ctx, link))
   await ctx.finishBoot()
 }
 
@@ -113,9 +143,14 @@ export async function handleExecutorIncident(
   if (event.type === 'executor.down') {
     return
   }
+  const link = await ctx.deps.links.findActiveByExecutor(slot.executorNodeId)
+  if (link && slot.runtime) {
+    await recordServiceIdentity(ctx, link.id, slot.runtime)
+  }
   const open = await ctx.deps.dispatches.findInFlightByExecutor(slot.executorNodeId)
   if (open) {
     await resolveInFlight(ctx, slot, open)
   }
+  await ctx.deps.runState.recordExecutorRecovered(slot.executorNodeId)
   ctx.onRuntimeEvent(slot, { type: 'reconciliation.finished' })
 }

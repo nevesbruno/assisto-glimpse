@@ -170,6 +170,30 @@ describe('reconcileOnBoot matrix', () => {
     },
   )
 
+  it.each(['uncertain', 'sent'] as const)(
+    'a %s dispatch whose turn is found running opens the turn in the run state',
+    async state => {
+      const { harness, executorNodeId, dispatch } = await reboot(state, found('running'))
+      expect(harness.runState.recordTurnStarted).toEqual([
+        [{ executorNodeId, turnRef: 'turn-9', origin: 'glimpse', text: null }],
+      ])
+      expect(dispatch.state).toBe('sent')
+      if (state === 'uncertain') {
+        expect(dispatch.glimpseTurnId).toMatch(/^glimpse-/)
+      }
+    },
+  )
+
+  it('the turn found running is recorded once when the service recovers later', async () => {
+    const { harness, service, executorNodeId } = await reboot('uncertain', found('running'))
+    harness.runtimes
+      .get(executorNodeId)!
+      .emit({ type: 'executor.down', reason: 'crash', exitCode: 1, signal: null })
+    harness.runtimes.get(executorNodeId)!.emit({ type: 'executor.recovered', sessionRef: 's' })
+    await service.whenIdle()
+    expect(harness.runState.recordTurnStarted).toHaveLength(1)
+  })
+
   it('found running and unknown keep the dispatch in flight without a duplicate notice', async () => {
     const { harness, service, noticeKinds } = await reboot('uncertain', { kind: 'unknown' })
     expect(noticeKinds).toEqual(['uncertain'])
@@ -231,6 +255,20 @@ describe('executor incident after boot', () => {
     expect(harness.dispatches.rows.get(D)).toMatchObject({ state: 'completed' })
     const after = await harness.service.status(orchestratorPrincipal(), { to: executorNodeId })
     expect(after.links[0].health).toBe('ready')
+  })
+
+  it('executor.recovered feeds the run state recovery after the reconciliation', async () => {
+    const { harness, runtime, executorNodeId } = await spawnedHarness()
+    runtime.emit({ type: 'executor.recovered', sessionRef: 's' })
+    await harness.service.whenIdle()
+    expect(harness.runState.recordExecutorRecovered).toEqual([[executorNodeId]])
+  })
+
+  it('executor.down does not feed the recovery', async () => {
+    const { harness, runtime } = await spawnedHarness()
+    runtime.emit({ type: 'executor.down', reason: 'crash', exitCode: 1, signal: null })
+    await harness.service.whenIdle()
+    expect(harness.runState.recordExecutorRecovered ?? []).toEqual([])
   })
 
   it('executor.recovered leaves a sent dispatch that is still running untouched', async () => {

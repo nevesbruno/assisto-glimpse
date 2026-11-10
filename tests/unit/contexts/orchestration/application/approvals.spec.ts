@@ -26,7 +26,7 @@ describe('executor approvals', () => {
   it('feeds the run state and the status with the request, and clears both on resolution', async () => {
     const spawned = await withPendingApproval()
     expect(spawned.harness.runState.recordWaitingForApproval).toEqual([
-      [spawned.executorNodeId, 'req-1'],
+      [spawned.executorNodeId, 'req-1', 'rm -rf build'],
     ])
     expect(await pendingCount(spawned)).toBe(1)
     spawned.runtime.emit({ type: 'approval.resolved', requestId: 'req-1', resolvedBy: 'screen' })

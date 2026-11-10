@@ -91,9 +91,14 @@ export interface TurnCompletedRecord {
 export interface ExecutorRunStateIngress {
   recordTurnStarted: (record: TurnStartedRecord) => Promise<{ readonly glimpseTurnId: string }>
   recordTurnCompleted: (record: TurnCompletedRecord) => Promise<void>
-  recordWaitingForApproval: (executorNodeId: string, requestId: string) => Promise<void>
+  recordWaitingForApproval: (
+    executorNodeId: string,
+    requestId: string,
+    summary: string,
+  ) => Promise<void>
   recordApprovalResolved: (executorNodeId: string, requestId: string) => Promise<void>
   recordExecutorDown: (executorNodeId: string) => Promise<void>
+  recordExecutorRecovered: (executorNodeId: string) => Promise<void>
 }
 
 export interface PortReserver {

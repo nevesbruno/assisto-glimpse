@@ -7,6 +7,7 @@ import { closeExecutorLink, updateLink } from './linkLifecycle'
 import type { OrchestrationContext } from './OrchestrationService'
 import type { ExecutorRuntimeProvider } from './ports'
 import { callRuntime, translateRuntimeError } from './runtimeErrors'
+import { recordServiceIdentity } from './serviceIdentity'
 import { currentAdmission } from './statusView'
 
 export interface SpawnInput {
@@ -55,6 +56,7 @@ export async function startExecutorService(
       executorSessionRef: session.sessionRef,
     }))
   }
+  await recordServiceIdentity(ctx, link.id, runtime)
   ctx.onRuntimeEvent(slot, {
     type: 'executor.ready',
     sessionRef: session.sessionRef,

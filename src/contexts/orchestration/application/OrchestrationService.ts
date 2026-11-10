@@ -11,7 +11,15 @@ import type { RoundExtension } from '../domain/roundPolicy'
 import { cancelDispatch, dispatchToExecutor, interruptExecutor } from './dispatchToExecutor'
 import type { DispatchInput } from './dispatchToExecutor'
 import { handleTurnEvent, pumpExecutor } from './dispatchPump'
-import { executorHealthOf, foldExecutorHealth, type HealthSignal } from './executorHealth'
+import {
+  executorHealthOf,
+  foldExecutorHealth,
+  INITIAL_EXECUTOR_HEALTH,
+  type ExecutorHealth,
+  type HealthSignal,
+} from './executorHealth'
+import { relaunchExecutorTui } from './executorTuiRelaunch'
+import { shutdownExecutors } from './serviceShutdown'
 import {
   chainOnSlot,
   createSlot,
@@ -21,6 +29,7 @@ import {
 } from './executorSlots'
 import { respondApproval, recordApprovalEvent, type RespondApprovalInput } from './approvals'
 import { approveHooks, type ApproveHooksInput } from './hookApprovals'
+import { createLink, type CreateLinkInput } from './linkCreate'
 import { closeExecutorLink, extendLinkRounds } from './linkLifecycle'
 import type {
   AgentLinkRepository,
@@ -38,11 +47,12 @@ import type {
   IdGenerator,
   NoticeOutboxRepository,
 } from './ports'
+import { reconcileDeletedNodes, type NodeDeletionDeps } from './nodeDeletion'
 import { handleExecutorIncident, reconcileOnBoot } from './reconcileOnBoot'
 import { spawnExecutor, type SpawnInput } from './spawnExecutor'
 import { buildStatus } from './statusView'
 
-export interface OrchestrationDeps {
+export interface OrchestrationDeps extends NodeDeletionDeps {
   readonly links: AgentLinkRepository
   readonly dispatches: DispatchRepository
   readonly ledger: DispatchLedger
@@ -62,6 +72,7 @@ export interface OrchestrationDeps {
 
 export type { ExecutorSlot } from './executorSlots'
 export type ExecutorEventListener = (executorNodeId: string, event: ExecutorRuntimeEvent) => void
+export type ExecutorHealthListener = (executorNodeId: string, health: ExecutorHealth) => void
 
 export interface OrchestrationContext {
   readonly deps: OrchestrationDeps
@@ -83,6 +94,7 @@ export class OrchestrationService {
   private booted = false
   private readonly ctx: OrchestrationContext
   private readonly eventListeners = new Set<ExecutorEventListener>()
+  private readonly healthListeners = new Set<ExecutorHealthListener>()
 
   public constructor(private readonly deps: OrchestrationDeps) {
     this.ctx = {
@@ -150,6 +162,29 @@ export class OrchestrationService {
     return () => this.eventListeners.delete(listener)
   }
 
+  /** Tells each change of the derived health, the moment the service folds the signal. */
+  public subscribeHealth(listener: ExecutorHealthListener): () => void {
+    this.healthListeners.add(listener)
+    return () => this.healthListeners.delete(listener)
+  }
+
+  public healthOf(executorNodeId: string): ExecutorHealth {
+    return executorHealthOf(this.slots.get(executorNodeId)?.health ?? INITIAL_EXECUTOR_HEALTH)
+  }
+
+  public relaunchExecutorTui(executorNodeId: string): Promise<boolean> {
+    return relaunchExecutorTui(this.ctx, executorNodeId)
+  }
+
+  /** The Worker stops: closes each service without touching its link, the thread resumes at boot. */
+  public shutdown(): Promise<void> {
+    return shutdownExecutors(this.ctx, [...this.slots.values()])
+  }
+
+  public createLink(principal: OrchestrationPrincipal, input: CreateLinkInput) {
+    return createLink(this.ctx, principal, input)
+  }
+
   public respondApproval(principal: OrchestrationPrincipal, input: RespondApprovalInput) {
     return respondApproval(this.ctx, principal, input)
   }
@@ -162,6 +197,8 @@ export class OrchestrationService {
   public reconcileOnBoot(): Promise<void> {
     return reconcileOnBoot(this.ctx)
   }
+
+  public reconcileDeletedNodes = (): Promise<void> => reconcileDeletedNodes(this.ctx)
 
   /** Opens the pump once the boot work is done. */
   public async finishBoot(): Promise<void> {
@@ -220,7 +257,9 @@ export class OrchestrationService {
       rememberSignal(slot, signal)
       this.background(() => this.routeEvent(slot, signal), slot.executorNodeId)
     }
-    if (executorHealthOf(slot.health) !== before) {
+    const after = executorHealthOf(slot.health)
+    if (after !== before) {
+      this.healthListeners.forEach(listener => listener(slot.executorNodeId, after))
       this.ctx.wake(slot.executorNodeId)
     }
   }

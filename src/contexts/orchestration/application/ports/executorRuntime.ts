@@ -151,6 +151,12 @@ export type ExecutorRuntimeEvent =
 export type ExecutorRuntimeListener = (event: ExecutorRuntimeEvent) => void
 export type Unsubscribe = () => void
 
+export interface ExecutorServiceIdentity {
+  readonly pid: number
+  /** SHA-256 hex of the service token. The plain token never leaves the owning process. */
+  readonly tokenSha256: string
+}
+
 export interface ExecutorRuntime {
   ensureSession: (input: EnsureSessionInput) => Promise<EnsureSessionResult>
   /** Expects a dispatch already persisted as `reserved`. One transport write per call, never repeated. */
@@ -164,6 +170,8 @@ export interface ExecutorRuntime {
   /** No effect on an idle executor. */
   interrupt: (turnRef?: string) => Promise<void>
   attachInfo: () => Promise<ExecutorAttachInfo>
+  /** Read only. Null without a live service or with an invalid pid (1 or less). */
+  serviceIdentity: () => Promise<ExecutorServiceIdentity | null>
   /** Events arrive in order per executor. */
   subscribe: (listener: ExecutorRuntimeListener) => Unsubscribe
   /** SIGTERM, wait 3 s, then SIGKILL. */

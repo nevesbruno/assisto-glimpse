@@ -4,15 +4,9 @@ import {
   type OrchestrationDeps,
 } from '../../../../../src/contexts/orchestration/application/OrchestrationService'
 import type {
-  ApprovalDecision,
   CasResult,
-  ExecutorAttachInfo,
-  ExecutorRuntime,
   ExecutorRuntimeEvent,
-  ExecutorRuntimeListener,
   ExecutorStartSpec,
-  ExecutorTurnSnapshot,
-  FindTurnResult,
   HookApproval,
   InsertDispatchResult,
   InsertLinkResult,
@@ -29,6 +23,9 @@ import {
 } from '../../../../../src/contexts/orchestration/domain/dispatch'
 import type { OrchestrationPrincipal } from '../../../../../src/contexts/orchestration/domain/orchestrationAuthorization'
 import { InMemoryDispatchLedger } from './inMemoryDispatchLedger'
+import { FakeRuntime } from './fakes.runtime'
+
+export { FakeRuntime, sha256 } from './fakes.runtime'
 
 export const ORCHESTRATOR = 'orq'
 export const USER: OrchestrationPrincipal = { kind: 'user' }
@@ -41,10 +38,6 @@ export const orchestratorPrincipal = (nodeId = ORCHESTRATOR): OrchestrationPrinc
   provider: ORCHESTRATOR_PROVIDER,
   grantActive: true,
 })
-
-export function sha256(text: string): string {
-  return createHash('sha256').update(text).digest('hex')
-}
 
 export function uuidFrom(name: string): string {
   const hex = createHash('sha1').update(name).digest('hex')
@@ -221,78 +214,11 @@ export class InMemoryHookApprovals {
     this.rows.filter(r => pairs.some(p => p.key === r.key && p.currentHash === r.currentHash))
 }
 
-export class FakeRuntime implements ExecutorRuntime {
-  public readonly listeners = new Set<ExecutorRuntimeListener>()
-  public readonly startedTurns: { dispatchId: string; text: string }[] = []
-  public readonly interrupts: (string | undefined)[] = []
-  public readonly approvalAnswers: { requestId: string; decision: ApprovalDecision }[] = []
-  public readonly closes: string[] = []
-  public readonly findCalls: string[] = []
-  public findResults = new Map<string, FindTurnResult>()
-  public readResults = new Map<string, ExecutorTurnSnapshot>()
-  public knownApprovals = new Set<string>()
-  public startTurnError: (Error & { code: string }) | null = null
-  public resumeRefs: (string | null)[] = []
-  private turnCounter = 0
-
-  public constructor(public readonly spec: ExecutorStartSpec) {}
-
-  public ensureSession = async (input: { resumeRef: string | null; fresh: boolean }) => {
-    this.resumeRefs.push(input.resumeRef)
-    return {
-      sessionRef: input.resumeRef ?? `session-of-${this.spec.executorNodeId}`,
-      resumed: input.resumeRef !== null,
-    }
-  }
-  public startTurn = async (input: { dispatchId: string; text: string }) => {
-    if (this.startTurnError) {
-      throw this.startTurnError
-    }
-    this.startedTurns.push(input)
-    this.turnCounter += 1
-    return { turnRef: `turn-${this.turnCounter}` }
-  }
-  public findTurnByDispatch = async (dispatchId: string) => {
-    this.findCalls.push(dispatchId)
-    return this.findResults.get(dispatchId) ?? ({ kind: 'unknown' } as const)
-  }
-  public readTurn = async (turnRef: string) => {
-    const turn = this.readResults.get(turnRef)
-    if (!turn) {
-      throw new Error('unknown turn')
-    }
-    return turn
-  }
-  public respondApproval = async (requestId: string, decision: ApprovalDecision) => {
-    this.approvalAnswers.push({ requestId, decision })
-    return this.knownApprovals.has(requestId)
-      ? ({ ok: true } as const)
-      : ({ ok: false, reason: 'approval_not_found' } as const)
-  }
-  public interrupt = async (turnRef?: string) => {
-    this.interrupts.push(turnRef)
-  }
-  public attachInfo = async (): Promise<ExecutorAttachInfo> => ({
-    url: 'ws://127.0.0.1:1',
-    tokenEnv: { name: 'OPENCOVE_EXECUTOR_REMOTE_TOKEN', value: 'secret' },
-    sessionRef: `session-of-${this.spec.executorNodeId}`,
-    cwd: this.spec.cwd,
-  })
-  public subscribe = (listener: ExecutorRuntimeListener) => {
-    this.listeners.add(listener)
-    return () => {
-      this.listeners.delete(listener)
-    }
-  }
-  public close = async (reason: string) => {
-    this.closes.push(reason)
-  }
-
-  public emit(event: ExecutorRuntimeEvent): void {
-    for (const listener of [...this.listeners]) {
-      listener(event)
-    }
-  }
+export interface FakeNode {
+  nodeId: string
+  provider: string
+  title: string
+  projectId?: string
 }
 
 export interface Harness {
@@ -304,13 +230,16 @@ export interface Harness {
   readonly runtimes: Map<string, FakeRuntime>
   readonly runState: Record<string, unknown[][]>
   readonly tuiLaunches: string[]
+  readonly tuiRelaunches: string[]
   readonly published: number[]
   readonly starts: ExecutorStartSpec[]
   readonly failNextStart: { error: (Error & { code: string }) | null }
   readonly probe: { compatible: boolean }
   readonly clock: { current: Date; now: () => Date }
-  readonly nodes: Map<string, { nodeId: string; provider: string; title: string }>
+  readonly nodes: Map<string, FakeNode>
   readonly hooks: { onRuntimeStart: ((runtime: FakeRuntime) => void) | null }
+  /** The app state the reconciler reads: `fail` is a read error, `noWorkspace` an empty state. */
+  readonly appState: { fail: boolean; noWorkspace: boolean; stopped: boolean }
   /** A new Worker over the same stored rows, with no running service. */
   readonly restart: () => OrchestrationService
 }
@@ -329,10 +258,12 @@ export function createHarness(
   const runtimes = new Map<string, FakeRuntime>()
   const starts: ExecutorStartSpec[] = []
   const tuiLaunches: string[] = []
+  const tuiRelaunches: string[] = []
   const published: number[] = []
   const failNextStart: Harness['failNextStart'] = { error: null }
   const probe = { compatible: true }
   const hooks: Harness['hooks'] = { onRuntimeStart: null }
+  const appState: Harness['appState'] = { fail: false, noWorkspace: false, stopped: false }
   const clock = {
     current: new Date('2026-11-09T12:00:00.000Z'),
     now() {
@@ -346,7 +277,7 @@ export function createHarness(
       return result
     }
   }
-  const nodes = new Map<string, { nodeId: string; provider: string; title: string }>()
+  const nodes = new Map<string, FakeNode>()
   nodes.set(ORCHESTRATOR, { nodeId: ORCHESTRATOR, provider: ORCHESTRATOR_PROVIDER, title: 'orq' })
   let nodeCounter = 0
   let idCounter = 0
@@ -373,7 +304,7 @@ export function createHarness(
         return node
           ? {
               ...node,
-              projectId: 'p1',
+              projectId: node.projectId ?? 'p1',
               spaceId: 's1',
               cwd: node.provider === ORCHESTRATOR_PROVIDER ? null : '/work',
             }
@@ -386,6 +317,7 @@ export function createHarness(
       },
       relaunch: async input => {
         tuiLaunches.push(input.executorNodeId)
+        tuiRelaunches.push(input.executorNodeId)
       },
     },
     runState: {
@@ -397,6 +329,7 @@ export function createHarness(
       recordWaitingForApproval: record('recordWaitingForApproval', undefined),
       recordApprovalResolved: record('recordApprovalResolved', undefined),
       recordExecutorDown: record('recordExecutorDown', undefined),
+      recordExecutorRecovered: record('recordExecutorRecovered', undefined),
     },
     events: { publishLinksUpdated: event => published.push(event.linksRevision) },
     runtimeFactory: () => ({
@@ -419,6 +352,13 @@ export function createHarness(
       },
     }),
     reapOrphanServices: options.reapOrphanServices,
+    readLiveNodeIds: async () => {
+      if (appState.fail) {
+        throw new Error('state read failed')
+      }
+      return appState.noWorkspace ? null : new Set(nodes.keys())
+    },
+    isStopped: () => appState.stopped,
   }
   return {
     service: new OrchestrationService(deps),
@@ -429,6 +369,7 @@ export function createHarness(
     runtimes,
     runState,
     tuiLaunches,
+    tuiRelaunches,
     published,
     starts,
     failNextStart,
@@ -436,6 +377,7 @@ export function createHarness(
     clock,
     nodes,
     hooks,
+    appState,
     restart: () => {
       runtimes.clear()
       return new OrchestrationService(deps)

@@ -51,7 +51,11 @@ export async function recordApprovalEvent(
   event: ExecutorRuntimeEvent,
 ): Promise<void> {
   if (event.type === 'approval.requested') {
-    await ctx.deps.runState.recordWaitingForApproval(slot.executorNodeId, event.requestId)
+    await ctx.deps.runState.recordWaitingForApproval(
+      slot.executorNodeId,
+      event.requestId,
+      event.summary,
+    )
   } else if (event.type === 'approval.resolved') {
     await ctx.deps.runState.recordApprovalResolved(slot.executorNodeId, event.requestId)
   }
