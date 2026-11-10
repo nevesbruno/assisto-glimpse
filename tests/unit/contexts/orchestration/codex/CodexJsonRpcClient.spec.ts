@@ -69,6 +69,17 @@ class FakeSocket extends EventEmitter {
     this.close()
   }
 
+  pings = 0
+  pongOnPing = true
+
+  ping(_data: unknown, _mask: unknown, callback: (error?: Error) => void): void {
+    this.pings += 1
+    callback()
+    if (this.pongOnPing) {
+      setImmediate(() => this.emit('pong'))
+    }
+  }
+
   requests(): Frame[] {
     return this.frames.filter(frame => frame.id !== undefined && frame.method !== 'initialize')
   }
@@ -249,5 +260,45 @@ describe('CodexJsonRpcClient (U-08)', () => {
     await client.close()
     await tick(30)
     expect(sockets).toHaveLength(1)
+  })
+})
+
+describe('CodexJsonRpcClient ping and request ids (F2-11)', () => {
+  it('resolves ping on pong and rejects with executor.unavailable without pong', async () => {
+    const { client, sockets } = setup()
+    await client.connect()
+    await expect(client.ping(60_000)).resolves.toBeUndefined()
+    sockets[0].pongOnPing = false
+    await expect(client.ping(20)).rejects.toMatchObject({ code: 'executor.unavailable' })
+    expect(sockets[0].pings).toBe(2)
+  })
+
+  it('rejects ping when not connected', async () => {
+    const { client } = setup()
+    await expect(client.ping(20)).rejects.toMatchObject({ code: 'executor.unavailable' })
+  })
+
+  it('hands the JSON-RPC request id to the server request handler', async () => {
+    const { client, sockets } = setup()
+    await client.connect()
+    const seen: unknown[] = []
+    client.onServerRequest('item/fileChange/requestApproval', async (_params, requestId) => {
+      seen.push(requestId)
+      return { decision: 'accept' }
+    })
+    sockets[0].push({ id: 'srv-9', method: 'item/fileChange/requestApproval', params: {} })
+    await tick()
+    expect(seen).toEqual(['srv-9'])
+  })
+
+  it('reports a server request without handler to the unhandled listener, still answering -32601', async () => {
+    const { client, sockets } = setup()
+    await client.connect()
+    const unhandled: string[] = []
+    client.onUnhandledServerRequest(method => unhandled.push(method))
+    sockets[0].push({ id: 7, method: 'weird/method', params: {} })
+    await tick()
+    expect(unhandled).toEqual(['weird/method'])
+    expect(sockets[0].frames.at(-1)).toMatchObject({ id: 7, error: { code: -32601 } })
   })
 })

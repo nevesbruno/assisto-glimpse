@@ -21,7 +21,11 @@ export type CreateSocket = (url: string, headers: Record<string, string>) => Rpc
 
 export type CodexClientState = 'idle' | 'connected' | 'reconnecting' | 'closed'
 export type RpcNotificationListener = (method: string, params: unknown) => void
-export type RpcServerRequestHandler = (params: unknown) => Promise<unknown>
+export type RpcServerRequestHandler = (
+  params: unknown,
+  requestId: string | number,
+) => Promise<unknown>
+export type RpcUnhandledRequestListener = (method: string) => void
 export type RpcStateListener = (state: CodexClientState, reason?: string) => void
 
 export interface CodexJsonRpcClientOptions {
@@ -70,6 +74,7 @@ export class CodexJsonRpcClient {
   private readonly notificationListeners = new Set<RpcNotificationListener>()
   private readonly stateListeners = new Set<RpcStateListener>()
   private readonly serverHandlers = new Map<string, RpcServerRequestHandler>()
+  private readonly unhandledListeners = new Set<RpcUnhandledRequestListener>()
   private readonly createSocket: CreateSocket
   private readonly requestTimeoutMs: number
   private readonly maxReconnects: number
@@ -109,6 +114,38 @@ export class CodexJsonRpcClient {
   /** Requests from the server for a method without handler are answered with -32601. */
   onServerRequest(method: string, handler: RpcServerRequestHandler): void {
     this.serverHandlers.set(method, handler)
+  }
+
+  /** Called for each server request with no handler, which is answered with -32601. */
+  onUnhandledServerRequest(listener: RpcUnhandledRequestListener): Unsubscribe {
+    this.unhandledListeners.add(listener)
+    return () => this.unhandledListeners.delete(listener)
+  }
+
+  /** Websocket ping; rejects with `executor.unavailable` without a pong inside `timeoutMs`. */
+  ping(timeoutMs: number): Promise<void> {
+    const socket = this.socket
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(runtimeError('executor.unavailable', 'not connected'))
+    }
+    return new Promise<void>((resolve, reject) => {
+      const onPong = (): void => {
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(() => {
+        socket.off('pong', onPong)
+        reject(runtimeError('executor.unavailable', 'ping timeout'))
+      }, timeoutMs)
+      socket.once('pong', onPong)
+      socket.ping(undefined, undefined, error => {
+        if (error) {
+          clearTimeout(timer)
+          socket.off('pong', onPong)
+          reject(runtimeError('executor.unavailable', `ping failed: ${error.message}`))
+        }
+      })
+    })
   }
 
   async close(): Promise<void> {
@@ -274,10 +311,11 @@ export class CodexJsonRpcClient {
     const handler = this.serverHandlers.get(method)
     let frame: Record<string, unknown>
     if (!handler) {
+      this.unhandledListeners.forEach(listener => listener(method))
       frame = { id, error: { code: METHOD_NOT_FOUND, message: `Method not found: ${method}` } }
     } else {
       try {
-        frame = { id, result: await handler(params) }
+        frame = { id, result: await handler(params, id) }
       } catch (error) {
         frame = { id, error: { code: INTERNAL_ERROR, message: String(error) } }
       }
@@ -335,4 +373,49 @@ export class CodexJsonRpcClient {
   get currentState(): CodexClientState {
     return this.state
   }
+}
+
+export const PING_INTERVAL_MS = 15_000
+export const PING_TIMEOUT_MS = 5000
+export const PING_FAILURES_TO_DEGRADE = 2
+
+export interface PingLoopHandlers {
+  onDegraded: () => void
+  onRecovered: () => void
+}
+
+/** Pings every 15 s; two failures in a row degrade once, the next pong recovers. Returns the stop. */
+export function startPingLoop(
+  client: Pick<CodexJsonRpcClient, 'ping'>,
+  handlers: PingLoopHandlers,
+): () => void {
+  let failures = 0
+  let degraded = false
+  let inFlight = false
+  const timer = setInterval(() => {
+    if (inFlight) {
+      return
+    }
+    inFlight = true
+    client
+      .ping(PING_TIMEOUT_MS)
+      .then(() => {
+        failures = 0
+        if (degraded) {
+          degraded = false
+          handlers.onRecovered()
+        }
+      })
+      .catch(() => {
+        failures += 1
+        if (failures >= PING_FAILURES_TO_DEGRADE && !degraded) {
+          degraded = true
+          handlers.onDegraded()
+        }
+      })
+      .finally(() => {
+        inFlight = false
+      })
+  }, PING_INTERVAL_MS)
+  return () => clearInterval(timer)
 }
