@@ -7,6 +7,8 @@ export const agentRunSnapshotSchema = z.object({
   provider: z.enum(AGENT_PROVIDER_IDS),
   state: agentRunStateSchema,
   blockedReason: z.enum(['permission', 'question', 'plan']).nullable(),
+  // Old Workers omit this field: absent and null both mean no request summary.
+  blockedSummary: z.string().nullable().optional(),
   turn: z
     .object({
       id: z.string().min(1),

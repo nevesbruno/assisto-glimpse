@@ -58,3 +58,14 @@ it.each([
     false,
   )
 })
+it('F2-17a: blockedSummary is optional and nullable, so older snapshots stay valid', () => {
+  expect(agentRunSnapshotSchema.parse(current)).not.toHaveProperty('blockedSummary')
+  expect(
+    agentRunSnapshotSchema.parse({ ...current, blockedSummary: null }).blockedSummary,
+  ).toBeNull()
+  expect(
+    agentRunSnapshotSchema.parse({ ...current, state: 'waiting', blockedSummary: 'run ls' })
+      .blockedSummary,
+  ).toBe('run ls')
+  expect(agentRunSnapshotSchema.safeParse({ ...current, blockedSummary: 7 }).success).toBe(false)
+})

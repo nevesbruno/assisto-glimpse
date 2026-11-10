@@ -7,6 +7,8 @@ export interface AgentRunSnapshot {
   provider: AgentProviderId
   state: AgentRunState
   blockedReason: 'permission' | 'question' | 'plan' | null
+  /** What the blocking request asks for, while waiting; absent in snapshots from older Workers. */
+  blockedSummary?: string | null
   turn: { id: string; startedAt: number; start: 'observed' | 'inferred' } | null
   lastTransitionAt: number
   source: TerminalSessionStateSource | 'exit' | null

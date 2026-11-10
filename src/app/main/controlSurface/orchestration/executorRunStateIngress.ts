@@ -39,7 +39,7 @@ export class ExecutorRunStateIngress {
   private sequence = 0
   private lastObservedAt = -Infinity
   private working = false
-  private readonly pendingApprovals = new Set<string>()
+  private readonly pendingApprovals = new Map<string, string>()
   private cancelRenewal: (() => void) | null = null
 
   constructor(
@@ -70,7 +70,7 @@ export class ExecutorRunStateIngress {
         this.armRenewal()
         break
       case 'approval.requested':
-        this.pendingApprovals.add(event.requestId)
+        this.pendingApprovals.set(event.requestId, event.summary)
         this.emit(this.workingState())
         break
       case 'approval.resolved':
@@ -105,13 +105,16 @@ export class ExecutorRunStateIngress {
     this.emit({ state: 'exited' }, undefined, 'exit')
   }
 
-  private workingState(): Pick<AgentRunObservation, 'state' | 'blockedReason'> {
+  private workingState(): Pick<AgentRunObservation, 'state' | 'blockedReason' | 'blockedSummary'> {
     if (!this.working) {
       return { state: 'idle' }
     }
-    return this.pendingApprovals.size > 0
-      ? { state: 'waiting', blockedReason: 'permission' }
-      : { state: 'working' }
+    if (this.pendingApprovals.size === 0) {
+      return { state: 'working' }
+    }
+    // Map keeps insertion order: the last entry is the newest pending request.
+    const summary = [...this.pendingApprovals.values()].at(-1) ?? null
+    return { state: 'waiting', blockedReason: 'permission', blockedSummary: summary }
   }
 
   private armRenewal(): void {

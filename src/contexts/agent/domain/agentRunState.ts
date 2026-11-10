@@ -27,6 +27,7 @@ export interface AgentRunObservation {
   state: AgentRunState
   degraded?: boolean
   blockedReason?: AgentRunSnapshot['blockedReason']
+  blockedSummary?: AgentRunSnapshot['blockedSummary']
   emittedAtMs?: number
   hookEventName?: string
   boundary?:
@@ -267,6 +268,7 @@ export function transitionAgentRun(
       ? { id: ended.id, outcome: turnOutcome ?? 'unknown', endedAt: observation?.observedAt ?? now }
       : model.snapshot.lastEndedTurn,
     blockedReason: state === 'waiting' ? (selected?.blockedReason ?? null) : null,
+    blockedSummary: state === 'waiting' ? (selected?.blockedSummary ?? null) : null,
     source: observation?.source === 'exit' ? 'exit' : decision.source,
     quality:
       state === 'unknown'

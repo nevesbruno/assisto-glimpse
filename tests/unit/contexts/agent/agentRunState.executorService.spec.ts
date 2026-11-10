@@ -111,6 +111,33 @@ describe('executor_service run state source', () => {
     expect(f.events.filter(e => e.type === 'agent.turn_completed')).toHaveLength(1)
   })
 
+  it('F2-17a: carries the summary of the last pending approval and clears it on every exit', () => {
+    const f = fixture()
+    f.send(started)
+    const ask = (requestId: string, summary: string) =>
+      f.send({ type: 'approval.requested', requestId, kind: 'exec', summary, turnRef: 't1' })
+
+    ask('a1', 'run rm -rf build')
+    expect(f.get()).toMatchObject({ state: 'waiting', blockedSummary: 'run rm -rf build' })
+    ask('a2', 'write src/x.ts')
+    expect(f.get().blockedSummary).toBe('write src/x.ts')
+
+    f.send({ type: 'approval.resolved', requestId: 'a2', resolvedBy: 'glimpse' })
+    expect(f.get()).toMatchObject({ state: 'waiting', blockedSummary: 'run rm -rf build' })
+    f.send({ type: 'approval.resolved', requestId: 'a1', resolvedBy: 'glimpse' })
+    expect(f.get()).toMatchObject({ state: 'working', blockedReason: null })
+    expect(f.get().blockedSummary ?? null).toBeNull()
+
+    ask('a3', 'again')
+    f.send(started)
+    expect(f.get().blockedSummary ?? null).toBeNull()
+
+    ask('a4', 'once more')
+    f.send(completed())
+    expect(f.get()).toMatchObject({ state: 'idle' })
+    expect(f.get().blockedSummary ?? null).toBeNull()
+  })
+
   it('maps interrupted to aborted and failed to failed', () => {
     const f = fixture()
     f.send(started)
