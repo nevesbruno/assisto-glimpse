@@ -15,7 +15,7 @@ Matriz de riscos e testes obrigatórios da fase 2 do [ADR da orquestração](ADR
 | R7 | Aviso perdido, duplicado ou entregue no meio da digitação do usuário | Média | Médio | Caixa de saída durável com chave, entrega só com o orquestrador ocioso e 10 s sem digitação, lote incerto sem reenvio | U-06, I-04 |
 | R8 | Hooks do usuário ficam sem rodar no executor sem ninguém perceber | Alta | Médio | `hooks/list` no início, contagem no status e aprovação por par (`key`, `currentHash`) aplicada por chave | E-06 |
 | R9 | Token do serviço vaza por linha de comando, PTY aninhado ou log | Baixa | Alto | Só o SHA-256 vai na linha, o texto fica em memória, a TUI recebe por variável e a lista de remoção cobre PTYs aninhados (A8) | U-07, I-05 |
-| R10 | Serviço órfão depois da queda do Worker, ou dois app-servers disputando o mesmo `CODEX_HOME` | Média | Médio | Órfão identificado por pid e hash do token e encerrado antes da fila andar; convivência medida em V14 | I-02, I-03, F2-00 |
+| R10 | Serviço órfão depois da queda do Worker, ou dois app-servers disputando o mesmo `CODEX_HOME` | Média | Médio | Órfão identificado por pid e hash do token e encerrado antes de qualquer despacho `queued` ser enviado; convivência medida em V14 | I-02, I-03, F2-00 |
 | R11 | O opencode v2 quebra a janela comum, ou o Glimpse chama o binário errado | Alta | Médio | Ambiente do Bruno limpo para uma v2 só, detecção por `/api/info`, `incompatible_api` sem exceção solta e executável por provedor para outros ambientes | C-05, E-05a, OC-00 |
 | R12 | Custo de tokens alto por sessão nova a cada despacho | Média | Médio | Reuso de sessão por ligação, limite de 3 rodadas e de 4 executores por orquestrador | E-04 |
 | R13 | O histórico do usuário em `~/.codex/sessions` fica poluído com threads do Glimpse | Baixa | Baixo | Thread nomeada "Glimpse: título do nó" e arquivada ao encerrar o executor | E-01 |
@@ -30,7 +30,9 @@ Riscos aceitos sem mitigação completa:
 - perda do turno em curso quando o Worker cai;
 - Windows fora da fase 2, se V1 falhar;
 - executor indisponível até a causa ser corrigida quando o Codex não sobe, porque o fallback por terminal ficou para depois;
-- executor agindo fora do projeto sem pedir quando o usuário liga o acesso total.
+- executor agindo fora do projeto sem pedir quando o usuário liga o acesso total;
+- `model` não persistido na ligação: religar usa o modelo da configuração do usuário (coluna `model` em `agent_links` na fase 3);
+- spawn falho deixa o `requestId` preso, porque o índice único não filtra o estado da ligação (item `depois` do F2-08b).
 
 ## Cenários de falha obrigatórios
 
@@ -44,7 +46,7 @@ Os dois cenários pedidos no plano, reinício do Worker no meio do despacho e mo
 | Reinício do Worker | Durante a própria reconciliação | O segundo boot chega ao mesmo resultado, sem aviso repetido nem envio | I-02 |
 | Morte do serviço | Executor ocioso | Reinício em 1 s, TUI relançada no mesmo nó com porta e token novos, um aviso de queda | I-03 |
 | Morte do serviço | Durante um turno despachado | O despacho vira `uncertain`, a reconciliação depois do `executor.recovered` decide, e o aviso diz que o turno pode ter rodado em parte | I-03, E-03 |
-| Morte do serviço | Quatro mortes em 60 s | Executor `unavailable`, ligação ativa, despacho parado, `uncertain` pendente vira `failed(executor_down)` e um aviso | I-03, E-03 |
+| Morte do serviço | Quatro mortes em 60 s | Executor `unavailable`, ligação ativa, `queued` vira `failed(not_sent)` com a rodada devolvida, `uncertain` pendente vira `failed(executor_down)` e um aviso por despacho | I-03, E-03 |
 | Queda do ws | Processo vivo e conexão perdida | Até 3 reconexões com o mesmo token; só depois disso vale como morte | I-03 |
 
 ## Testes de unidade
@@ -52,7 +54,7 @@ Os dois cenários pedidos no plano, reinício do Worker no meio do despacho e mo
 | Id | Alvo | Casos obrigatórios | Card |
 | --- | --- | --- | --- |
 | U-01 | Ligação | L1 a L4; executor `claude-code` recusado; nós de projetos diferentes recusados; `closed` final; religar cria linha nova | F2-01 |
-| U-02 | Despacho e bomba | Um despacho em aberto por executor, `queued` incluído (D1), e a bomba reserva o único `queued`; turno vindo da tela segura o despacho `queued`; os cinco gatilhos acordam a bomba; D5 com payload igual (`duplicate: true`) e diferente (`orch.dispatch_conflict`); sem FIFO, sem janela de tempo e sem hash de conteúdo na admissão (D6); mesmo texto depois da conclusão cria despacho novo; `orch.spawn` repetido com o mesmo `requestId` devolve a ligação existente com `duplicate:true` e `dispatchId` uuid v5 igual; D7 com o quarto despacho em `orch.round_limit_reached` e recusa sem consumir rodada | F2-08 |
+| U-02 | Despacho e bomba | Um despacho em aberto por executor, `queued` incluído (D1), e a bomba reserva o único `queued`; turno vindo da tela segura o despacho `queued`; os cinco gatilhos acordam a bomba; D5 com payload igual (`duplicate: true`) e diferente (`orch.dispatch_conflict`); sem FIFO, sem janela de tempo e sem hash de conteúdo na admissão (D6); mesmo texto depois da conclusão cria despacho novo; `orch.spawn` repetido com o mesmo `requestId` devolve a ligação existente com `duplicate:true` e `dispatchId` uuid v5 igual (derivado de `orchestratorNodeId:requestId`); D7 com o quarto despacho em `orch.round_limit_reached` e recusa sem consumir rodada | F2-08 |
 | U-03 | Reconciliação do boot | Cada estado em voo (`reserved`, `uncertain` e `sent`) contra cada resposta (achado em curso, achado concluído, achado com falha, ausente e `unknown`) e contra executor pronto ou `unavailable`; despacho `queued` com executor `unavailable` vira `failed(not_sent)` com rodada devolvida e aviso com `d=`; a bomba só roda depois do passo 6; chave `dispatchId:estado` impede aviso duplicado | F2-08 |
 | U-04 | Máquina de estados do despacho | Toda transição da tabela do ADR; transição fora dela lança erro de domínio; estados finais (D4); texto apagado ao sair de `reserved` (D8); prazo estourado sem mudança de estado; política de rodadas; `queued` com saúde `unavailable` vira `failed(not_sent)` com rodada devolvida | F2-01 |
 | U-05 | Compositor de aviso | Formato do exemplo do ADR; limites de 300 grafemas, 420 por linha, 4.000 no total e 10 linhas, com "(+1)" e "+N avisos"; saneamento de ANSI, controles, quebras e aspas duplas; emoji e acento combinado contados por grafema; trecho que imita o cabeçalho `[glimpse]` fica entre aspas | F2-01 |
@@ -62,7 +64,7 @@ Os dois cenários pedidos no plano, reinício do Worker no meio do despacho e mo
 | U-09 | Autorização | Matriz do ADR para cada principal (usuário, orquestrador ligado, orquestrador sem ligação, executor e janela comum) em cada operação; `orch.not_linked` igual para nó inexistente e nó alheio (A4); `admin` fora do alcance do grant (A6); `orch.use_dispatch` (A7) para `agent.prompt` e `session.writeNode`, no teste de unidade, além do I-01 | F2-01, F2-08 |
 | U-10 | Seta no canvas | Uma aresta por ligação ativa; animação com o executor trabalhando; aresta some ao fechar; nenhuma duplicação com a aresta tarefa-agente; aresta não selecionável | F2-10 |
 | U-11 | Alerta de executor parado | Espera com motivo `permission` em executor ligado dispara o alerta uma vez, com nome e resumo; `unavailable` também; agente comum em espera segue sem alerta; "precisa de você" até a pendência acabar; repetição desligada por padrão e, ligada, no intervalo escolhido até a pendência acabar | F2-17 |
-| U-12 | Função de admissão | `evaluateDispatchAdmission` com uma tabela de casos por linha da C1, na ordem de precedência: ligação `closed` e sem ligação (`orch.not_linked`), rodadas esgotadas, saúde `unavailable`, despacho `queued`, `reserved`, `sent` e `uncertain` (cada um devolve `dispatch_in_flight` com `dispatchId`, `state` e `round` do bloqueante), saúde `starting`, `degraded` e `busy` por turno da tela (aceita com `willWait`), saúde `ready` sem despacho (aceita sem `willWait`); precedência quando duas linhas valem; refinamentos de `admission` (`blocking` só com `dispatch_in_flight`, `willWait` só com `canDispatch`); a função não recebe relógio nem texto | F2-01b |
+| U-12 | Função de admissão | `evaluateDispatchAdmission` com uma tabela de casos por linha da tabela "Admissão por estado" do ADR de despacho, na ordem de precedência: ligação `closed` e sem ligação (`orch.not_linked`), rodadas esgotadas, saúde `unavailable`, despacho `queued`, `reserved`, `sent` e `uncertain` (cada um devolve `dispatch_in_flight` com `dispatchId`, `state` e `round` do bloqueante), saúde `starting`, `degraded` e `busy` por turno da tela (aceita com `willWait`), saúde `ready` sem despacho (aceita sem `willWait`); precedência quando duas linhas valem; refinamentos de `admission` (`blocking` só com `dispatch_in_flight`, `willWait` só com `canDispatch`); a função não recebe relógio nem texto | F2-01b |
 
 ## Testes de contrato
 

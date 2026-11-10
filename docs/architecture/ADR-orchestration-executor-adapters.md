@@ -26,7 +26,7 @@ Esta é uma parte do [ADR da orquestração por serviço de executor](ADR-orches
 - `turn/start` leva `threadId`, `input:[{type:"text", text, text_elements:[]}]` e `clientUserMessageId` igual ao `dispatchId`. A resposta com `turn.id` marca o despacho como `sent`.
 - `item/completed` do tipo `agentMessage` guarda o último texto do turno, e `turn/completed` fecha pelo `turn.status`.
 - Mapa de status: `completed` vira `completed`, `interrupted` vira `failed(interrupted)` e `failed` vira `failed(turn_failed)`. Depois de queda do serviço, o turno em voo volta `interrupted` (V6), localizado por `clientId`, e o despacho `sent` sem `turn/completed` observado vira `failed(executor_down)`; `failed(interrupted)` fica para a interrupção pedida pelo Glimpse.
-- Turno sem `clientUserMessageId` do Glimpse veio da tela. Ele segura a fila e não gera aviso.
+- Turno sem `clientUserMessageId` do Glimpse veio da tela. Ele ocupa o executor, a admissão bloqueia novos despachos enquanto durar, e ele não gera aviso.
 - Política de sandbox: o executor segue a opção de acesso total das janelas comuns, por decisão do Bruno. Desligada, `workspace-write` com `on-request`; ligada, `danger-full-access` com `never`, e então o executor não pede aprovação e só o alerta de indisponível vale.
 
 ### Reconciliação do Codex
@@ -40,7 +40,7 @@ Esta é uma parte do [ADR da orquestração por serviço de executor](ADR-orches
 
 - Requests do servidor ficam pendentes, sem recusa automática, e viram `approval.requested`.
 - Fecham por `orch.approval.respond` do usuário, por resposta na tela (notificação `serverRequest/resolved`) ou por interrupção do turno.
-- Formato da resposta: `{decision}` com `accept`, `acceptForSession`, `decline` ou `cancel`; elicitation usa `action`, e permissões devolvem `{permissions, scope}`.
+- Formato da resposta: `{decision}` com `accept`, `acceptForSession`, `decline` ou `cancel`, que recebem 1 para 1 as decisões `approve`, `approve_for_session`, `deny` e `cancel` de `ApprovalDecision` (`cancel` também interrompe o turno); elicitation usa `action`, e permissões devolvem `{permissions, scope}`.
 - Request de método desconhecido recebe erro JSON-RPC -32601 e gera `executor.degraded`, para o serviço nunca travar esperando.
 - Com dois clientes conectados (Glimpse e TUI), os dois recebem o request (V5). Quem responder primeiro fecha, e o outro limpa pelo `serverRequest/resolved`.
 
@@ -104,7 +104,7 @@ Hoje o `opencode2` do Bruno é uma função do zsh que define `OPENCODE_CONFIG_D
 ### Reuso de sessão
 
 - Regra: uma sessão por ligação, usada em todas as rodadas (uma inicial e duas correções). A correção precisa do histórico, então sessão nova por despacho pioraria custo e resultado.
-- Sessão nova só em: `orch spawn`, `orch dispatch --fresh`, troca de modelo, sessão perdida no resume e uso de contexto acima de 80% da janela quando o serviço informar.
+- Sessão nova só em: `orch spawn`, `orch dispatch --fresh` (fase 3), troca de modelo, sessão perdida no resume e uso de contexto acima de 80% da janela quando o serviço informar.
 - O cache write de cerca de 17,6 mil tokens volta em qualquer falta de cache, inclusive no turno que chega depois do TTL do provedor. O reuso evita pagar esse custo a cada despacho, sem garantia de eliminá-lo.
 - O e2e mede uma segunda sessão no mesmo diretório dentro do TTL (V13, medido com deepseek/deepseek-flash: a segunda sessão saiu cerca de 20 vezes mais barata pelo cache automático, então reabrir quase não custa, e a política de uma sessão por ligação continua por proteger provedores com escrita de cache cara) para calibrar a regra. A mesma regra vale para a thread do Codex.
 
@@ -147,7 +147,7 @@ Fica fora da fase 2 por decisão do Bruno. Na fase 2, `executor.start_failed` e 
 | Reconexão da TUI | O serviço novo tem porta e token novos; o Glimpse encerra a TUI antiga e relança `codex resume <threadId> --remote ...` no mesmo nó |
 | Âncora do run state | A sessão de PTY da TUI; sem tela viva, o Worker relança a TUI antes do próximo despacho e a reconciliação completa o arquivo de turnos |
 | Encerramento | `orch close`, exclusão do nó ou saída do app: `turn/interrupt` se houver turno, depois SIGTERM, 3 s e SIGKILL no grupo de processos (V9: o SIGTERM não encerra o servidor com turno em voo). Em `orch close` e na exclusão do nó, `thread/archive` vem antes do SIGTERM; na saída do app, a ligação segue ativa e a thread é retomada no boot |
-| Reinício do Worker | O órfão é identificado pelo pid gravado e pelo hash do token na linha de comando, e encerrado; o serviço novo retoma a thread antes da fila andar |
+| Reinício do Worker | O órfão é identificado pelo pid gravado e pelo hash do token na linha de comando, e encerrado; o serviço novo retoma a thread antes de qualquer despacho `queued` ser enviado |
 | Primeira inicialização | Partida simultânea sobre `CODEX_HOME` vazio falha (V14); o Worker serializa o início dos serviços, sempre no primeiro uso. Sobre home já inicializado, a partida simultânea funciona |
 | Retomada da thread | `thread/resume` da mesma thread em dois servidores é recusado (`already has an active writer`), então o serviço antigo morre antes de o novo retomar |
 | Memória | 92 a 119 MiB ocioso e 156 a 188 MiB em turno por app-server (M1), base do teto de 8 executores |

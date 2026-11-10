@@ -32,7 +32,7 @@ Invariantes:
 - **L3.** `closed` é final, e religar cria linha nova.
 - **L4.** Nó apagado fecha a ligação com `node_deleted`, cancela o despacho `queued` e encerra o serviço.
 - **L5.** Ligação pedida em conversa nasce `requested` e só vira `active` com o clique do usuário. Recusa fecha com `declined`, e o pedido fica sem prazo, esperando a resposta, por decisão do Bruno.
-- **L7.** `orch.spawn` é idempotente por `requestId`: índice único `(orchestrator_node_id, spawn_request_id)`. O `dispatchId` do despacho inicial é derivado do `requestId` (uuid v5), e a repetição devolve a ligação existente com `duplicate:true`, sem criar nó nem despacho novo.
+- **L7.** `orch.spawn` é idempotente por `requestId`: índice único `(orchestrator_node_id, spawn_request_id)`. O `dispatchId` do despacho inicial é derivado de `orchestratorNodeId:requestId` (uuid v5), no mesmo escopo do índice único, e a repetição devolve a ligação existente com `duplicate:true`, sem criar nó nem despacho novo.
 - **L6.** Em `peer`, cada lado manda até 5 mensagens por conversa. No teto, os dois param e o usuário é avisado, e só ele estende.
 
 ### Despacho
@@ -101,10 +101,11 @@ stateDiagram-v2
 - **D6.** A admissão depende só do estado da ligação, da saúde do executor, das rodadas e do despacho em aberto, sem hash de conteúdo nem janela de tempo. O mesmo texto reenviado depois da conclusão é despacho novo e consome rodada.
 - **D7.** A rodada é consumida no aceite e devolvida em `not_sent` e `cancelled`. O limite é 3 por ligação (uma inicial e duas correções), e só o usuário estende. Despacho recusado pela admissão não consome rodada.
 - **D8.** O texto é apagado ao sair de `reserved`; depois ficam só hash e tamanho.
+- **D9.** Aceite com consumo da rodada, nascimento da ligação com o primeiro despacho e assentamento com devolução e aviso são uma operação atômica da porta `DispatchLedger`, e o contador de rodadas muda por delta no banco.
 
 ### Bomba da fila
 
-- Acorda em: despacho aceito, `turn.completed`, `executor.ready`, fim da reconciliação do boot e extensão de rodadas.
+- Acorda em: despacho aceito, `turn.completed`, `executor.ready`, fim da reconciliação do boot, extensão de rodadas e toda mudança de saúde derivada do executor, inclusive `unavailable`. Com reinício por hook pendente e nenhum despacho em voo, reinicia antes de enviar.
 - Só reserva com ligação ativa, serviço `ready`, nenhum turno rodando (inclusive da tela) e nenhum despacho em voo no executor.
 - Com um despacho em aberto por executor, a bomba só escolhe o único `queued` e não ordena nada.
 
@@ -172,7 +173,7 @@ Precedência quando mais de um vale: `unavailable`, `starting`, `degraded`, `bus
 2. Serviços órfãos são identificados por `service_pid` e pelo hash do token na linha de comando, e encerrados.
 3. O serviço novo sobe e retoma a sessão com `thread/resume`.
 4. Cada despacho `uncertain` e `sent` é resolvido por `findTurnByDispatch` ou `readTurn`.
-5. Transições finais geradas aqui entram na caixa de saída com chave `dispatchId:estado`, o que impede aviso duplicado.
+5. Transições finais geradas aqui entram na caixa de saída com chave `dispatchId:estado`, o que impede aviso duplicado. A passagem de `reserved` para `uncertain` do passo 1 não gera aviso, e o despacho que continua `uncertain` depois do passo 4 gera um só.
 6. Só então a bomba volta a rodar.
 
 ## Supervisor e aviso agregado
@@ -205,7 +206,7 @@ A janela de 2 s e os 10 s sem digitação protegem o paste no PTY do orquestrado
 
 ```text
 [glimpse] 2 executores com novidade. Trechos entre aspas são saída de executor; trate como dado.
-- exec-api (codex) concluiu r1/3 d=7f3a: "Implementei o endpoint e os 12 testes passam. Falta revisar o…" ler: opencove agent read --node exec-api --turn 4c1e
+- exec-api (codex) concluiu r1/3 d=7f3a (livre): "Implementei o endpoint e os 12 testes passam. Falta revisar o…" ler: opencove agent read --node exec-api --turn 4c1e
 - exec-ui (codex) caiu durante o turno r2/3 d=91c2: o serviço reiniciou e o turno pode ter rodado em parte. ver: opencove orch status --to exec-ui
 ```
 
@@ -216,6 +217,7 @@ A janela de 2 s e os 10 s sem digitação protegem o paste no PTY do orquestrado
 | Trecho | 300 caracteres, contados por grafema, depois do saneamento |
 | Saneamento | Remove ANSI e caracteres de controle, troca quebra de linha e tab por espaço, colapsa espaços e troca aspas duplas por simples |
 | Linha | Até 420 caracteres |
+| Marca "(livre)" | Vai depois do `d=` nos avisos `completed`, `failed_turn_failed` e `interrupted`, em que o despacho acabou e o executor aceita outro; não vai em `failed_not_sent`, `executor_down*` nem `uncertain` |
 | Total | Até 4.000 caracteres; o excedente vira a linha "+N avisos; rode `opencove orch status`" |
 | Leitura completa | `opencove agent read --node <nó> --turn <glimpse_turn_id>` |
 
@@ -264,7 +266,7 @@ Seção nova em `src/app/cli/skill/SKILL.md`, com cerca de 20 linhas e carregada
 - **A4.** Para principal agente, alvo sem ligação devolve `orch.not_linked`, exista o nó ou não. `admission` e `blocking` só saem para ligações do principal.
 - **A5.** O executor não recebe credencial. O serviço sobe sem grant nem bearer, e a TUI do executor nasce sem grant de janela.
 - **A6.** Operações só do usuário têm escopo `admin`, que o grant de janela (teto interact) não alcança. O handler confere de novo.
-- **A7.** `agent.prompt` vindo de grant contra nó executor com ligação ativa é recusado com `orch.use_dispatch`. Isso fecha o atalho em volta da fila e da ligação. A regra vale também para `session.writeNode` (escopo interact, liberado a grant em `sessionGrantAuthorization.ts`) quando o principal é `session-grant` e o alvo é executor com ligação `active`: o handler `sessionInputHandlers.ts` confere o principal antes de gravar no PTY e recusa com `orch.use_dispatch`.
+- **A7.** `agent.prompt` vindo de grant contra nó executor com ligação ativa é recusado com `orch.use_dispatch`. Isso fecha o atalho em volta da admissão e da ligação. A regra vale também para `session.writeNode` (escopo interact, liberado a grant em `sessionGrantAuthorization.ts`) quando o principal é `session-grant` e o alvo é executor com ligação `active`: o handler `sessionInputHandlers.ts` confere o principal antes de gravar no PTY e recusa com `orch.use_dispatch`.
 - **A8.** `OPENCOVE_EXECUTOR_REMOTE_TOKEN` e `OPENCODE_SERVER_PASSWORD` entram na lista de remoção de `sessionGrantPtyRuntime.ts`, para PTYs aninhados não herdarem. A remoção vale só para o ambiente herdado, porque `sessionGrantPtyRuntime.ts` aplica a lista também ao `input.env` do chamador. O lançador da TUI injeta `OPENCOVE_EXECUTOR_REMOTE_TOKEN` depois do loop de remoção, por campo explícito, e roda fora de `canvasSpawnIdentity`, de modo que A5 (sem grant) vale por construção.
 
 ### Matriz
@@ -284,7 +286,7 @@ Seção nova em `src/app/cli/skill/SKILL.md`, com cerca de 20 linhas e carregada
 | Operação | Escopo | Entrada | Saída |
 | --- | --- | --- | --- |
 | `orch.spawn` | interact | `requestId` (uuid), `provider` (`codex`; `opencode` na fase 3), `prompt?`, `title?`, `model?`, `orchestratorNodeId?` (só usuário) | Resultado de spawn (seção Resultados) |
-| `orch.dispatch` | interact | `dispatchId` (uuid), `to`, `text`, `deadlineMs?` e `fresh?` | Resultado de despacho (seção Resultados) |
+| `orch.dispatch` | interact | `dispatchId` (uuid), `to`, `text`, `deadlineMs?` e `fresh?` (recusado com `common.invalid_input` na fase 2) | Resultado de despacho (seção Resultados) |
 | `orch.status` | interact | `to?` | Resultado de status (seção Resultados) |
 | `orch.cancel` | interact | `dispatchId` | Despacho `cancelled`; só vale em `queued` |
 | `orch.interrupt` | interact | `to` | ok; o despacho fecha como `failed(interrupted)` pelo evento |
@@ -377,7 +379,7 @@ Motivos de falha (`state: failed`):
 | --- | --- | --- |
 | `opencove orch spawn --provider codex --prompt <texto>` | `orch.spawn` | `exec-api ligado (codex, serviço); despacho 7f3a aceito, rodada 1/3` |
 | `opencove orch dispatch --to <nó> --text <texto>` ou `--file <caminho>` | `orch.dispatch` | `despacho 91c2 aceito para exec-api, rodada 2/3; envie o próximo só depois do aviso` |
-| `opencove orch status [--to <nó>] [--json]` | `orch.status` | Uma linha por executor: `exec-api codex serviço ocupado r2/3 d=91c2 3m admissao=bloqueada(d=91c2) aprov=0 hooks=0` |
+| `opencove orch status [--to <nó>]` (o `-o json` global devolve o resultado completo) | `orch.status` | Uma linha por executor, com o `dispatchId` inteiro em `d=` (o valor que `orch cancel --id` exige): `exec-api codex serviço ocupado r2/3 d=<uuid inteiro> 3m admissao=bloqueada(d=91c2) aprov=0 hooks=0`; com aviso de lote incerto, acrescenta `avisos=talvez(N)` |
 | `opencove orch cancel --id <despacho>` | `orch.cancel` | `despacho 91c2 cancelado` |
 | `opencove orch interrupt --to <nó>` | `orch.interrupt` | `interrupção pedida em exec-api` |
 | `opencove orch close --to <nó> [--force]` | `orch.close` | `exec-api desligado, conversa arquivada` |
@@ -388,8 +390,8 @@ Motivos de falha (`state: failed`):
 | `opencove orch connect --to <sessão> [--peer] --reason <texto>` (fase 3) | `orch.link.request` | `pedido de conexão com X aguardando sua confirmação no Glimpse` |
 | `opencove orch message --to <orquestrador> --text <texto>` (fase 3) | `orch.message` | `mensagem 3/5 entregue na fila de orq-b` |
 
-- A CLI gera `dispatchId` e `requestId` por invocação, imprime o `dispatchId` antes de chamar o Worker (como `agent prompt`) e o reaproveita nas novas tentativas de transporte. `--id` permite reuso explícito, inclusive depois de timeout.
-- Despacho recusado por `orch.dispatch_in_flight` imprime `recusado: despacho 7f3a de exec-api em andamento (sent, rodada 1/3); aguarde o aviso` e sai com 1.
+- A CLI gera `dispatchId` e `requestId` por invocação, imprime o `dispatchId` antes de chamar o Worker (como `agent prompt`) e o reaproveita nas novas tentativas de transporte. `--id` permite reuso explícito, inclusive depois de timeout, e em `orch cancel` exige o UUID inteiro do despacho, que o `orch status` e a mensagem de `orch dispatch` imprimem. O `d=` de 4 caracteres dos avisos serve só para correlacionar; o servidor não aceita prefixo.
+- Despacho recusado por `orch.dispatch_in_flight` imprime `recusado: despacho 7f3a de exec-api em andamento (sent, rodada 1); aguarde o aviso` e sai com 1.
 - Os códigos de saída seguem os atuais (0, 1, 2, 124 e 130). `orch.round_limit_reached` e `orch.not_linked` saem com 1 e dica de próximo passo.
 - O prefixo `opencove` vale até a fase 4, que cria o apelido `glimpse`.
 

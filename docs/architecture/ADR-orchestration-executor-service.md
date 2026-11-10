@@ -133,6 +133,7 @@ O contexto segue o mesmo DDD com Clean dos demais. As regras de `harness/archite
 | Porta | Responsabilidade | Implementação |
 | --- | --- | --- |
 | `ExecutorRuntimeFactory` e `ExecutorRuntime` | Falar com o serviço do executor | `infrastructure/codex` e, na fase 3, `opencode` |
+| `DispatchLedger` | Operações atômicas de despacho em uma transação síncrona: `acceptDispatch` (aceite com consumo da rodada), `createLinkWithDispatch` (ligação com o primeiro despacho) e `settleDispatch` (assentamento com devolução da rodada e aviso, com `notice: 'final' \| 'none'`) | `infrastructure/persistence`, sobre o mesmo handle SQLite |
 | `AgentLinkRepository`, `DispatchRepository`, `NoticeOutboxRepository` e `HookApprovalRepository` | Persistência com CAS por `revision`; `DispatchRepository` busca o despacho fora de estado final do executor e recusa o segundo com `executor_busy` | `infrastructure/persistence` |
 | `ExecutorNodePort` | Criar o nó ao lado do orquestrador e ler provedor e existência de nós | Composição, sobre o fluxo de `node.create` |
 | `ExecutorTuiLauncher` | Lançar e relançar a TUI no PTY do nó | Composição, sobre o caminho de lançamento de sessão |
@@ -159,7 +160,7 @@ A porta esconde o provedor. O caso de uso só conhece sessão, turno, aprovaçã
 | `startTurn({ dispatchId, text })` | Despacho já gravado como `reserved` | `{ turnRef }` | Uma escrita no transporte por chamada, nunca repetida |
 | `findTurnByDispatch(dispatchId, since)` | Id do despacho e horário da reserva | `found` com `turnRef`, status e mensagem final, ou `absent`, ou `unknown` | Só leitura |
 | `readTurn(turnRef)` | Turno | Status, mensagem final e uso | Só leitura |
-| `respondApproval(requestId, decision)` | Pedido e decisão | ok ou `approval_not_found` | Idempotente por `requestId` |
+| `respondApproval(requestId, decision)` | Pedido e `decision` em `approve`, `approve_for_session`, `deny` ou `cancel` (`cancel` recusa e interrompe o turno) | ok ou `approval_not_found` | Idempotente por `requestId` |
 | `interrupt(turnRef?)` | Turno opcional | ok | Sem efeito com executor ocioso |
 | `attachInfo()` | nenhuma | URL, nome da variável do token, `sessionRef` e cwd | Insumo do lançamento da TUI |
 | `subscribe(listener)` | Ouvinte | Cancelador | Eventos em ordem por executor |
