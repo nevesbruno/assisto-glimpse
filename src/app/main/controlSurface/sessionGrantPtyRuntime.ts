@@ -9,6 +9,9 @@ import {
   SessionRegistrationRejectedError,
 } from '../../../shared/runtime/sessionRegistrationOwner'
 
+const CREDENTIAL_KEY =
+  /^(OPENCOVE_(CONTROL_|NODE_ID$|SPACE_ID$|PROJECT_ID$|SESSION_ID$|CLI$|CLI_SHIM_DIRECTORY$|ENV$|EXECUTOR_REMOTE_TOKEN$)|OPENCODE_SERVER_PASSWORD$)/i
+
 /** The only credential injection point; wraps the hosting runtime, never a remote proxy. */
 export function createSessionGrantPtyRuntime(options: {
   runtime: ControlSurfacePtyRuntime
@@ -34,20 +37,18 @@ export function createSessionGrantPtyRuntime(options: {
       grants.revokeSession(sessionId)
       options.runtime.kill(sessionId)
     },
-    spawnSession: async input => {
+    spawnSession: async ({ injectedEnv, ...input }) => {
       // A caller environment is complete: callers deliberately remove variables such as
       // Electron control mode. Only an absent one inherits the hosting process environment.
       const env = input.env ? { ...input.env } : removeElectronRunAsNode(process.env)
       // Inherited credentials and user overrides never become authority for a new session.
       for (const key of Object.keys(env)) {
-        if (
-          /^OPENCOVE_(CONTROL_|NODE_ID$|SPACE_ID$|PROJECT_ID$|SESSION_ID$|CLI$|CLI_SHIM_DIRECTORY$|ENV$)/i.test(
-            key,
-          )
-        ) {
+        if (CREDENTIAL_KEY.test(key)) {
           delete env[key]
         }
       }
+      // Explicit field, applied after the removal: the removal also filters the caller `env`.
+      Object.assign(env, injectedEnv)
       const identity = canvasSpawnIdentity.getStore()
       if (!identity) {
         return await options.runtime.spawnSession({ ...input, env })

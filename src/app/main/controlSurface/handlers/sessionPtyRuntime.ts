@@ -28,6 +28,8 @@ export interface ControlSurfacePtyRuntime extends ClaudeTranscriptPort {
     command: string
     args: string[]
     env?: NodeJS.ProcessEnv
+    /** Applied after the credential removal, so it is the only way to hand a secret to a launch. */
+    injectedEnv?: Readonly<Record<string, string>>
     agentProvider?: AgentProviderId
     initialAgentState?: 'working' | 'standby'
     hookCoverage?: AgentHookCoverage
