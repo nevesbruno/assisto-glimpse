@@ -13,7 +13,7 @@ Esta é uma parte do [ADR da orquestração por serviço de executor](ADR-orches
 | `orchestrator_node_id` | Nó agente de provedor `claude-code` |
 | `executor_node_id` | Nó agente `codex` (fase 2) ou `opencode` (fase 3) |
 | `kind` | `executor` na fase 2; `peer` na fase 3, para conversa entre orquestradores |
-| `origin` | `orchestrator_spawn`; na fase 3, também `conversation_request` e `canvas_manual` |
+| `origin` | `orchestrator_spawn`; `canvas_manual` já na fase 2, pelo `orch.link.create`; `conversation_request` na fase 3 |
 | `runtime_mode` | `service`; `terminal` fica reservado para o fallback futuro |
 | `provider` | Provedor do executor |
 | `state` e `close_reason` | `requested` (fase 3), `active` ou `closed`; motivos `orchestrator`, `user`, `node_deleted`, `spawn_failed` e, na fase 3, `declined` |
@@ -105,7 +105,7 @@ stateDiagram-v2
 
 ### Bomba da fila
 
-- Acorda em: despacho aceito, `turn.completed`, `executor.ready`, fim da reconciliação do boot, extensão de rodadas e toda mudança de saúde derivada do executor, inclusive `unavailable`. Com reinício por hook pendente e nenhum despacho em voo, reinicia antes de enviar.
+- Acorda em: despacho aceito, `turn.completed`, `executor.ready`, fim da reconciliação do boot, extensão de rodadas e toda mudança de saúde derivada do executor, inclusive `unavailable`. Com reinício por hook pendente e nenhum despacho em voo, reinicia antes de enviar. Há uma exceção única: aprovar hooks marca restartPending e acorda a bomba sem mudança de saúde, porque o reinício agendado é a razão de acordar.
 - Só reserva com ligação ativa, serviço `ready`, nenhum turno rodando (inclusive da tela) e nenhum despacho em voo no executor.
 - Com um despacho em aberto por executor, a bomba só escolhe o único `queued` e não ordena nada.
 
@@ -291,7 +291,7 @@ Seção nova em `src/app/cli/skill/SKILL.md`, com cerca de 20 linhas e carregada
 | `orch.cancel` | interact | `dispatchId` | Despacho `cancelled`; só vale em `queued` |
 | `orch.interrupt` | interact | `to` | ok; o despacho fecha como `failed(interrupted)` pelo evento |
 | `orch.close` | interact | `to` e `force?` | Ligação `closed` e thread arquivada; com despacho em voo e sem `force`, recusa |
-| `orch.link.create` | admin | `orchestratorNodeId` e `executorNodeId` | `linkId` e `runtimeMode` |
+| `orch.link.create` | admin | `orchestratorNodeId` e `executorNodeId`; sobe o serviço e relança a TUI do nó sempre, e uma falha fecha a ligação com `spawn_failed` | `linkId` e `runtimeMode` |
 | `orch.link.close` | admin | `linkId` e `force?` | ok |
 | `orch.link.list` | read | `projectId?` | `linksRevision` e `links` |
 | `orch.link.extend` | admin | `linkId`, `rounds` (1 ou 2) e `reason` | Novo limite |
@@ -422,7 +422,7 @@ Motivos de falha (`state: failed`):
 
 As ligações vivem na tabela do Worker, que é a fonte e a única consultada pela autorização. O Worker as espelha no estado sincronizado (`src/shared/contracts/persistedAppState.ts` e `src/shared/sync/`) só para exibição.
 
-- Escrita de janela no espelho, mesmo por `sync.writeState` (interact), não concede nada e é sobrescrita pela reconciliação do Worker. Alcance de despacho nunca lê o espelho.
+- Escrita de janela no espelho, mesmo por `sync.writeState` (interact), não concede nada e é sobrescrita pela reconciliação do Worker. Alcance de despacho nunca lê o espelho. Grant de agente não escreve o estado: `sync.writeState` e `sync.writeWorkspaceStateRaw` são negadas a `session-grant` (`common.forbidden`), porque um estado forjado sem os nós de outro projeto levaria o reconciliador a fechar as ligações deles.
 - Leitura autorizada por `orch.link.list`, que devolve `{ linksRevision, links }`. A seta e a lista da interface leem o espelho.
 - Evento em `SyncEventPayload`: `{ type: 'orchestration.links.updated', revision, linksRevision, operationId }`, publicado por `publishSyncEvent` como o `canvas.focus`. `revision` é a revisão atual do estado do app, sem incremento.
 - O renderer reaplica o espelho a cada evento e em todo `resync_required`, a partir de `useWorkerSyncStateUpdates.ts`. Clientes web recebem o mesmo evento pelo `/events`.

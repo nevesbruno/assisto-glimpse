@@ -161,6 +161,26 @@ OpenCove 将外部可驱动能力收敛为一套 **Control Surface**（`command 
 详细约束见 `docs/architecture/CONTROL_SURFACE.md`。
 Web UI / Remote Worker 等浏览器或远端入口，都是同一套 Control Surface 在不同 transport（HTTP/WS/IPC）上的适配与复用；Web listener lifecycle 见 `docs/runtime/WORKER_WEB_ACCESS_LIFECYCLE.md`，常见问题与调试见 `docs/runtime/WEB_UI_TROUBLESHOOTING.md`。
 
+### 9.2 Composição da orquestração no Worker
+
+O Worker compõe o serviço de orquestração em `src/app/main/controlSurface/orchestration/composeOrchestration.ts`, e o Control Surface o recebe como dependência dos handlers `orch.*`. A composição é preguiçosa (`lazyOrchestration`): sem `dbPath` não há instância, e com ele a instância nasce no primeiro `get`. O boot, porém, não espera esse primeiro uso, porque `controlSurfaceHttpRuntime.ts` chama `orch.boot()` no start do Worker.
+
+Há uma única instância de `PromptDeliveryService` por Worker, criada em `controlSurfaceHttpRuntime.ts` e repassada a `registerControlSurfaceHandlers` e a `lazyOrchestration`. A reserva do PTY vive nela, então o aviso da bomba e o `agent.prompt` disputam a mesma reserva.
+
+O reconciliador de exclusão (`application/nodeDeletion.ts`) fecha a ligação cujo nó executor ou orquestrador sumiu. Ele roda em `onStatePersisted`, depois de `node.delete` (embrulho em `orchestration/nodeDeletionTrigger.ts`) e no boot, e lê o estado do store: leitura que falha, ou estado sem workspace, não fecha ligação.
+
+A orquestração usa conexão better-sqlite3 própria no `dbPath`, aberta pela composição e nunca dentro de `PersistenceStore.write`. O WAL já é persistente no arquivo, e o `busy_timeout` de 5000 ms é repetido em cada conexão. Repositórios, espelho de ligações, supervisor, bombas de despacho e de aviso, e o adaptador do run state `executor_service` ficam todos sob essa composição, cada um com dono e caminho de descarte.
+
+O descarte é assíncrono (`await orch.dispose()` no stop do Worker) e segue uma ordem fixa:
+
+```text
+desliga eventos, bomba de aviso, bomba de despacho e supervisor
+  -> service.shutdown() (fecha cada serviço do executor em paralelo)
+  -> fecha a conexão
+```
+
+Depois do descarte, `get` devolve `null` e nenhuma instância é recomposta. O `shutdown` do serviço não fecha ligação, não marca `unavailable` e não avisa o orquestrador, e o relançamento do que ficou ativo cabe ao boot seguinte ([modelo de recuperação](RECOVERY_MODEL.md)).
+
 ## 10. 测试映射规则
 
 - `domain`：unit tests 验证 invariant 与状态迁移。

@@ -153,6 +153,36 @@ Canvas node control:
 - `node.delete`
 - `canvas.focus`
 
+Orchestration (`orch.*`, handlers in `handlers/orchestrationHandlers.ts`):
+
+- `orch.spawn`, `orch.dispatch`, `orch.status`, `orch.cancel`, `orch.interrupt`, `orch.close`
+- `orch.link.create`, `orch.link.close`, `orch.link.list`, `orch.link.extend`
+- `orch.approval.respond`, `orch.hooks.approve`
+
+The handlers receive the orchestration service as a dependency that the Worker composes; until it
+is composed every `orch.*` call fails with `common.unavailable`. A session grant is an agent
+principal whose `provider` is read from the app state at call time, never from the grant or from
+the synced links mirror; any other credential is the user. `orch.link.close`, `orch.link.create`,
+`orch.link.extend`, `orch.approval.respond` and `orch.hooks.approve` are admin scope.
+
+Errors: `orch.*` codes map one to one. `orch.dispatch_in_flight` (also `orch.cancel` and the close
+operations) carries the blocking dispatch as `details: { dispatchId, state, round }`; the other
+dispatch refusals carry no details. An invalid dispatch text becomes `common.invalid_input` and an
+invalid dispatch transition `common.unexpected`. `orch.dispatch` and `orch.hooks.approve` also
+declare `common.invalid_input`.
+
+Results: `orch.dispatch`, `orch.spawn` and `orch.status` return the dispatch, spawn and status DTOs
+of `shared/contracts/dto/orchestration.ts`; `orch.cancel` returns the dispatch view;
+`orch.link.list` returns `{ linksRevision, links }`; `orch.link.extend` returns
+`{ linkId, roundsLimit }`; `orch.hooks.approve` returns `{ approved, restart: 'done' | 'scheduled' }`
+(`orchestrationHooksApproveResultSchema`); `orch.interrupt`, `orch.close`, `orch.link.close` and
+`orch.approval.respond` return `{ ok: true }`.
+
+`orch.dispatch` refuses `fresh: true` with `common.invalid_input` and the message "fresh indisponível
+na fase 2". `orch.link.create` links two existing nodes, starts the service and always relaunches the
+TUI of the executor node onto it, even when that node already has a live PTY; a failure closes the
+link with `spawn_failed`. It returns `{ linkId, runtimeMode }`.
+
 Project, workspace, sync, worktree and integrations are also exposed through dedicated handlers where implemented.
 
 ## Topology And Mounts
@@ -278,7 +308,8 @@ liveness. `requestAuth` accepts an injected registry and represents successful v
 `{ kind: 'session-grant', grant }`. An invalid explicit bearer does not fall back to a cookie.
 
 The authorization invariant is fail closed: a grant may invoke only registry operations with
-`read` or `interact` scope. `admin`, unknown IDs, `worker.*`, and ticket issuance are forbidden.
+`read` or `interact` scope. `admin`, unknown IDs, `worker.*`, ticket issuance, and the state writes `sync.writeState` and
+`sync.writeWorkspaceStateRaw` are forbidden.
 The HTTP handler returns `403 / common.forbidden`; invalid or revoked credentials return 401.
 The same scope check runs in internal dispatch to preserve the fence across nested invocations.
 `system.whoami` is a schema-backed read operation returning explicit identity fields and build
@@ -316,6 +347,12 @@ control, write, resize and agent reexec messages are refused. SSE and WebSocket 
 to revocation; SSE membership is removed synchronously and sockets are terminated. Pending HTTP
 bodies and persistence preparation are followed by authoritative liveness checks before dispatch.
 Project scoping remains a follow-up; a scope tier is not a project isolation boundary.
+
+Direct input to a linked executor: `agent.prompt` and `session.writeNode` from an agent principal
+(a session grant) aimed at a node that is the executor of an active link are refused with
+`orch.use_dispatch` before any write to the PTY; the guard lives in
+`handlers/directInputGuard.ts`. The orchestrator uses `orch.dispatch` instead, and user
+credentials are not affected.
 
 ### Prompt delivery
 

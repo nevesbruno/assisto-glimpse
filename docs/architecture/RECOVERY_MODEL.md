@@ -285,6 +285,37 @@ Renderer cache, hot workspace-switch screen cache and placeholder data are local
 session recovery remains provider/CLI-owned; terminal recovery storage must not manufacture provider
 conversation history.
 
+## Orchestration executor services
+
+Cada ligação ativa entre orquestrador e executor tem um serviço app-server do Codex sob o Worker. A ligação e a thread são o fato durável, e o processo do serviço é só observação de runtime.
+
+No boot (`createOrchestrationBoot`, disparado no start do Worker sem esperar o primeiro `get`) a ordem é esta:
+
+```text
+reconcileOnBoot
+  -> despachos reservados viram uncertain
+  -> reapOrphanServices (pid e hash do token)
+  -> reconciliador de exclusão (ligação de nó ausente vira node_deleted)
+  -> restartLinkedService por ligação, retomando a thread
+  -> reconciliação do despacho em voo
+  -> espelho de ligações sincronizado e pump.poke
+  -> relançamento da TUI do executor ativo sem PTY vivo
+```
+
+O reaper só recebe ligações ativas e lê o `servicePid` e o `serviceTokenSha256` gravados por `recordServiceIdentity` (no start do serviço e no `executor.recovered`). Ele mata o grupo de processos só quando o pid está vivo e a linha de comando traz `--ws-token-sha256` com o mesmo hash, e recusa pid menor ou igual a 1.
+
+Falha de qualquer passo do boot é registrada e não derruba o Worker. O `reconcileOnBoot` consulta `isStopped` antes de reconciliar cada ligação, para que um descarte no meio do boot não suba app-server novo.
+
+O reconciliador de exclusão (`nodeDeletion.ts`) também roda a cada `onStatePersisted` e depois de `node.delete`. Ele decide pelo estado lido do store, nunca pelo payload, e uma leitura que falha ou um estado sem workspace não fecha ligação. Cada ligação cujo nó sumiu é fechada com `node_deleted`, com `thread/archive` antes do SIGTERM.
+
+Uma única instância de `PromptDeliveryService` por Worker serve o `agent.prompt` e o aviso ao orquestrador, de modo que os dois respeitam a mesma reserva do PTY.
+
+A sincronização do espelho (`orchestration_links_mirror`) grava o espelho e publica `orchestration.links.updated` depois da reconciliação. A TUI só é relançada quando `hasLiveTui` é falso para o nó executor, e o relançamento reinicia o serviço antes se ele estiver caído. Nenhum despacho `queued` é enviado antes de a reconciliação terminar.
+
+No stop do Worker o destino dos serviços segue o ADR de adaptadores (encerramento): para cada serviço vivo, `turn/interrupt` se houver turno, depois SIGTERM, 3 s e SIGKILL no grupo de processos, sem `thread/archive`. A ligação segue ativa e a thread é retomada no boot seguinte. O reaper fica para a queda do Worker.
+
+A ordem do stop é: desliga eventos, bombas e supervisor, depois `service.shutdown()` (fechamentos em paralelo, com `ExecutorCloseReason` `'shutdown'`), depois fecha a conexão do banco. Como a assinatura do slot é cortada antes do fechamento, o `shutdown` nunca é lido como queda, não gera aviso e não agenda reinício com recuo. Isso se soma ao "Shutdown ordering" do terminal acima, que não muda.
+
 ## Verification Anchors
 
 - `tests/integration/recovery/useHydrateAppState.workerPrepare.spec.tsx`

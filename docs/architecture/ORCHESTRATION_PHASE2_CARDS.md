@@ -1,6 +1,8 @@
 # Partição da fase 2 da orquestração
 
-Cards pequenos para entregar a fase 2 do [ADR da orquestração](ADR-orchestration-executor-service.md) ([adaptadores](ADR-orchestration-executor-adapters.md) e [despacho e superfície](ADR-orchestration-dispatch-and-surface.md)), com o Codex como executor. Cada arquivo tem um card dono por vez, e dois cards ativos ao mesmo tempo nunca tocam o mesmo arquivo. Os testes citados por id (U, C, I, E) estão em [Riscos e testes](ORCHESTRATION_RISKS_AND_TESTS.md). Os cards das ondas 0 e 1 estão em [ondas 0 e 1](ORCHESTRATION_PHASE2_CARDS_WAVES_0_1.md), e os da onda 3 em [onda 3](ORCHESTRATION_PHASE2_CARDS_WAVE_3.md).
+Cards pequenos para entregar a fase 2 do [ADR da orquestração](ADR-orchestration-executor-service.md) ([adaptadores](ADR-orchestration-executor-adapters.md) e [despacho e superfície](ADR-orchestration-dispatch-and-surface.md)), com o Codex como executor. Cada arquivo tem um card dono por vez, e dois cards ativos ao mesmo tempo nunca tocam o mesmo arquivo. Os testes citados por id (U, C, I, E) estão em [Riscos e testes](ORCHESTRATION_RISKS_AND_TESTS.md).
+
+Os cards das ondas 0 e 1 estão em [ondas 0 e 1](ORCHESTRATION_PHASE2_CARDS_WAVES_0_1.md), os da onda 3 em [onda 3](ORCHESTRATION_PHASE2_CARDS_WAVE_3.md) e o F2-14 em [onda 4](ORCHESTRATION_PHASE2_CARDS_WAVE_4.md).
 
 Critério de aceite da fase, vindo do plano: o Claude Code cria dois executores Codex, despacha, recebe um aviso agregado, lê o resultado e encerra, sem clique. Reiniciar o Glimpse no meio não duplica despacho, e executor morto vira aviso de falha.
 
@@ -242,34 +244,7 @@ Os cards F2-08b, F2-09b, F2-11, F2-12, F2-13, F2-17a e F2-17b, com a ordem de ex
 
 ## Onda 4
 
-### F2-14 Handlers e composição no Worker
-
-| Campo | Valor |
-| --- | --- |
-| Objetivo | Expor `orch.*` no Control Surface no lugar do handler provisório, compor o contexto no Worker, aplicar a matriz de autorização e fechar o atalho do `agent.prompt` |
-| Papel | dev-backend |
-| Depende de | F2-02c, F2-05, F2-07, F2-08, F2-08b, F2-09, F2-09b, F2-10, F2-11, F2-12 e F2-13 |
-| Arquivos donos | `src/app/main/controlSurface/handlers/orchestrationHandlers.ts` e `orchestrationHandlers.support.ts`; `src/app/main/controlSurface/handlers/orchestrationProvisionalHandlers.ts` (removido); `src/app/main/controlSurface/orchestration/composeOrchestration.ts`; `src/app/main/controlSurface/orchestration/orchestrationLinksMirror.ts` (novo, grava o espelho de ligações no estado sincronizado do Worker); `src/platform/persistence/sqlite/read.ts` e `write.ts` (`readAppStateFromDb` passa a devolver `orchestrationLinks` e `writeNormalizedAppState` a gravá-lo; hoje a leitura devolve só `formatVersion`, `activeWorkspaceId`, `workspaces` e `settings`, e o espelho não chega ao renderer; sem dono anterior na fase 2 segundo o `git log`); `src/app/main/controlSurface/registerControlSurfaceHandlers.ts` e `src/shared/contracts/controlSurface/operations/registry.ts` (passam do F2-02c ao F2-14); `src/app/main/controlSurface/handlers/agentPromptHandlers.ts` e `sessionInputHandlers.ts`; `src/shared/contracts/controlSurface/operations/domains/orch.ts` (declaração de `errors` e recusa de `fresh`); `src/shared/contracts/dto/orchestration.ts` (DTO do `hooks.approve`) e `dto/index.ts`; os handlers de `orch.link.create` e `orch.link.list` em `orchestrationHandlers.ts` e `orchestrationHandlers.support.ts`, com o caso de uso novo de `link.create` em arquivo próprio de `application/`; `docs/architecture/CONTROL_SURFACE.md` e `ARCHITECTURE.md`; `tests/integration/orchestration/authorization.spec.ts`, `nodeDeletion.spec.ts` e `linksMirror.spec.ts` (novo) |
-
-Aceite verificável:
-
-- I-01 e I-07 verdes, com grants reais.
-- O handler provisório sai, e `registerControlSurfaceHandlers.ts` registra os handlers reais das doze `orch.*`; `controlSurface.operations.spec.ts` já espera 162 desde o F2-02c e deixa de ser deste card. `operationRegistry.spec.ts` e `controlSurface.introspection.spec.ts` verdes.
-- O handler de `orch.dispatch` mapeia `orch.dispatch_in_flight` com `details: { dispatchId, state, round }` do bloqueante; `DispatchRuleError` (`invalid_transition`, `invalid_text`) vira `orch.*` ou erro interno.
-- `principal.provider` vem do estado do app no momento da chamada, nunca do grant nem do espelho (A2).
-- A composição liga `OrchestratorReadinessPort.watchReadiness` ao `noticePump` e ao `LinksUpdatedEvent`, que ganha `operationId` do `IdGenerator` e `revision` de `persistenceStore.readAppStateRevision()` (padrão do `canvas.focus`).
-- `agent.prompt` e `session.writeNode` de agente contra executor ligado devolvem `orch.use_dispatch`, e a escrita no PTY não acontece.
-- O Worker grava o espelho de ligações (`orchestrationLinksMirror.ts`) no estado sincronizado a cada mudança de ligação e na reconciliação; escrita forjada no espelho via `sync.writeState` não muda o resultado de `orch.dispatch` e some na próxima reconciliação.
-- A reconciliação do boot roda antes da bomba.
-- O evento `orchestration.links.updated` também sai quando a saúde do executor vai para `unavailable` e quando volta.
-- `writeNormalizedAppState` grava `orchestrationLinks` e `readAppStateFromDb` o devolve, em ida e volta sem perda; `readAppState` devolve o espelho gravado pelo Worker, e a seta aparece de ponta a ponta.
-- Teste de integração `linksMirror.spec.ts`: uma mudança de ligação no Worker grava o espelho e publica `orchestration.links.updated` uma vez, com `revision` de `readAppStateRevision()` e `operationId` do `IdGenerator`; a leitura do estado pelo renderer traz a ligação.
-- No boot, depois da reconciliação, a composição relança com `executorTuiLauncher.relaunch` a TUI de todo executor ativo sem PTY vivo (pendência do F2-13, que só entrega o lançador).
-- A fábrica do Codex recebe `readFullAccess` da composição, lido das configurações no momento do start, e `PortReserver` real sobre `reserveLoopbackPort('127.0.0.1')` de `sessionLaunchSupport.ts`.
-- `fresh: true` em `orch.dispatch` é recusado com `common.invalid_input` e a mensagem "fresh indisponível na fase 2"; `orch.ts` declara `common.invalid_input` em `errors` de `orch.dispatch` e `orch.hooks.approve` (a lista `errors` é explícita, `common.*` não é implícito), `orch.executor_unavailable` em `orch.approval.respond` e `orch.dispatch_in_flight` em `orch.dispatch`, com os snapshots de introspecção atualizados.
-- `orchestrationHooksApproveResultSchema` (`{ approved: int, restart: 'done' | 'scheduled' }`) existe em `dto/orchestration.ts` e é o resultado de `orch.hooks.approve`.
-- `orch.link.create` e `orch.link.list` têm handler sobre os repositórios existentes (`listByProject`, `readLinksRevision`, `createExecutorLink`); `link.create` exige caso de uso novo em arquivo próprio de `application/`, o que passa pelo arquiteto antes do diff.
-- `pnpm arch:test` e `pnpm verify:quick` verdes, inclusive a checagem de sincronia dos documentos de contrato (alterar `CONTROL_SURFACE.md` ou `ARCHITECTURE.md` exige evidência staged, conforme `check-doc-sync.mjs`).
+O F2-14, partido em etapas (1, 2, 2b, 3, 4r, 4s, 4a, 4b1, 4b2, 4c, 4d, 5 e 5b) e com a ordem de execução da onda, está em [onda 4](ORCHESTRATION_PHASE2_CARDS_WAVE_4.md). O aceite verificável foi movido por etapa para esse arquivo.
 
 ## Onda 5
 
@@ -320,10 +295,11 @@ Em cada linha, os donos se sucedem e nunca coexistem.
 | `domain/dispatch.ts`, `orchestrationTables.ts`, `schema.ts`, `src/shared/errors/appError.ts` e `PERSISTENCE.md` | Onda 1 (F2-01, F2-03 e F2-02) para o F2-01b |
 | `src/shared/contracts/controlSurface/operations/domains/orch.ts` | Onda 1 com F2-02, F2-01b, depois F2-02c só se o JSON schema ou o summary exigirem |
 | `src/shared/contracts/dto/orchestration.ts` e `dto/index.ts` | Onda 1 com F2-02, depois F2-02b |
-| `registry.ts`, `registerControlSurfaceHandlers.ts` e `orchestrationProvisionalHandlers.ts` | F2-02c, depois F2-14 |
+| `registry.ts`, `registerControlSurfaceHandlers.ts` e `orchestrationProvisionalHandlers.ts` | F2-02c, depois F2-14 (`registerControlSurfaceHandlers.ts`: etapa 3, depois 4a, depois 4c, nunca juntas) |
+| `src/platform/persistence/sqlite/schema.ts`, `read.ts`, `write.ts` e `normalize.ts` | Onda 1 (`schema.ts`), depois onda 4 com F2-14 etapa 1 |
 | `tests/unit/app/__snapshots__/cliInputOutput.spec.ts.snap` | F2-02c, depois F2-09 |
 | `tests/unit/contexts/controlSurface.operations.spec.ts` | F2-02c (150 para 162); F2-14 só se algum ajuste novo for necessário |
-| `src/contexts/orchestration/application/OrchestrationService.ts` | F2-08, F2-08b etapa 2 (máx. 270 linhas), F2-12 (`subscribeEvents`, até 300 linhas); depois só com aval do arquiteto |
+| `src/contexts/orchestration/application/OrchestrationService.ts` | F2-08, F2-08b etapa 2 (máx. 270 linhas), F2-12 (`subscribeEvents`, até 300 linhas), depois F2-14 etapa 2 (máx. 290 linhas), e F2-14 etapas 4b2 e 5b (máx. 300 linhas); depois só com aval do arquiteto |
 | `application/ports/executorRuntime.ts`, `ports/repositories.ts`, `ports/index.ts` | Já na linha de portas; na onda 3 só o F2-08b etapa 1 (ledger e `ApprovalDecision`), e o F2-11 apenas consome o tipo |
 | `application/dispatchToExecutor.ts`, `spawnExecutor.ts`, `linkLifecycle.ts` e `approvals.ts` | F2-08, F2-08b etapa 1; depois, na etapa 2 do F2-08b, `spawnExecutor.ts`, `approvals.ts`, `dispatchToExecutor.ts` (`callRuntime` em `interrupt`) e `linkLifecycle.ts` (`callRuntime` em `close` e `notice: 'none'` em `failOpenDispatch`); `linkLifecycle.ts` ainda no F2-12, só se precisar |
 | `application/dispatchPump.ts`, `reconcileOnBoot.ts` e `hookApprovals.ts` | F2-08, depois F2-08b etapa 2 |
