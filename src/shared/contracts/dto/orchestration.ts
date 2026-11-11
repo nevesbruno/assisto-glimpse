@@ -1,20 +1,6 @@
 import * as z from 'zod'
 
-export const ORCHESTRATION_ERROR_CODES = [
-  'orch.forbidden',
-  'orch.not_linked',
-  'orch.link_invalid',
-  'orch.executor_unavailable',
-  'orch.round_limit_reached',
-  'orch.dispatch_conflict',
-  'orch.dispatch_in_flight',
-  'orch.limit_reached',
-  'orch.protocol_mismatch',
-  'orch.approval_not_found',
-  'orch.use_dispatch',
-  'orch.link_declined',
-  'orch.message_limit_reached',
-] as const
+export { ORCHESTRATION_ERROR_CODES } from './orchestrationErrorCodes'
 
 export const ORCHESTRATION_TEXT_MAX_BYTES = 32_768
 

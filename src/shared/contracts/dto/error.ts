@@ -1,4 +1,4 @@
-import { ORCHESTRATION_ERROR_CODES } from './orchestration'
+import { ORCHESTRATION_ERROR_CODES } from './orchestrationErrorCodes'
 
 export const APP_ERROR_CODES = [
   'common.invalid_input',
