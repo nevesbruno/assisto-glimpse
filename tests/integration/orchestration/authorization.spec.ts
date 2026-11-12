@@ -13,6 +13,7 @@ import { PtyStreamHub } from '../../../src/app/main/controlSurface/ptyStream/pty
 import type { ControlSurfaceContext } from '../../../src/app/main/controlSurface/types'
 import { AgentProviderRegistry } from '../../../src/contexts/agent/application/services/AgentProviderRegistry'
 import { createBuiltinAgentProviderContributions } from '../../../src/contexts/agent/infrastructure/providers/catalog/BuiltinAgentProviderCatalog'
+import { grantStateStore } from '../../support/grantStateStore'
 import { ORCHESTRATOR_PROVIDER } from '../../../src/contexts/orchestration/domain/agentLink'
 import {
   orchestratorPrincipal,
@@ -71,6 +72,7 @@ async function fixture() {
     } as unknown as ControlSurfaceContext
   }
 
+  const store = await grantStateStore('p1', ['orq', 'orq-b', executorA, executorB])
   const write = vi.fn()
   const hub = new PtyStreamHub({
     replayWindowMaxBytes: 64000,
@@ -94,11 +96,10 @@ async function fixture() {
       new AgentProviderRegistry(createBuiltinAgentProviderContributions()),
     ),
     guard,
+    async () => store,
   )
   registerSessionInputHandlers(surface, {
-    getPersistenceStore: async () => {
-      throw new Error('the guard must refuse before reading the state')
-    },
+    getPersistenceStore: async () => store,
     ptyStreamHub: hub,
     guardDirectInput: guard,
   })

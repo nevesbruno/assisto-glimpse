@@ -13,16 +13,21 @@ import {
   type NodeControlNode,
 } from './nodeControlState'
 import { findNodeForNodeControl, toCanvasNodeDetail } from './nodeDtos'
+import { scopeNodeControlState } from './nodeProjectScope'
 import { clampFrameSize, normalizeUpdateNodeData } from './nodeDataFactory'
 
 export async function updateNodeForNodeControl(options: {
   store: NodeControlAppStateStore
   input: UpdateNodeInput
+  projectScope?: string
   assertActive?: () => void
 }): Promise<UpdateNodeResult> {
   const expectedRevision = await options.store.readAppStateRevision()
   const state = requireNodeControlState(await options.store.readAppState())
-  const matched = findNodeForNodeControl(state.workspaces, options.input.nodeId)
+  const matched = findNodeForNodeControl(
+    scopeNodeControlState(state, options.projectScope).workspaces,
+    options.input.nodeId,
+  )
   if (!matched) {
     throw createAppError('node.not_found')
   }

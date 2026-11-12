@@ -29,6 +29,7 @@ import type { SpaceLocatorResolverDeps } from '../../../../contexts/workspace/ap
 import type { NodeControlAppStateStore } from '../../../../contexts/workspace/application/nodeControl/nodeControlState'
 import { normalizePersistedAppState } from '../../../../platform/persistence/sqlite/normalize'
 import { createRuntimeDeps } from './nodeControlRuntime'
+import { grantProjectOf } from './grantProjectScope'
 
 async function invokeInternal<TResult>(
   controlSurface: ControlSurface,
@@ -107,15 +108,21 @@ export function registerNodeControlHandlers(
     defaultErrorCode: 'common.unexpected',
     handle: async (ctx, input) => {
       const { store, locatorDeps } = await withDeps(ctx)
-      return await listNodesForNodeControl({ store, locatorDeps, input })
+      return await listNodesForNodeControl({
+        store,
+        locatorDeps,
+        input,
+        projectScope: grantProjectOf(ctx),
+      })
     },
   })
   registerOperation(controlSurface, nodeGetOperation, {
     defaultErrorCode: 'common.unexpected',
-    handle: async (_ctx, input) => {
+    handle: async (ctx, input) => {
       return await getNodeForNodeControl({
         store: toNodeControlStateStore(await deps.getPersistenceStore()),
         input,
+        projectScope: grantProjectOf(ctx),
       })
     },
   })
@@ -129,6 +136,7 @@ export function registerNodeControlHandlers(
           locatorDeps,
           runtime,
           input,
+          projectScope: grantProjectOf(ctx),
           now: ctx.now(),
         })
       }),
@@ -142,6 +150,7 @@ export function registerNodeControlHandlers(
           await updateNodeForNodeControl({
             store: toNodeControlStateStore(await deps.getPersistenceStore()),
             input,
+            projectScope: grantProjectOf(ctx),
             assertActive: ctx.assertActive,
           }),
       ),
@@ -160,6 +169,7 @@ export function registerNodeControlHandlers(
           store: toNodeControlStateStore(await deps.getPersistenceStore()),
           runtime,
           input,
+          projectScope: grantProjectOf(ctx),
           now: ctx.now(),
           assertActive: ctx.assertActive,
         })
@@ -175,6 +185,7 @@ export function registerNodeControlHandlers(
         store,
         locatorDeps,
         target: input.target,
+        projectScope: grantProjectOf(ctx),
       })
       const payload: SyncEventPayload = {
         type: 'canvas.focus',

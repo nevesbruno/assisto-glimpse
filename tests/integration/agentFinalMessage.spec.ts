@@ -8,6 +8,7 @@ import { inMemoryClaudeHookChannel } from '../support/inMemoryClaudeHookChannel'
 import { promptDeliveryRuntimeFixture } from '../support/promptDeliveryRuntimeFixture'
 import { createControlSurface } from '../../src/app/main/controlSurface/controlSurface'
 import type { ControlSurfaceContext } from '../../src/app/main/controlSurface/types'
+import { grantStateStore } from '../support/grantStateStore'
 import { registerAgentRunStateHandlers } from '../../src/app/main/controlSurface/handlers/agentRunStateHandlers'
 
 it('carries Claude 2.1.319 shape through channel, runtime, registry and the interact query without leaking content', async () => {
@@ -17,7 +18,8 @@ it('carries Claude 2.1.319 shape through channel, runtime, registry and the inte
   reservation.commit('s')
   channel.onState(event => f.hub.registerSessionAgentState(event))
   const surface = createControlSurface()
-  registerAgentRunStateHandlers(surface, f.hub)
+  const store = await grantStateStore('different-project', ['n'])
+  registerAgentRunStateHandlers(surface, f.hub, undefined, async () => store)
   const invoke = (
     payload: unknown,
     scopeTier: 'read' | 'interact' = 'interact',

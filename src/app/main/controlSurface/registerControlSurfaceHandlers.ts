@@ -103,8 +103,14 @@ export function registerControlSurfaceHandlers(
     deps.ptyStreamHub,
     deps.promptDelivery,
     guardDirectInput,
+    deps.getPersistenceStore,
   )
-  registerAgentRunStateHandlers(controlSurface, deps.ptyStreamHub, deps.promptDelivery)
+  registerAgentRunStateHandlers(
+    controlSurface,
+    deps.ptyStreamHub,
+    deps.promptDelivery,
+    deps.getPersistenceStore,
+  )
   registerSystemHandlers(controlSurface, {
     appVersion: deps.appVersion,
     deploymentId: deps.deploymentId,
@@ -152,6 +158,7 @@ export function registerControlSurfaceHandlers(
   })
   registerAgentSessionCatalogHandlers(controlSurface, {
     approvedWorkspaces: deps.approvedWorkspaces,
+    readStore: deps.getPersistenceStore,
   })
   registerSessionHandlers(controlSurface, {
     userDataPath: deps.userDataPath,

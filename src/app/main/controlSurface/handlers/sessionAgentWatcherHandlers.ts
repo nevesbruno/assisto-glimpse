@@ -8,6 +8,7 @@ import type { ApprovedWorkspaceStore } from '../../../../contexts/workspace/infr
 import { createAppError } from '../../../../shared/errors/appError'
 import type { MultiEndpointPtyRuntime } from '../ptyStream/multiEndpointPtyRuntime'
 import type { PtyStreamHub } from '../ptyStream/ptyStreamHub'
+import { isSessionInGrant, type GrantStateReader } from './agentGrantScope'
 import { shouldStartAgentSessionStateWatcher } from './sessionStateWatcherStart'
 
 export function registerSessionAgentWatcherHandlers(
@@ -16,11 +17,15 @@ export function registerSessionAgentWatcherHandlers(
     approvedWorkspaces: ApprovedWorkspaceStore
     ptyRuntime: MultiEndpointPtyRuntime
     ptyStreamHub: PtyStreamHub
+    getPersistenceStore?: GrantStateReader
   },
 ): void {
   registerOperation(controlSurface, sessionAttachAgentStateWatcherOperation, {
-    handle: async (_ctx, payload): Promise<void> => {
-      if (!deps.ptyStreamHub.hasSession(payload.sessionId)) {
+    handle: async (ctx, payload): Promise<void> => {
+      if (
+        !deps.ptyStreamHub.hasSession(payload.sessionId) ||
+        !(await isSessionInGrant(ctx, deps.getPersistenceStore, payload.sessionId))
+      ) {
         throw createAppError('session.not_found', {
           debugMessage: `session.attachAgentStateWatcher: unknown session id: ${payload.sessionId}`,
         })
@@ -44,7 +49,10 @@ export function registerSessionAgentWatcherHandlers(
   })
 
   registerOperation(controlSurface, sessionDetachAgentStateWatcherOperation, {
-    handle: async (_ctx, payload): Promise<void> => {
+    handle: async (ctx, payload): Promise<void> => {
+      if (!(await isSessionInGrant(ctx, deps.getPersistenceStore, payload.sessionId))) {
+        return
+      }
       deps.ptyRuntime.disposeSessionStateWatcher?.(payload.sessionId)
     },
     defaultErrorCode: 'common.unexpected',

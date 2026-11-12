@@ -6,11 +6,13 @@ import type { ControlSurfaceContext } from '../../../src/app/main/controlSurface
 import { promptDeliveryRuntimeFixture } from '../../support/promptDeliveryRuntimeFixture'
 import { getControlSurfaceOperation } from '../../../src/shared/contracts/controlSurface/operations'
 import * as z from 'zod'
+import { grantStateStore } from '../../support/grantStateStore'
 
-function fixture() {
+async function fixture() {
+  const store = await grantStateStore('p', ['n'])
   const f = promptDeliveryRuntimeFixture()
   const surface = createControlSurface()
-  registerAgentRunStateHandlers(surface, f.hub)
+  registerAgentRunStateHandlers(surface, f.hub, undefined, async () => store)
   const invoke = (
     payload: unknown,
     tier: 'read' | 'interact' = 'interact',
@@ -40,7 +42,7 @@ function fixture() {
 }
 
 it('requires interact scope before deleting records and allows an authorized sibling', async () => {
-  const f = fixture()
+  const f = await fixture()
   const clear = vi
     .spyOn(f.registry, 'clearHistory')
     .mockReturnValue({ nodeId: 'n', memoryRemoved: 1, archive: { status: 'cleared', removed: 2 } })
@@ -63,7 +65,7 @@ it('requires interact scope before deleting records and allows an authorized sib
 it.each([{}, { nodeId: '' }, { nodeId: '  ' }, { sessionId: 's' }, { nodeId: 'n', all: true }])(
   'rejects invalid history clear input: %j',
   async payload => {
-    const f = fixture()
+    const f = await fixture()
     const clear = vi.spyOn(f.registry, 'clearHistory')
     try {
       expect(await f.invoke(payload)).toMatchObject({
@@ -78,7 +80,7 @@ it.each([{}, { nodeId: '' }, { nodeId: '  ' }, { sessionId: 's' }, { nodeId: 'n'
 )
 
 it('reports archive unavailability after memory is cleared without changing run state', async () => {
-  const f = fixture()
+  const f = await fixture()
   const before = f.registry.list()
   try {
     expect(await f.invoke({ nodeId: 'n' })).toMatchObject({
@@ -99,7 +101,7 @@ it('reports archive unavailability after memory is cleared without changing run 
 })
 
 it('honors revoked credentials before clearing history', async () => {
-  const f = fixture()
+  const f = await fixture()
   const clear = vi.spyOn(f.registry, 'clearHistory')
   try {
     expect(

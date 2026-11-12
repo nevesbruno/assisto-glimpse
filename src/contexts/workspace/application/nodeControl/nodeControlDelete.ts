@@ -9,18 +9,23 @@ import {
   type NodeControlWorkspace,
 } from './nodeControlState'
 import { findNodeForNodeControl } from './nodeDtos'
+import { scopeNodeControlState } from './nodeProjectScope'
 import type { NodeControlRuntimeDeps } from './nodeControlUseCases'
 
 export async function deleteNodeForNodeControl(options: {
   store: NodeControlAppStateStore
   runtime: Pick<NodeControlRuntimeDeps, 'killSession' | 'closeWebsiteNode' | 'closePluginNode'>
   input: DeleteNodeInput
+  projectScope?: string
   assertActive?: () => void
   now: Date
 }): Promise<DeleteNodeResult> {
   const expectedRevision = await options.store.readAppStateRevision()
   const state = requireNodeControlState(await options.store.readAppState())
-  const matched = findNodeForNodeControl(state.workspaces, options.input.nodeId)
+  const matched = findNodeForNodeControl(
+    scopeNodeControlState(state, options.projectScope).workspaces,
+    options.input.nodeId,
+  )
   if (!matched) {
     throw createAppError('node.not_found')
   }

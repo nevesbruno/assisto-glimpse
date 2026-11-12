@@ -5,6 +5,7 @@ import type { AgentProviderRegistry } from '../../../../contexts/agent/applicati
 import { PromptDeliveryService } from '../../../../contexts/agent/application/PromptDeliveryService'
 import { registerOperation } from '../registerOperation'
 import type { DirectInputGuard } from './directInputGuard'
+import { assertAgentNodeInGrant, type GrantStateReader } from './agentGrantScope'
 import {
   agentDeliveryGetOperation,
   agentPromptOperation,
@@ -35,9 +36,20 @@ export function registerAgentPromptHandlers(
   hub: PtyStreamHub,
   service: PromptDeliveryService,
   guardDirectInput: DirectInputGuard,
+  readStore?: GrantStateReader,
 ): void {
   registerOperation(surface, agentDeliveryGetOperation, {
-    handle: (_ctx, input) => service.get(input.deliveryId),
+    handle: async (ctx, input) => {
+      const delivery = service.get(input.deliveryId)
+      if (delivery.available) {
+        try {
+          await assertAgentNodeInGrant(ctx, readStore, delivery.nodeId, 'common.unexpected')
+        } catch {
+          return { available: false, deliveryId: input.deliveryId, reason: 'unavailable' }
+        }
+      }
+      return delivery
+    },
     defaultErrorCode: 'common.unexpected',
   })
   registerOperation(surface, agentPromptOperation, {
@@ -48,6 +60,15 @@ export function registerAgentPromptHandlers(
           : input.nodeId
       const targetNodeId =
         nodeId ?? hub.agentRuns.registry.get({ sessionId: input.sessionId! })?.nodeId
+      await assertAgentNodeInGrant(ctx, readStore, targetNodeId, 'agent.not_running', {
+        details: {
+          reason: 'not_running',
+          pasteDispatchAttempted: false,
+          submitDispatchAttempted: false,
+          retryable: true,
+          deliveryId: input.deliveryId ?? randomUUID(),
+        },
+      })
       if (targetNodeId) {
         await guardDirectInput(ctx, 'agent.prompt', targetNodeId)
       }

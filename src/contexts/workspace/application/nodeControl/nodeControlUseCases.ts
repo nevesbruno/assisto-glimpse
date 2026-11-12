@@ -13,6 +13,7 @@ import {
   type NodeControlAppStateStore,
   type NodeControlNode,
 } from './nodeControlState'
+import { scopeNodeControlState } from './nodeProjectScope'
 import { resolveNodeCreationTarget, type ResolvedNodeCreationTarget } from './nodeCreationTarget'
 import { normalizeAgentSettings } from '../../../settings/domain/agentSettings'
 import { resolvePlacement } from './nodeCreatePlacement'
@@ -58,8 +59,12 @@ export async function listNodesForNodeControl(options: {
   store: NodeControlAppStateStore
   locatorDeps: SpaceLocatorResolverDeps
   input: ListNodesInput
+  projectScope?: string
 }): Promise<ListNodesResult> {
-  const state = requireNodeControlState(await options.store.readAppState())
+  const state = scopeNodeControlState(
+    requireNodeControlState(await options.store.readAppState()),
+    options.projectScope,
+  )
   const kind = options.input.kind ?? null
 
   if (options.input.space) {
@@ -115,8 +120,12 @@ export async function listNodesForNodeControl(options: {
 export async function getNodeForNodeControl(options: {
   store: NodeControlAppStateStore
   input: GetNodeInput
+  projectScope?: string
 }): Promise<GetNodeResult> {
-  const state = requireNodeControlState(await options.store.readAppState())
+  const state = scopeNodeControlState(
+    requireNodeControlState(await options.store.readAppState()),
+    options.projectScope,
+  )
   const matched = findNodeForNodeControl(state.workspaces, options.input.nodeId)
   if (!matched) {
     throw createAppError('node.not_found')
@@ -130,9 +139,13 @@ export async function createNodeForNodeControl(options: {
   locatorDeps: SpaceLocatorResolverDeps
   runtime: NodeControlRuntimeDeps
   input: CreateNodeInput
+  projectScope?: string
   now: Date
 }): Promise<CreateNodeResult> {
-  const state = requireNodeControlState(await options.store.readAppState())
+  const state = scopeNodeControlState(
+    requireNodeControlState(await options.store.readAppState()),
+    options.projectScope,
+  )
   const resolved = await resolveNodeCreationTarget(state, options.locatorDeps, options.input)
   const createData = normalizeCreateNodeData(options.input.kind, options.input.data)
   const settings = normalizeAgentSettings(state.settings)

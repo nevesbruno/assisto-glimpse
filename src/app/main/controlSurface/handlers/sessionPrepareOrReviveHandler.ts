@@ -9,6 +9,7 @@ import { createAppError } from '../../../../shared/errors/appError'
 import type { ControlSurface } from '../controlSurface'
 import type { PtyStreamHub } from '../ptyStream/ptyStreamHub'
 import { normalizeAgentSettings } from '../../../../contexts/settings/domain/agentSettings'
+import { assertProjectInGrant } from './grantProjectScope'
 import { normalizeOptionalString } from './sessionLaunchPayloadSupport'
 import {
   normalizePersistedAppState,
@@ -59,8 +60,14 @@ export function registerSessionPrepareOrReviveHandler(
     return operation
   }
   registerOperation(controlSurface, sessionPrepareOrReviveOperation, {
-    handle: async (ctx, payload): Promise<PrepareOrReviveSessionResult> =>
-      await deps.terminalRecoverySpawnAdmission.reconcileWorkspace(
+    handle: async (ctx, payload): Promise<PrepareOrReviveSessionResult> => {
+      assertProjectInGrant(
+        ctx,
+        payload.workspaceId,
+        'common.invalid_input',
+        `session.prepareOrRevive unknown workspaceId: ${payload.workspaceId}`,
+      )
+      return await deps.terminalRecoverySpawnAdmission.reconcileWorkspace(
         payload.workspaceId,
         async recoveryScope => {
           const recoveryContext = { ...ctx, terminalRecoverySpawnScope: recoveryScope }
@@ -176,7 +183,8 @@ export function registerSessionPrepareOrReviveHandler(
             nodes,
           }
         },
-      ),
+      )
+    },
     defaultErrorCode: 'common.unexpected',
   })
 }

@@ -3,6 +3,7 @@ import type { PersistenceStore } from '../../../platform/persistence/sqlite/Pers
 import { normalizePersistedAppState } from '../../../platform/persistence/sqlite/normalize'
 import { createAppError } from '../../../shared/errors/appError'
 import type { ControlSurfaceContext } from './types'
+import { assertProjectInGrant, grantProjectOf } from './handlers/grantProjectScope'
 import type { CanvasSpawnIdentity } from './sessionSpawnIdentityContext'
 
 function record(value: unknown): Record<string, unknown> {
@@ -12,6 +13,25 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 export async function resolveCanvasSpawnIdentity(
+  ctx: ControlSurfaceContext,
+  payload: unknown,
+  getStore: () => Promise<PersistenceStore>,
+): Promise<CanvasSpawnIdentity | undefined> {
+  const identity = await resolveRequestedIdentity(ctx, payload, getStore)
+  const scope = grantProjectOf(ctx)
+  if (scope === undefined) {
+    return identity
+  }
+  const targeted = record(payload).workspaceId || record(payload).spaceId
+  assertProjectInGrant(
+    ctx,
+    identity?.projectId ?? (targeted ? undefined : scope),
+    'common.invalid_input',
+  )
+  return identity ?? { projectId: scope, spaceId: '', nodeId: randomUUID() }
+}
+
+async function resolveRequestedIdentity(
   ctx: ControlSurfaceContext,
   payload: unknown,
   getStore: () => Promise<PersistenceStore>,

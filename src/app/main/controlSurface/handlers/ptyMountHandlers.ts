@@ -13,6 +13,7 @@ import type { MultiEndpointPtyRuntime } from '../ptyStream/multiEndpointPtyRunti
 import type { PtyStreamHub } from '../ptyStream/ptyStreamHub'
 import { invokeControlSurface } from '../remote/controlSurfaceHttpClient'
 import type { TerminalAgentActivityEnvironmentService } from '../../../../contexts/agent/infrastructure/terminal-activity/TerminalAgentActivityEnvironmentService'
+import { assertProjectInGrant } from './grantProjectScope'
 import { spawnTerminalWithActivity } from './terminalAgentActivitySpawn'
 const terminalProfileResolver = new TerminalProfileResolver()
 
@@ -92,6 +93,12 @@ export function registerPtyMountHandlers(
           debugMessage: `Unknown mountId: ${payload.mountId}`,
         })
       }
+      assertProjectInGrant(
+        ctx,
+        target.projectId,
+        'common.invalid_input',
+        `Unknown mountId: ${payload.mountId}`,
+      )
       deps.terminalSpawnAdmission.assertSpawnAllowed(
         target.projectId,
         ctx.terminalRecoverySpawnScope,

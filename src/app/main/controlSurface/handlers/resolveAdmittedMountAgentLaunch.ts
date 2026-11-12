@@ -5,6 +5,7 @@ import type { ControlSurfaceContext } from '../types'
 import type { WorkerTopologyStore } from '../topology/topologyStore'
 import { assertFileUriWithinRootUri } from '../topology/fileUriScope'
 import { logAgentLaunchInfo } from '../../diagnostics/agentLaunchRuntimeDiagnostics'
+import { assertProjectInGrant } from './grantProjectScope'
 import { resolvePathFromFileSystemUriOrThrow } from './sessionLaunchPayloadSupport'
 
 type MountTarget = NonNullable<Awaited<ReturnType<WorkerTopologyStore['resolveMountTarget']>>>
@@ -40,6 +41,12 @@ export async function resolveAdmittedMountAgentLaunch(input: {
       debugMessage: `Unknown mountId: ${payload.mountId}`,
     })
   }
+  assertProjectInGrant(
+    ctx,
+    target.projectId,
+    'common.invalid_input',
+    `Unknown mountId: ${payload.mountId}`,
+  )
   input.admission.assertSpawnAllowed(target.projectId, ctx.terminalRecoverySpawnScope)
 
   const cwdUri = payload.cwdUri ?? target.rootUri

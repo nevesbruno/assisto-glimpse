@@ -21,6 +21,7 @@ import type {
 } from '../../../../shared/contracts/dto'
 import { createAppError } from '../../../../shared/errors/appError'
 import type { ControlSurface } from '../controlSurface'
+import { grantProjectOf } from './grantProjectScope'
 import { registerOperation } from '../registerOperation'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -132,16 +133,19 @@ export function registerSpaceHandlers(
   getPersistenceStore: () => Promise<PersistenceStore>,
 ): void {
   registerOperation(controlSurface, spaceListOperation, {
-    handle: async (_ctx, payload): Promise<ListSpacesResult> => {
+    handle: async (ctx, payload): Promise<ListSpacesResult> => {
       const store = await getPersistenceStore()
       const normalized = normalizePersistedAppState(await store.readAppState())
 
-      const activeProjectId = normalized?.activeWorkspaceId ?? null
+      const grantProjectId = grantProjectOf(ctx)
+      const activeProjectId = grantProjectId ?? normalized?.activeWorkspaceId ?? null
       const requestedProjectId = payload.projectId ?? null
       const effectiveProjectId = requestedProjectId ?? activeProjectId
 
       const workspace =
-        effectiveProjectId && normalized
+        effectiveProjectId &&
+        normalized &&
+        (!grantProjectId || effectiveProjectId === grantProjectId)
           ? (normalized.workspaces.find(item => item.id === effectiveProjectId) ?? null)
           : null
 
@@ -157,12 +161,16 @@ export function registerSpaceHandlers(
   })
 
   registerOperation(controlSurface, spaceGetOperation, {
-    handle: async (_ctx, payload): Promise<GetSpaceResult> => {
+    handle: async (ctx, payload): Promise<GetSpaceResult> => {
+      const grantProjectId = grantProjectOf(ctx)
       const store = await getPersistenceStore()
       const normalized = normalizePersistedAppState(await store.readAppState())
       const workspaces = normalized?.workspaces ?? []
 
       for (const workspace of workspaces) {
+        if (grantProjectId !== undefined && workspace.id !== grantProjectId) {
+          continue
+        }
         const space = workspace.spaces.find(candidate => candidate.id === payload.spaceId) ?? null
         if (!space) {
           continue
@@ -184,7 +192,8 @@ export function registerSpaceHandlers(
   })
 
   registerOperation(controlSurface, spaceCreateChildOperation, {
-    handle: async (_ctx, payload): Promise<CreateChildSpaceResult> => {
+    handle: async (ctx, payload): Promise<CreateChildSpaceResult> => {
+      const grantProjectId = grantProjectOf(ctx)
       const store = await getPersistenceStore()
       const expectedRevision = await store.readAppStateRevision()
       const normalized = normalizePersistedAppState(await store.readAppState())
@@ -196,10 +205,12 @@ export function registerSpaceHandlers(
 
       const requestedProjectId = payload.projectId ?? null
       const workspace =
-        normalized.workspaces.find(item =>
-          requestedProjectId
-            ? item.id === requestedProjectId
-            : item.spaces.some(space => space.id === payload.parentSpaceId),
+        normalized.workspaces.find(
+          item =>
+            (grantProjectId === undefined || item.id === grantProjectId) &&
+            (requestedProjectId
+              ? item.id === requestedProjectId
+              : item.spaces.some(space => space.id === payload.parentSpaceId)),
         ) ?? null
 
       if (!workspace) {

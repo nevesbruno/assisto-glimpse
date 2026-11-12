@@ -20,6 +20,10 @@ import type {
 import { invokeControlSurface } from '../remote/controlSurfaceHttpClient'
 import type { WorkerTopologyStore } from '../topology/topologyStore'
 import type { SessionRecord } from './sessionRecords'
+import type { PersistenceStore } from '../../../../platform/persistence/sqlite/PersistenceStore'
+import type { ControlSurfaceContext } from '../types'
+import { assertSessionInGrant } from './agentGrantScope'
+import { grantProjectOf } from './grantProjectScope'
 const RESUME_SESSION_LOCATE_TIMEOUT_MS = 3_000
 const SESSION_FILE_RESOLVE_TIMEOUT_MS = 1_500
 
@@ -28,17 +32,28 @@ export function registerSessionFinalMessageHandler(
   deps: {
     sessions: Map<string, SessionRecord>
     topology: WorkerTopologyStore
+    getPersistenceStore(): Promise<PersistenceStore>
     resolveNode?: ReturnType<typeof createSessionNodeResolver>
   },
 ): void {
   const handle = async (
+    ctx: ControlSurfaceContext,
     payload: GetSessionInput,
     requireTranscript: boolean,
   ): Promise<GetSessionFinalMessageResult> => {
+    if (payload.sessionId !== undefined && payload.nodeId === undefined) {
+      await assertSessionInGrant(
+        ctx,
+        deps.getPersistenceStore,
+        payload.sessionId,
+        'session.not_found',
+        `session.finalMessage: unknown session id: ${payload.sessionId}`,
+      )
+    }
     const strict = requireTranscript || payload.nodeId !== undefined
     const nodeSession =
       payload.nodeId !== undefined && deps.resolveNode
-        ? await deps.resolveNode(payload.nodeId)
+        ? await deps.resolveNode(payload.nodeId, grantProjectOf(ctx))
         : null
     if (nodeSession && !nodeSession.value.provider) {
       throw createAppError('session.not_found')
@@ -206,11 +221,11 @@ export function registerSessionFinalMessageHandler(
     }
   }
   registerOperation(controlSurface, sessionFinalMessageOperation, {
-    handle: (_ctx, payload) => handle(payload, false),
+    handle: (ctx, payload) => handle(ctx, payload, false),
     defaultErrorCode: 'agent.read_last_message_failed',
   })
   registerOperation(controlSurface, sessionFinalMessageForNodeOperation, {
-    handle: (_ctx, payload) => handle(payload, true),
+    handle: (ctx, payload) => handle(ctx, payload, true),
     defaultErrorCode: 'agent.read_last_message_failed',
   })
 }

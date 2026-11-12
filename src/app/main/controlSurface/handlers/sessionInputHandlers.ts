@@ -10,6 +10,8 @@ import { findNodeForNodeControl } from '../../../../contexts/workspace/applicati
 import type { ControlSurface } from '../controlSurface'
 import type { PtyStreamHub } from '../ptyStream/ptyStreamHub'
 import type { DirectInputGuard } from './directInputGuard'
+import type { ControlSurfaceContext } from '../types'
+import { grantProjectOf } from './grantProjectScope'
 
 /** Exact durable node -> current PTY binding, rechecked after queued readiness work. */
 export function registerSessionInputHandlers(
@@ -20,11 +22,14 @@ export function registerSessionInputHandlers(
     guardDirectInput: DirectInputGuard
   },
 ) {
-  async function binding(nodeId: string) {
+  async function binding(ctx: ControlSurfaceContext, nodeId: string) {
+    const scope = grantProjectOf(ctx)
     const state = normalizePersistedAppState(
       await (await deps.getPersistenceStore()).readAppState(),
     )
-    const node = state ? findNodeForNodeControl(state.workspaces, nodeId)?.node : null
+    const workspaces =
+      scope === undefined ? state?.workspaces : state?.workspaces.filter(item => item.id === scope)
+    const node = workspaces ? findNodeForNodeControl(workspaces, nodeId)?.node : null
     if (!node || !['agent', 'terminal'].includes(node.kind) || !node.sessionId) {
       throw createAppError('session.not_found')
     }
@@ -32,7 +37,7 @@ export function registerSessionInputHandlers(
   }
   registerOperation(control, sessionStopNodeOperation, {
     async handle(ctx, input) {
-      if ((await binding(input.nodeId)) !== input.sessionId) {
+      if ((await binding(ctx, input.nodeId)) !== input.sessionId) {
         throw new Error('Node session changed before stop; read it again.')
       }
       ctx.assertActive?.()
@@ -50,9 +55,12 @@ export function registerSessionInputHandlers(
   })
   registerOperation(control, sessionWriteNodeOperation, {
     async handle(ctx, input) {
+      if (grantProjectOf(ctx) !== undefined) {
+        await binding(ctx, input.nodeId)
+      }
       await deps.guardDirectInput(ctx, 'session.writeNode', input.nodeId)
       const sessionId = input.sessionId
-      if ((await binding(input.nodeId)) !== sessionId) {
+      if ((await binding(ctx, input.nodeId)) !== sessionId) {
         throw new Error('Node session changed before input; read it again.')
       }
       await deps.ptyStreamHub.writeAutomation({
@@ -60,7 +68,7 @@ export function registerSessionInputHandlers(
         data: input.data,
         assertActive: () => ctx.assertActive?.(),
         validateBinding: async () => {
-          if ((await binding(input.nodeId)) !== sessionId) {
+          if ((await binding(ctx, input.nodeId)) !== sessionId) {
             throw new Error('Node session changed before input; read it again.')
           }
         },
