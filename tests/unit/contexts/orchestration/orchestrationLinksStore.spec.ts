@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createOrchestrationLinksStore } from '../../../../src/contexts/orchestration/presentation/renderer/orchestrationLinksStore'
 
 const link = (id: string) => ({
@@ -102,5 +102,46 @@ describe('orchestrationLinksStore', () => {
     await handle.refresh()
     expect(fake.state.reads).toBe(1)
     expect(handle.store.getState().links).toEqual([])
+  })
+
+  describe('trace on a mirror that fails to parse', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('logs the reason without throwing and keeps the state', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const fake = fakeClient({ linksRevision: 1, links: [{ ...link(ID_A), kind: 'bogus' }] })
+      const { store, refresh } = createOrchestrationLinksStore(fake.client)
+      await expect(refresh()).resolves.toBeUndefined()
+      expect(store.getState().links).toHaveLength(0)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0]?.join(' '))).toMatch(/links mirror rejected.*links\.0\.kind/)
+    })
+
+    it('accepts a link outside any space (empty spaceId)', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const fake = fakeClient({ linksRevision: 1, links: [{ ...link(ID_A), spaceId: '' }] })
+      const { store, refresh } = createOrchestrationLinksStore(fake.client)
+      await refresh()
+      expect(store.getState().links).toHaveLength(1)
+      expect(warn).not.toHaveBeenCalled()
+    })
+
+    it('does not repeat the same failure on every read', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const fake = fakeClient({ linksRevision: 'x' })
+      const { refresh } = createOrchestrationLinksStore(fake.client)
+      await refresh()
+      await refresh()
+      expect(warn).toHaveBeenCalledTimes(1)
+    })
+
+    it('stays silent when the state has no mirror yet', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { refresh } = createOrchestrationLinksStore(fakeClient(null).client)
+      await refresh()
+      expect(warn).not.toHaveBeenCalled()
+    })
   })
 })

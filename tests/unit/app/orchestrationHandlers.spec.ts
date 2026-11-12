@@ -10,6 +10,7 @@ import {
 } from '../../../src/contexts/orchestration/domain/agentLink'
 import { DispatchRuleError } from '../../../src/contexts/orchestration/domain/dispatch'
 import { DispatchRefusedError } from '../../../src/contexts/orchestration/application/linkLifecycle'
+import type { OpenCoveAppError } from '../../../src/shared/errors/appError'
 import { orchestrationHooksApproveResultSchema } from '../../../src/shared/contracts/dto/orchestration'
 
 const uuid = '91c2aaaa-0000-4000-8000-000000000001'
@@ -265,6 +266,32 @@ describe('orchestration handlers', () => {
         user,
       ),
     ).rejects.toMatchObject({ code })
+  })
+
+  it('U-09: unmatched selector, other project node and unlinked node refuse with one identical body', async () => {
+    const { service, call } = harness()
+    const refusals = ['ghost-node', 'node-of-project-b', 'exec-without-link']
+    const bodies = await Promise.all(
+      refusals.map(async to => {
+        service.dispatch.mockRejectedValueOnce(new OrchestrationError('orch.not_linked'))
+        const error = (await call('orch.dispatch', { ...dispatchPayload, to }, grantCtx).catch(
+          e => e,
+        )) as OpenCoveAppError
+        return { descriptor: error.toDescriptor(), message: error.message }
+      }),
+    )
+    expect(bodies[1]).toEqual(bodies[0])
+    expect(bodies[2]).toEqual(bodies[0])
+    const { descriptor } = bodies[0]
+    expect(descriptor).toMatchObject({
+      code: 'orch.not_linked',
+      debugMessage: expect.stringContaining('No linked executor matches the selector'),
+    })
+    expect(descriptor.debugMessage).toContain('orch link list')
+    expect(descriptor.details).toBeUndefined()
+    for (const to of refusals) {
+      expect(JSON.stringify(bodies[0])).not.toContain(to)
+    }
   })
 
   it('maps DispatchRuleError to invalid input or an unexpected error', async () => {

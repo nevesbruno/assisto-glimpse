@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSessionGrantPtyRuntime } from '../../../src/app/main/controlSurface/sessionGrantPtyRuntime'
 import { canvasSpawnIdentity } from '../../../src/app/main/controlSurface/sessionSpawnIdentityContext'
 import type { ControlSurfacePtyRuntime } from '../../../src/app/main/controlSurface/handlers/sessionPtyRuntime'
-import { createExecutorTuiLauncher } from '../../../src/app/main/controlSurface/orchestration/executorTuiLauncher'
+import {
+  createExecutorTuiLauncher,
+  RELAUNCH_KILL_DELAY_MS,
+} from '../../../src/app/main/controlSurface/orchestration/executorTuiLauncher'
 import { placeExecutorNode } from '../../../src/app/main/controlSurface/orchestration/executorNodePlacement'
 
 const TOKEN = 'tok-secret-value'
@@ -50,7 +53,10 @@ function fixture(live: Record<string, string> = {}) {
   return { spawned, killed, bound, runtime: access.runtime, launcher }
 }
 
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.useRealTimers()
+})
 
 describe('executor TUI launcher (I-05, A5)', () => {
   it('launches the remote TUI with the token variable and without any grant', async () => {
@@ -91,12 +97,23 @@ describe('executor TUI launcher (I-05, A5)', () => {
     expect(f.spawned[1].env?.KEEP).toBe('1')
   })
 
-  it('relaunch replaces the live PTY of the node and rebinds', async () => {
+  it('relaunch rebinds at once and kills the previous PTY only after the delay', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const f = fixture({ 'exec-1': 'old' })
     await f.launcher.relaunch({ executorNodeId: 'exec-1', attach })
+    expect(f.killed).toEqual([])
+    vi.advanceTimersByTime(RELAUNCH_KILL_DELAY_MS)
     expect(f.killed).toEqual(['old'])
     expect(f.spawned).toHaveLength(1)
     expect(f.bound).toEqual([['exec-1', 's1']])
+  })
+
+  it('retire kills the live PTY of the node and ignores a node without one', () => {
+    const f = fixture({ 'exec-1': 'live' })
+    f.launcher.retire('exec-2')
+    expect(f.killed).toEqual([])
+    f.launcher.retire('exec-1')
+    expect(f.killed).toEqual(['live'])
   })
 })
 

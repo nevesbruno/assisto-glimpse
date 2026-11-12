@@ -62,7 +62,7 @@ export const orchestrationDispatchStateSchema = z.enum([
 export const orchestrationLinkDtoSchema = z.strictObject({
   id: z.uuid(),
   projectId: z.string().min(1),
-  spaceId: z.string().min(1),
+  spaceId: z.string(),
   orchestratorNodeId: z.string().min(1),
   executorNodeId: z.string().min(1),
   kind: orchestrationLinkKindSchema,

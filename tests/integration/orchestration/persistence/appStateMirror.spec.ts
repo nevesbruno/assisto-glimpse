@@ -2,7 +2,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import type Database from 'better-sqlite3'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OrchestrationLinksMirror } from '../../../../src/shared/contracts/dto/orchestration'
 import { migrate } from '../../../../src/platform/persistence/sqlite/migrate'
 import { normalizePersistedAppState } from '../../../../src/platform/persistence/sqlite/normalize'
@@ -133,6 +133,14 @@ describe('orchestration links mirror in the synced app state', () => {
     expect(readAppStateFromDb(handle.db)?.orchestrationLinks).toEqual(mirror)
   })
 
+  it('round-trips a link of nodes outside any space, with an empty spaceId', () => {
+    const base = mirrorOf(4)
+    const mirror = { ...base, links: [{ ...base.links[0], spaceId: '' }] }
+    writeNormalizedAppState(handle.sqlite, normalized(appState({ orchestrationLinks: mirror })))
+
+    expect(readAppStateFromDb(handle.db)?.orchestrationLinks).toEqual(mirror)
+  })
+
   it('leaves the state without a mirror when none was written', () => {
     writeNormalizedAppState(handle.sqlite, normalized(appState()))
 
@@ -172,6 +180,22 @@ describe('orchestration links mirror in the synced app state', () => {
       .run()
 
     expect(readAppStateFromDb(handle.db)?.orchestrationLinks).toBeUndefined()
+  })
+
+  it('leaves a trace with the reason when the stored mirror fails the schema', () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    writeNormalizedAppState(handle.sqlite, normalized(appState()))
+    handle.raw
+      .prepare(
+        "INSERT INTO app_meta (key, value) VALUES ('orchestration_links_mirror', '{\"links\":1}')",
+      )
+      .run()
+
+    expect(readAppStateFromDb(handle.db)?.workspaces).toHaveLength(1)
+    expect(write).toHaveBeenCalledWith(
+      expect.stringContaining('orchestration links mirror ignored'),
+    )
+    write.mockRestore()
   })
 
   it('keeps the Worker mirror when a window writes a forged or outdated one', () => {

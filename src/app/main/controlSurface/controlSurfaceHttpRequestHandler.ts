@@ -17,6 +17,7 @@ import { tryResolveWebUiResponse } from './webUiAssets'
 import type { WebSessionManager } from './http/webSessionManager'
 import { readJsonBody, sendJson } from './http/httpJson'
 import { resolveRequestAuth, type RequestAuth } from './http/requestAuth'
+import { startSseHeartbeat } from './http/sseHeartbeat'
 import { writeSseEvent, type SyncEventPayload } from './http/syncSse'
 import { tryHandleWebAuthRoutes } from './http/webAuthRoutes'
 import { gateWebUiEntrypoint } from './http/webUiEntryGate'
@@ -259,6 +260,7 @@ export function createControlSurfaceHttpRequestHandler(
         }
         deps.syncClients.add(res)
         listenerSyncClients.add(res)
+        startSseHeartbeat(res)
         req.on('close', () => {
           unsubscribeGrant?.()
           deps.syncClients.delete(res)

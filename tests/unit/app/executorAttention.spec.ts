@@ -6,13 +6,19 @@ import type { TerminalSessionStateEvent } from '../../../src/shared/contracts/dt
 import type { OrchestrationLinkDto } from '../../../src/shared/contracts/dto/orchestration'
 import type { TerminalNodeData } from '../../../src/contexts/workspace/presentation/renderer/types'
 import { orchestrationLinks } from '../../../src/contexts/orchestration/presentation/renderer/orchestrationLinksStore'
-import { useAgentStandbyNotificationWatcher } from '../../../src/app/renderer/shell/hooks/useAgentStandbyNotificationWatcher'
+import {
+  useAgentStandbyNotificationWatcher,
+  type AgentStandbyNotificationPayload as AgentStandbyPayload,
+} from '../../../src/app/renderer/shell/hooks/useAgentStandbyNotificationWatcher'
 import { formatAgentAttentionSystemNotification } from '../../../src/app/renderer/shell/hooks/useAgentStandbyNotifications'
 import {
   createAgentAttentionRouter,
   type AgentAttentionEffect,
 } from '../../../src/app/renderer/shell/utils/agentAttentionRouter'
+import { summarizeAgentActivity } from '../../../src/app/renderer/shell/utils/agentActivitySummary'
+import type { WorkspaceState } from '../../../src/contexts/workspace/presentation/renderer/types'
 import {
+  agentAttentionKey,
   executorAttentionKey,
   resolveNeedsYouSinceMs,
 } from '../../../src/app/renderer/shell/utils/sidebarAgents'
@@ -192,6 +198,93 @@ describe('U-11 executor attention: the watcher', () => {
     const { onStandby } = mount()
     setLinks(1, [link('unavailable')])
     expect(onStandby).not.toHaveBeenCalled()
+  })
+})
+
+/** The three surfaces of the alert, fed the way `useAgentStandbyNotifications` feeds them. */
+describe('U-13 executor attention: end of turn does not reach the user', () => {
+  const endedTurn = (id: string): WorkspaceState =>
+    ({
+      id: 'workspace',
+      name: 'Workspace',
+      path: '/workspace',
+      spaces: [],
+      nodes: ['exec', 'plain'].map(nodeId => ({
+        id: nodeId,
+        data: { kind: 'agent', sessionId: `pty-${nodeId}`, title: nodeId, status: id, agent: null },
+      })),
+    }) as unknown as WorkspaceState
+
+  function mountSurfaces() {
+    const cards: string[] = []
+    const router = createAgentAttentionRouter<AgentStandbyNotification>({
+      channels: () => ({ inApp: true, system: true, sound: true }),
+      emit: effect => effect.kind === 'show-card' && cards.push(effect.item.nodeId),
+    })
+    const onStandby = (payload: AgentStandbyPayload) => {
+      const item = { ...notification(payload.alert), ...payload, id: payload.sessionId }
+      useAgentAttentionStore.setState(state => ({ notifications: [item, ...state.notifications] }))
+      router.needsYou(item as AgentStandbyNotification)
+    }
+    renderHook(() =>
+      useAgentStandbyNotificationWatcher({
+        onAgentEnteredStandby: onStandby,
+        onAgentEnteredWorking: vi.fn(),
+      }),
+    )
+    const waitingNodeIds = () => {
+      const needsYou = useAgentAttentionStore.getState().notifications
+      const map = new Map(
+        needsYou.map(item => [
+          (item.alert ? executorAttentionKey : agentAttentionKey)(item.workspaceId, item.nodeId),
+          item.createdAt,
+        ]),
+      )
+      const { waiting } = summarizeAgentActivity([endedTurn('standby')], map)
+      return waiting.map(reference => reference.nodeId)
+    }
+    return { cards, waitingNodeIds }
+  }
+
+  const endTurn = (sessionId: string) => {
+    act(() => harness.onState?.({ sessionId, state: 'working' }))
+    act(() => harness.onState?.({ sessionId, state: 'standby' }))
+  }
+
+  afterEach(() => {
+    useAgentAttentionStore.setState(useAgentAttentionStore.getInitialState(), true)
+  })
+
+  it('keeps a linked executor out of the list, the counter and the toast', () => {
+    setLinks(1, [link('ready')])
+    const { cards, waitingNodeIds } = mountSurfaces()
+    endTurn('pty-exec')
+    expect(useAgentAttentionStore.getState().notifications).toEqual([])
+    expect(waitingNodeIds()).toEqual([])
+    expect(cards).toEqual([])
+  })
+
+  it('still alerts a common Agent at the end of a turn on all three', () => {
+    setLinks(1, [link('ready')])
+    const { cards, waitingNodeIds } = mountSurfaces()
+    endTurn('pty-plain')
+    expect(waitingNodeIds()).toEqual(['plain'])
+    expect(cards).toEqual(['plain'])
+  })
+
+  it('still alerts the linked executor on a pending approval', () => {
+    setLinks(1, [link('ready')])
+    const { cards, waitingNodeIds } = mountSurfaces()
+    endTurn('pty-exec')
+    act(() => harness.onState?.(waitingEvent('pty-exec', 'permission', 'Run pnpm test')))
+    expect(waitingNodeIds()).toEqual(['exec'])
+    expect(cards).toEqual(['exec'])
+  })
+
+  it('alerts the executor again at the end of a turn once its link is gone', () => {
+    const { cards } = mountSurfaces()
+    endTurn('pty-exec')
+    expect(cards).toEqual(['exec'])
   })
 })
 

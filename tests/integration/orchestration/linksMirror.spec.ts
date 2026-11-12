@@ -53,6 +53,14 @@ describe('orchestration links mirror', () => {
     expect(parsed.links[0]).not.toHaveProperty('serviceTokenSha256')
   })
 
+  it('keeps a link outside any space, with an empty spaceId, schema-valid', async () => {
+    const { written, mirror } = setup([{ ...buildLink(LINK_ID), spaceId: '' }])
+
+    await mirror.sync()
+
+    expect(orchestrationLinksMirrorSchema.parse(written[0]).links[0].spaceId).toBe('')
+  })
+
   it('publishes one event per change, with operationId and the app revision', async () => {
     const { events, mirror } = setup([buildLink(LINK_ID)])
 

@@ -131,4 +131,24 @@ describe('worker sync bridge', () => {
 
     bridge.dispose()
   })
+
+  it('logs the undici cause code when the stream is terminated', async () => {
+    vi.useFakeTimers()
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const cause = Object.assign(new Error('Body Timeout Error'), { code: 'UND_ERR_BODY_TIMEOUT' })
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('terminated', { cause })))
+
+    const bridge = registerWorkerSyncBridge(async () => ({
+      hostname: '127.0.0.1',
+      port: 4310,
+      token: 'token-1',
+    }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    const logged = stderr.mock.calls.map(call => String(call[0])).join('')
+    expect(logged).toContain('TypeError: terminated')
+    expect(logged).toContain('UND_ERR_BODY_TIMEOUT')
+    expect(logged).toContain('Body Timeout Error')
+    bridge.dispose()
+  })
 })

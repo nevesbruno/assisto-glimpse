@@ -151,6 +151,10 @@ export function createLiveSessions(deps: {
         throw new Error(`Executor node ${nodeId} not found.`)
       }
       node.sessionId = sessionId
+      node.status = 'running'
+      node.startedAt = new Date().toISOString()
+      node.endedAt = null
+      node.exitCode = null
       const written = await store.writeAppState(state, { expectedRevision })
       if (!written.ok) {
         throw new Error(`Binding the TUI session to ${nodeId} failed: ${written.reason}`)
@@ -206,6 +210,7 @@ export function createExecutorNodePort(deps: {
           return {
             nodeId,
             projectId: workspace.id,
+            // Empty string means the node sits outside any space (decision O3).
             spaceId: workspace.spaces.find(s => s.nodeIds.includes(nodeId))?.id ?? '',
             provider: agent?.provider ?? '',
             title: node.title,

@@ -118,4 +118,12 @@ describe('orchestration link edges (U-10)', () => {
     ])
     expect(edges.every(edge => edge.selectable === false)).toBe(true)
   })
+
+  it('draws the edge for an active link whose nodes sit outside any space', () => {
+    const nodes = [node('orch', 'agent', 'standby'), node('exec', 'agent', 'standby')]
+    const edges = resolve(nodes, [link({ spaceId: '' })])
+    expect(edges).toHaveLength(1)
+    expect(edges[0]).toMatchObject({ source: 'orch', target: 'exec' })
+    expect(edges[0].sourceHandle).toBeUndefined()
+  })
 })

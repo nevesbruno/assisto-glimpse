@@ -1,3 +1,4 @@
+import type { ZodError } from 'zod'
 import { createStore, type StoreApi } from 'zustand/vanilla'
 import {
   orchestrationLinksMirrorSchema,
@@ -37,6 +38,20 @@ export function createOrchestrationLinksStore(
   }))
   let inFlight: Promise<void> | null = null
   let rerun: { force: boolean } | null = null
+  let lastInvalidReason: string | null = null
+
+  function traceInvalidMirror(error: ZodError): void {
+    const reason = error.issues
+      .slice(0, 3)
+      .map(issue => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+      .join('; ')
+    if (reason === lastInvalidReason) {
+      return
+    }
+    lastInvalidReason = reason
+    // eslint-disable-next-line no-console -- Trace for a display mirror that would otherwise stay empty silently.
+    console.warn(`[orchestration] links mirror rejected, ${reason}`)
+  }
 
   async function readOnce(force: boolean): Promise<void> {
     let raw: unknown
@@ -47,8 +62,12 @@ export function createOrchestrationLinksStore(
     }
     const parsed = orchestrationLinksMirrorSchema.safeParse(raw)
     if (!parsed.success) {
+      if (raw !== null && raw !== undefined) {
+        traceInvalidMirror(parsed.error)
+      }
       return
     }
+    lastInvalidReason = null
     const current = store.getState()
     if (!force && parsed.data.linksRevision < current.linksRevision) {
       return

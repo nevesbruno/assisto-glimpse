@@ -32,10 +32,12 @@ export interface LaunchExecutorTuiInput {
   readonly attach: ExecutorAttachInfo
 }
 
-/** Launches and relaunches the TUI in the PTY of the node, without a window grant (A5). */
+/** Launches, relaunches and retires the TUI in the PTY of the node, without a window grant (A5). */
 export interface ExecutorTuiLauncher {
   launch: (input: LaunchExecutorTuiInput) => Promise<void>
   relaunch: (input: LaunchExecutorTuiInput) => Promise<void>
+  /** Ends the live TUI of the node; a no-op without one. */
+  retire: (nodeId: string) => void
 }
 
 export type OrchestratorDeliveryResult = 'delivered' | 'refused_busy' | 'uncertain'

@@ -120,6 +120,17 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
     codexPath = resolved.executablePath
     return resolved
   }
+  const tui = createExecutorTuiLauncher({
+    ptyRuntime: input.ptyRuntime,
+    resolveCodexExecutable: () => {
+      if (!codexPath) {
+        throw new Error('The codex executable was not resolved before the TUI launch.')
+      }
+      return codexPath
+    },
+    liveSessionOf: nodeId => sessions.liveSessionOf(nodeId)?.sessionId ?? null,
+    bindSession: sessions.bindSession,
+  })
   const service = new OrchestrationService({
     links,
     dispatches,
@@ -129,17 +140,7 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
     clock: { now },
     ids,
     nodes,
-    tui: createExecutorTuiLauncher({
-      ptyRuntime: input.ptyRuntime,
-      resolveCodexExecutable: () => {
-        if (!codexPath) {
-          throw new Error('The codex executable was not resolved before the TUI launch.')
-        }
-        return codexPath
-      },
-      liveSessionOf: nodeId => sessions.liveSessionOf(nodeId)?.sessionId ?? null,
-      bindSession: sessions.bindSession,
-    }),
+    tui,
     runState,
     events: wiring?.events ?? { publishLinksUpdated: () => undefined },
     runtimeFactory: (provider: ExecutorRuntimeProvider) =>
@@ -172,12 +173,14 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
       events: wiring,
       log: input.log,
       isStopped: () => stopped,
+      ready: input.getPersistenceStore,
     }),
     dispose: async () => {
       stopped = true
       wiring?.dispose()
       runState.dispose()
       sessions.dispose()
+      tui.dispose()
       try {
         await service.shutdown()
       } finally {

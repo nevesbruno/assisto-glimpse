@@ -221,6 +221,12 @@ export function useAgentStandbyNotificationWatcher({
         return
       }
 
+      // A linked executor ending a turn is the orchestrator's business: only its approval
+      // requests and unavailability reach the user.
+      if (readExecutorHealth().has(resolved.nodeId)) {
+        return
+      }
+
       standbyHandlerRef.current(toPayload(resolved))
     })
 

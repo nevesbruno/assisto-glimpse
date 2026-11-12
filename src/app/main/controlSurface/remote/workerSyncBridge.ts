@@ -186,7 +186,7 @@ export function registerWorkerSyncBridge(endpointResolver: ControlSurfaceRemoteE
         }
 
         if (!(error instanceof WorkerEndpointUnavailableError)) {
-          const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+          const detail = describeBridgeError(error)
           process.stderr.write(`[opencove] worker sync bridge reconnecting: ${detail}\n`)
         }
         setTimeout(() => {
@@ -211,4 +211,22 @@ export function registerWorkerSyncBridge(endpointResolver: ControlSurfaceRemoteE
       }
     },
   }
+}
+
+function describeBridgeError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error)
+  }
+  const cause = error.cause
+  if (cause === undefined || cause === null) {
+    return `${error.name}: ${error.message}`
+  }
+  const code = typeof cause === 'object' && 'code' in cause ? String(cause.code) : null
+  const message =
+    cause instanceof Error
+      ? cause.message
+      : typeof cause === 'object' && 'message' in cause
+        ? String(cause.message)
+        : String(cause)
+  return `${error.name}: ${error.message} (cause: ${[code, message].filter(Boolean).join(' ')})`
 }

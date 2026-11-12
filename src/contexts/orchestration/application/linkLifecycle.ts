@@ -236,6 +236,11 @@ export async function closeExecutorLink(
   slot.unsubscribe = null
   const runtime = slot.runtime
   slot.runtime = null
+  try {
+    ctx.deps.tui.retire(link.executorNodeId)
+  } catch {
+    // The link is already closed; a TUI that survives only costs a dead PTY.
+  }
   if (runtime) {
     await callRuntime(() => runtime.close(RUNTIME_CLOSE_REASON[reason] ?? 'link_closed'))
   }

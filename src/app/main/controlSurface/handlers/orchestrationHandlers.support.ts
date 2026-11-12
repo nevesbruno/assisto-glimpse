@@ -54,6 +54,10 @@ const RULE_ERROR_CODE: Record<DispatchRuleError['code'], AppErrorCode> = {
   invalid_transition: 'common.unexpected',
 }
 
+/** One text for every refusal of the target, so the caller cannot tell absent from foreign. */
+const NOT_LINKED_MESSAGE =
+  'No linked executor matches the selector. Find the executor node id with "opencove orch link list".'
+
 /** The single place where the orchestration errors become Control Surface errors. */
 export function toAppError(error: unknown): unknown {
   if (error instanceof OpenCoveAppError) {
@@ -63,7 +67,10 @@ export function toAppError(error: unknown): unknown {
     return createAppError(error.code, { details: error.blocking ?? undefined })
   }
   if (error instanceof OrchestrationError) {
-    return createAppError(error.code)
+    return createAppError(
+      error.code,
+      error.code === 'orch.not_linked' ? { debugMessage: NOT_LINKED_MESSAGE } : {},
+    )
   }
   if (error instanceof DispatchRuleError) {
     return createAppError(RULE_ERROR_CODE[error.code], { debugMessage: error.message })

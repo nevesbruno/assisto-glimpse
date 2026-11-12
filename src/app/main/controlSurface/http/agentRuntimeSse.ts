@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import * as z from 'zod'
 import type { AgentRunStateRegistry } from '../../../../contexts/agent/application/AgentRunStateRegistry'
 import { sendJson } from './httpJson'
+import { startSseHeartbeat } from './sseHeartbeat'
 
 const querySchema = z.object({
   epoch: z.string().min(1).optional(),
@@ -59,6 +60,7 @@ export function serveAgentRuntimeEvents(options: {
   res.write(':\n\n')
   options.clients.add(res)
   options.listenerClients.add(res)
+  startSseHeartbeat(res)
   let unsubscribe = () => {}
   const cleanup = () => {
     unsubscribe()

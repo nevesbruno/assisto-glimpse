@@ -9,6 +9,8 @@ export interface OrchestrationBootDeps {
   readonly events?: Pick<OrchestrationEvents, 'sync' | 'poke'>
   readonly log: (message: string, details: Record<string, string>) => void
   readonly isStopped: () => boolean
+  /** Resolves once the schema exists: the PersistenceStore creates it, lazily, on first request. */
+  readonly ready?: () => Promise<unknown>
 }
 
 /**
@@ -20,6 +22,10 @@ export function createOrchestrationBoot(deps: OrchestrationBootDeps): () => Prom
     deps.log('orchestration boot step failed', { error: String(error) })
   return async () => {
     try {
+      await deps.ready?.()
+      if (deps.isStopped()) {
+        return
+      }
       await deps.service.reconcileOnBoot()
       if (deps.isStopped()) {
         return

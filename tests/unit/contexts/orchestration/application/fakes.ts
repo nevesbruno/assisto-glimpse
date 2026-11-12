@@ -231,6 +231,7 @@ export interface Harness {
   readonly runState: Record<string, unknown[][]>
   readonly tuiLaunches: string[]
   readonly tuiRelaunches: string[]
+  readonly tuiRetired: string[]
   readonly published: number[]
   readonly starts: ExecutorStartSpec[]
   readonly failNextStart: { error: (Error & { code: string }) | null }
@@ -249,7 +250,10 @@ export function codedError(code: string): Error & { code: string } {
 }
 
 export function createHarness(
-  options: { reapOrphanServices?: OrchestrationDeps['reapOrphanServices'] } = {},
+  options: {
+    reapOrphanServices?: OrchestrationDeps['reapOrphanServices']
+    tui?: OrchestrationDeps['tui']
+  } = {},
 ): Harness {
   const links = new InMemoryLinks()
   const dispatches = new InMemoryDispatches()
@@ -259,6 +263,7 @@ export function createHarness(
   const starts: ExecutorStartSpec[] = []
   const tuiLaunches: string[] = []
   const tuiRelaunches: string[] = []
+  const tuiRetired: string[] = []
   const published: number[] = []
   const failNextStart: Harness['failNextStart'] = { error: null }
   const probe = { compatible: true }
@@ -311,13 +316,16 @@ export function createHarness(
           : null
       },
     },
-    tui: {
+    tui: options.tui ?? {
       launch: async input => {
         tuiLaunches.push(input.executorNodeId)
       },
       relaunch: async input => {
         tuiLaunches.push(input.executorNodeId)
         tuiRelaunches.push(input.executorNodeId)
+      },
+      retire: nodeId => {
+        tuiRetired.push(nodeId)
       },
     },
     runState: {
@@ -370,6 +378,7 @@ export function createHarness(
     runState,
     tuiLaunches,
     tuiRelaunches,
+    tuiRetired,
     published,
     starts,
     failNextStart,

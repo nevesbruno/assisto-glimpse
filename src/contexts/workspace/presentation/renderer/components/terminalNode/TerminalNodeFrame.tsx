@@ -131,7 +131,8 @@ export function TerminalNodeFrame({
     !lastError &&
     !recoveryIssue
   const hasTargetHandle = kind === 'agent'
-  const hasSourceHandle = kind === 'task'
+  // An agent node orchestrates executors (orchestration link edges leave it as source).
+  const hasSourceHandle = kind === 'task' || kind === 'agent'
   const hasSelectedDragSurface = isSelected || isDragging
   const terminalElementId = useId()
 

@@ -105,6 +105,11 @@ export function readAppStateFromDb(db: BetterSQLite3Database): NormalizedPersist
   const orchestrationLinks = orchestrationLinksMirrorSchema.safeParse(
     safeJsonParse(meta.get('orchestration_links_mirror') ?? ''),
   )
+  if (!orchestrationLinks.success && meta.has('orchestration_links_mirror')) {
+    process.stderr.write(
+      `[opencove] orchestration links mirror ignored: ${orchestrationLinks.error.message}\n`,
+    )
+  }
 
   const nodesByWorkspaceId = new Map<string, typeof nodeRows>()
   for (const node of nodeRows) {
