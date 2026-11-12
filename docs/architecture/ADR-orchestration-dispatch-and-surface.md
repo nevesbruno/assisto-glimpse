@@ -291,7 +291,7 @@ Seção nova em `src/app/cli/skill/SKILL.md`, com cerca de 20 linhas e carregada
 | `orch.cancel` | interact | `dispatchId` | Despacho `cancelled`; só vale em `queued` |
 | `orch.interrupt` | interact | `to` | ok; o despacho fecha como `failed(interrupted)` pelo evento |
 | `orch.close` | interact | `to` e `force?` | Ligação `closed` e thread arquivada; com despacho em voo e sem `force`, recusa |
-| `orch.link.create` | admin | `orchestratorNodeId` e `executorNodeId`; sobe o serviço e relança a TUI do nó sempre, e uma falha fecha a ligação com `spawn_failed` | `linkId` e `runtimeMode` |
+| `orch.link.create` | admin | `orchestratorNodeId` e `executorNodeId`; sobe o serviço e relança a TUI do nó sempre, e uma falha fecha a ligação com `spawn_failed` (Q1, nota abaixo) | `linkId` e `runtimeMode` |
 | `orch.link.close` | admin | `linkId` e `force?` | ok |
 | `orch.link.list` | read | `projectId?` | `linksRevision` e `links` |
 | `orch.link.extend` | admin | `linkId`, `rounds` (1 ou 2) e `reason` | Novo limite |
@@ -300,6 +300,8 @@ Seção nova em `src/app/cli/skill/SKILL.md`, com cerca de 20 linhas e carregada
 | `orch.link.request` (fase 3) | interact | `requestId` (uuid), `to` (título ou id do nó), `kind` e `reason` | Ligação `requested` aguardando o clique do usuário |
 | `orch.link.respond` (fase 3) | admin | `linkId` e `decision` (`accept` ou `decline`) | Ligação `active` ou `closed(declined)` |
 | `orch.message` (fase 3) | interact | `messageId` (uuid), `to` e `text` | Mensagem na caixa de saída do outro orquestrador, com contagem do lado |
+
+Q1 (decisão de 11/11/2026, opção C): o `orch.link.create` segue relançando a TUI do nó executor sempre, como hoje. A confirmação no canvas antes do reinício fica para a fase seguinte (F3-02). Religar um nó que já tinha ligação não pode deixá-lo em `exited`, e isso é correção da onda 5 (cards D1 e D2). D2: no religar, o kill da TUI antiga é adiado cerca de 3 s para o renderer receber a sessão nova; o close mata na hora.
 
 `orch.hooks.approve` grava o `currentHash` lido do `hooks/list` do serviço no instante da aprovação, e recusa chave ausente da lista de pendentes.
 

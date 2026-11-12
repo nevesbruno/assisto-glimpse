@@ -248,6 +248,8 @@ O F2-14, partido em etapas (1, 2, 2b, 3, 4r, 4s, 4a, 4b1, 4b2, 4c, 4d, 5 e 5b) e
 
 ## Onda 5
 
+O bloco de correções do teste manual de 11/11/2026, o card de segurança, o smoke Electron e o ajuste do F2-16 pela Q2 estão em [onda 5](ORCHESTRATION_PHASE2_CARDS_WAVE_5.md).
+
 ### F2-16 Integração ponta a ponta e e2e real
 
 | Campo | Valor |
@@ -263,6 +265,14 @@ Aceite verificável:
 - E-08 verde: reenvio com despacho em voo recusado com `orch.dispatch_in_flight`, e três casos de timeout simulado da CLI (primeiro aceito com resposta perdida, primeiro nunca chegou, `--id` devolve `duplicate: true`), com um `turn/start` só no serviço.
 - E-04 rodado uma vez, autorizado em 09/11/2026, e registrado no documento de custo.
 - Falha de teste vira relatório com causa, e o card deixa o código sob teste intocado.
+
+Ajuste pela Q2 (11/11/2026):
+
+- Os e2e reais usam o perfil pessoal do Codex (`CODEX_HOME` padrão do Bruno) só para executar. Os helpers deixam de criar pasta temporária e herdam o ambiente.
+- O teste não escreve, copia nem apaga arquivo em `~/.codex` e não aprova hook de forma persistente. Ele lê o hash de `config.toml` e `hooks.json` antes e depois (E-01 e E-06) e exige hash igual.
+- O E-06 aprova hook só por `-c` no processo lançado e tolera o pedido de revisão de hooks do perfil pessoal.
+- O dono do smoke Electron é o card S1. O F2-16 não edita `tests/e2e/orchestration.smoke.spec.ts` nem `orchestration.smoke.helpers.ts`.
+- Depende também de A, B1, B2, C, D1, E e SEC (ver [onda 5](ORCHESTRATION_PHASE2_CARDS_WAVE_5.md#f2-16-ajuste-pela-q2)).
 
 ## Trilha OC
 

@@ -183,6 +183,19 @@ na fase 2". `orch.link.create` links two existing nodes, starts the service and 
 TUI of the executor node onto it, even when that node already has a live PTY; a failure closes the
 link with `spawn_failed`. It returns `{ linkId, runtimeMode }`.
 
+Q1 (decision of 2026-11-11, option C): the relaunch above stays as it is. Asking for confirmation on
+the canvas before the relaunch is left to the next phase (F3-02). Linking a node again must not leave
+it `exited`; that is a wave 5 fix (cards D1 and D2). D2: on relink the kill of the old TUI is
+deferred by about 3 s so the renderer receives the new session first; closing the link kills it
+immediately.
+
+`orch.not_linked` is also the error for a selector that matches no node (`--to` with no node), for a
+node of another project and for a node without a link. Card E kept the code (decision O1, so the
+agent principal still cannot tell these cases apart, A4 and U-09) and changed only the message. The
+text comes from `NOT_LINKED_MESSAGE` in `handlers/orchestrationHandlers.support.ts`: "No linked
+executor matches the selector. Find the executor node id with "opencove orch link list"." It travels
+as `debugMessage`. `node.not_found` is not used by `orch.*`.
+
 Project, workspace, sync, worktree and integrations are also exposed through dedicated handlers where implemented.
 
 ## Topology And Mounts
@@ -346,13 +359,44 @@ administrative bearer, not a new permission available to grant or cookie callers
 control, write, resize and agent reexec messages are refused. SSE and WebSocket connections subscribe
 to revocation; SSE membership is removed synchronously and sockets are terminated. Pending HTTP
 bodies and persistence preparation are followed by authoritative liveness checks before dispatch.
-Project scoping remains a follow-up; a scope tier is not a project isolation boundary.
+A scope tier alone is not a project isolation boundary; project scoping is described below.
 
 Direct input to a linked executor: `agent.prompt` and `session.writeNode` from an agent principal
 (a session grant) aimed at a node that is the executor of an active link are refused with
 `orch.use_dispatch` before any write to the PTY; the guard lives in
 `handlers/directInputGuard.ts`. The orchestrator uses `orch.dispatch` instead, and user
 credentials are not affected.
+
+### Project scope for session grants
+
+A session grant carries a `projectId` and is confined to it (`grantProjectOf`,
+`handlers/grantProjectScope.ts`). User, bearer and IPC callers have no grant and are unchanged.
+Covered operations:
+
+- `node.list`, `node.get`, `node.create`, `node.update`, `node.delete` and `canvas.focus`: the
+  node state is narrowed to the grant project (`scopeNodeControlState`); `node.list` returns only
+  that project.
+- `session.*`, including `session.prepareOrRevive` (checked before reconcile) and
+  `session.attachAgentStateWatcher` / `session.detachAgentStateWatcher` (no watcher is started or
+  disposed for a foreign target).
+- `agent.*`, including `agent.prompt`, get, list, finalMessage, history clear and delivery.
+  `agent.listSessions` returns an empty list unless `cwd` is inside the grant project root, and also
+  when `cwd` falls inside another workspace nested under that root.
+- `space.*`, including `space.create` (the target project must be the grant project).
+- `pty.spawnInMount`, `launchAgentInMount` and spawn by identity: a `workspaceId` or `spaceId`
+  of another project is refused; with no target, the grant project is the implicit identity,
+  never the UI active project.
+
+Rules:
+
+- A refusal for a target of another project is indistinguishable from an absent target: same
+  error code, message and `debugMessage`.
+- Fail closed: without a persisted store to resolve ownership, the grant is denied.
+- Ownership comes from persisted state, so a node or session not yet persisted is invisible to
+  its own grant.
+
+Known limits: `pty.spawn` reveals recovery state before the scope check; `approved_path_required`
+precedes the scope check in `agent.listSessions`; `isInside` does not resolve symlinks.
 
 ### Prompt delivery
 
