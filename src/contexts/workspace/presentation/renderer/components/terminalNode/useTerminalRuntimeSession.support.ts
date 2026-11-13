@@ -41,10 +41,7 @@ function isRestoredAgentRuntime(options: {
   agentResumeSessionIdVerified: boolean
   agentLaunchMode: AgentLaunchMode | null
 }): boolean {
-  return (
-    options.kind === 'agent' &&
-    (options.agentResumeSessionIdVerified || options.agentLaunchMode === 'resume')
-  )
+  return options.kind === 'agent' && options.agentLaunchMode === 'resume'
 }
 
 export function shouldAwaitRestoredAgentVisibleOutput(options: {

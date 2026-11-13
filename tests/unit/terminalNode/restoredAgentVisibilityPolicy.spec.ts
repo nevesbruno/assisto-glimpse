@@ -53,6 +53,14 @@ describe('restored agent visibility policy', () => {
 
     expect(
       shouldAwaitRestoredAgentVisibleOutput({
+        kind: 'agent',
+        agentResumeSessionIdVerified: true,
+        agentLaunchMode: 'new',
+      }),
+    ).toBe(false)
+
+    expect(
+      shouldAwaitRestoredAgentVisibleOutput({
         kind: 'terminal',
         agentResumeSessionIdVerified: true,
         agentLaunchMode: 'resume',
@@ -85,6 +93,15 @@ describe('restored agent visibility policy', () => {
         isLiveSessionReattach: true,
         agentResumeSessionIdVerified: true,
         agentLaunchMode: 'resume',
+      }),
+    ).toBe(false)
+
+    expect(
+      shouldRequirePostGeometrySnapshotOutput({
+        kind: 'agent',
+        isLiveSessionReattach: false,
+        agentResumeSessionIdVerified: true,
+        agentLaunchMode: 'new',
       }),
     ).toBe(false)
 
