@@ -26,8 +26,6 @@ export interface ClaudeOrchestratorApi {
   turns: () => string[]
   commands: () => string[]
   results: () => string[]
-  /** Node ids for `orch close`, keyed by executor title: `--to` only matches ids, not titles. */
-  setCloseTargets: (targets: Record<string, string>) => void
 }
 
 const blocksOf = (message: ClaudeMessage): ClaudeBlock[] =>
@@ -112,7 +110,6 @@ export async function startClaudeOrchestratorApi(): Promise<ClaudeOrchestratorAp
   const turns: string[] = []
   const commands: string[] = []
   const results: string[] = []
-  let closeTargets: Record<string, string> = {}
   const run = (res: ServerResponse, body: ClaudeRequest, command: string) => {
     commands.push(command)
     claudeReply(res, body, bash(command), 'tool_use')
@@ -162,7 +159,7 @@ export async function startClaudeOrchestratorApi(): Promise<ClaudeOrchestratorAp
       }
       if (steps < reads.length * 2) {
         const name = reads[steps - reads.length][2]
-        run(res, body, `opencove orch close --to "${closeTargets[name] ?? name}"`)
+        run(res, body, `opencove orch close --to "${name}"`)
         return
       }
       claudeReply(res, body, { type: 'text', text: 'ORCH_DONE' }, 'end_turn')
@@ -195,9 +192,6 @@ export async function startClaudeOrchestratorApi(): Promise<ClaudeOrchestratorAp
     turns: () => [...turns],
     commands: () => [...commands],
     results: () => [...results],
-    setCloseTargets: targets => {
-      closeTargets = { ...closeTargets, ...targets }
-    },
   }
 }
 

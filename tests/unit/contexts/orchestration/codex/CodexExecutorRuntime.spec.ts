@@ -28,7 +28,8 @@ describe('CodexExecutorRuntime (F2-11)', () => {
         ephemeral: false,
         serviceName: 'glimpse',
       })
-      expect(client().methods()).toContain('thread/name/set')
+      const named = client().requests.find(entry => entry.method === 'thread/name/set')!
+      expect(named.params).toEqual({ threadId: 'thr-1', name: 'Glimpse: Agente A' })
       await expect(runtime.attachInfo()).resolves.toEqual({
         url: 'ws://127.0.0.1:5',
         tokenEnv: { name: 'OPENCOVE_EXECUTOR_REMOTE_TOKEN', value: 'tok' },

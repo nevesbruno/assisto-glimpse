@@ -138,6 +138,7 @@ export function setup(
   })
   const spec: ExecutorStartSpec = {
     executorNodeId: 'node-1',
+    title: 'Agente A',
     provider: 'codex',
     cwd: '/w',
     env: { OPENAI_API_KEY: 'k' },

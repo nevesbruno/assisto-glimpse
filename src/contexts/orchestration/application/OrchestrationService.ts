@@ -1,5 +1,5 @@
 /* oxlint-disable no-await-in-loop -- drains tails until no task was added meanwhile */
-import { OrchestrationError, type AgentLink, type AgentLinkCloseReason } from '../domain/agentLink'
+import { OrchestrationError, type AgentLink } from '../domain/agentLink'
 import {
   authorizeDirectInput,
   authorizeOrchestration,
@@ -19,6 +19,7 @@ import {
   type HealthSignal,
 } from './executorHealth'
 import { relaunchExecutorTui } from './executorTuiRelaunch'
+import { closeExecutorTarget } from './executorTarget'
 import { shutdownExecutors } from './serviceShutdown'
 import {
   chainOnSlot,
@@ -30,7 +31,7 @@ import {
 import { respondApproval, recordApprovalEvent, type RespondApprovalInput } from './approvals'
 import { approveHooks, type ApproveHooksInput } from './hookApprovals'
 import { createLink, type CreateLinkInput } from './linkCreate'
-import { closeExecutorLink, extendLinkRounds } from './linkLifecycle'
+import { extendLinkRounds } from './linkLifecycle'
 import type {
   AgentLinkRepository,
   Clock,
@@ -130,16 +131,8 @@ export class OrchestrationService {
     return interruptExecutor(this.ctx, principal, input.to)
   }
 
-  public async close(principal: OrchestrationPrincipal, input: { to: string; force?: boolean }) {
-    await this.authorize(principal, 'orch.close', input.to)
-    return this.runExclusive(input.to, async () => {
-      const link = await this.deps.links.findActiveByExecutor(input.to)
-      if (!link) {
-        throw new OrchestrationError('orch.not_linked')
-      }
-      const reason: AgentLinkCloseReason = principal.kind === 'user' ? 'user' : 'orchestrator'
-      await closeExecutorLink(this.ctx, link, reason, input.force ?? false)
-    })
+  public close(principal: OrchestrationPrincipal, input: { to: string; force?: boolean }) {
+    return closeExecutorTarget(this.ctx, principal, input)
   }
 
   public async extendRounds(

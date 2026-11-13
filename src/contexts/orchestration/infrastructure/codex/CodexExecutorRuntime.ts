@@ -378,8 +378,9 @@ export class CodexExecutorRuntime implements ExecutorRuntime {
       ...(spec.model === null ? {} : { model: spec.model }),
     })
     const threadId = parseRead('ThreadStartResponse', response).thread.id
+    const name = `Glimpse: ${spec.title?.trim() || spec.executorNodeId}`
     await this.rpc()
-      .request('thread/name/set', { threadId, name: `Glimpse: ${spec.executorNodeId}` })
+      .request('thread/name/set', { threadId, name })
       .catch(() => undefined)
     return threadId
   }

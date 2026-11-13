@@ -238,13 +238,6 @@ test.describe('orchestration phase 2 with the real Codex service', () => {
     for (const node of spawned) {
       expect(node.spaceId, `space of executor ${node.title}`).toBe(orchestratorSpaceId)
     }
-    const executorIds = Object.fromEntries(spawned.map(node => [node.title, node.id])) as Record<
-      (typeof executors)[number],
-      string
-    >
-    // `orch close --to` resolves an executor id, not the notice title; the orchestrator gets the ids
-    // from `orch link list` in real use, and the e2e hands them to the scripted orchestrator.
-    claude!.setCloseTargets(executorIds)
 
     await expect
       .poll(
@@ -268,9 +261,9 @@ test.describe('orchestration phase 2 with the real Codex service', () => {
       .poll(
         () =>
           executors.every(name =>
-            claude!.commands().some(c => c.includes(`orch close --to "${executorIds[name]}"`)),
+            claude!.commands().some(c => c.includes(`orch close --to "${name}"`)),
           ),
-        { timeout: 120_000, message: 'both closes after the reads' },
+        { timeout: 120_000, message: 'both closes by title after the reads' },
       )
       .toBe(true)
     await expect
@@ -285,7 +278,7 @@ test.describe('orchestration phase 2 with the real Codex service', () => {
     const readIndex = (name: string) =>
       commands.findIndex(c => c.includes(`agent read --node ${name} --turn `))
     const closeIndex = (name: string) =>
-      commands.findIndex(c => c.includes(`orch close --to "${executorIds[name]}"`))
+      commands.findIndex(c => c.includes(`orch close --to "${name}"`))
     expect(Math.max(...executors.map(readIndex))).toBeGreaterThanOrEqual(0)
     expect(Math.min(...executors.map(closeIndex))).toBeGreaterThan(
       Math.max(...executors.map(readIndex)),
@@ -319,10 +312,9 @@ test.describe('orchestration phase 2 with the real Codex service', () => {
       })
       .toBe(2)
     const threads = await glimpseThreads()
-    // R13/ADR say "Glimpse: título do nó"; the runtime names the thread with the executor node id
-    // (CodexExecutorRuntime.startThread). The e2e pins the observable name and reports the gap.
+    // E-01/R13: the thread title is the node title, never the node id (decision O26).
     expect(threads.map(thread => thread.name).sort()).toEqual(
-      spawned.map(node => `Glimpse: ${node.id}`).sort(),
+      executors.map(name => `Glimpse: ${name}`).sort(),
     )
     for (const thread of threads) {
       expect(thread.cwd).toBe(fixture.workspace)

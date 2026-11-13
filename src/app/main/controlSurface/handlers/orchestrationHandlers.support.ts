@@ -67,10 +67,13 @@ export function toAppError(error: unknown): unknown {
     return createAppError(error.code, { details: error.blocking ?? undefined })
   }
   if (error instanceof OrchestrationError) {
-    return createAppError(
-      error.code,
-      error.code === 'orch.not_linked' ? { debugMessage: NOT_LINKED_MESSAGE } : {},
-    )
+    const debugMessage =
+      error.code === 'orch.not_linked'
+        ? NOT_LINKED_MESSAGE
+        : error.message === error.code
+          ? undefined
+          : error.message
+    return createAppError(error.code, debugMessage ? { debugMessage } : {})
   }
   if (error instanceof DispatchRuleError) {
     return createAppError(RULE_ERROR_CODE[error.code], { debugMessage: error.message })
