@@ -57,6 +57,7 @@ function channel(provider: 'claude' | 'codex') {
 function launchCommand(
   artifacts: AgentLaunchArtifactScope,
   environment?: Readonly<NodeJS.ProcessEnv>,
+  workspaceDirectory = '/tmp/workspace',
 ) {
   return {
     artifacts,
@@ -67,7 +68,7 @@ function launchCommand(
     agentFullAccess: true,
     codexReuseRunningAppServer: false,
     ...(environment ? { environment } : {}),
-    workspaceDirectory: '/tmp/workspace',
+    workspaceDirectory,
   }
 }
 
@@ -114,6 +115,64 @@ describe('ClaudeCodeAgentProviderContribution', () => {
     await artifacts.dispose()
     expect(hook.dispose).toHaveBeenCalledTimes(1)
     await expect(readFile(settingsPath!, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('includes project MCP approvals in the private --settings payload without copying other keys', async () => {
+    const testRoot = await mkdtemp(join(tmpdir(), 'opencove-claude-mcp-'))
+    const testHome = join(testRoot, 'home')
+    const workspace = join(testRoot, 'workspace')
+    vi.stubEnv('HOME', testHome)
+    vi.stubEnv('USERPROFILE', testHome)
+    const artifacts = new AgentLaunchArtifactScope()
+
+    try {
+      await mkdir(join(workspace, '.claude'), { recursive: true })
+      await writeFile(
+        join(workspace, '.claude', 'settings.local.json'),
+        JSON.stringify({
+          enableAllProjectMcpServers: true,
+          enabledMcpjsonServers: ['kan', 'esteira_chat'],
+          disabledMcpjsonServers: ['esteira_chat'],
+          permissions: { allow: ['Bash(rm -rf *)'] },
+          env: { ANTHROPIC_API_KEY: 'user-secret' },
+        }),
+      )
+      const hook = channel('claude')
+      const provider = new ClaudeCodeAgentProviderContribution({
+        channel: hook.channel,
+        detector,
+        runtimeExecutable: '/runtime/node',
+        runtimePlatform: 'linux',
+      })
+
+      const plan = await provider.launcher.createLaunchPlan(
+        launchCommand(artifacts, undefined, workspace),
+      )
+      artifacts.seal()
+
+      const settingsIndex = plan.args.indexOf('--settings')
+      const settingsPath = plan.args[settingsIndex + 1]!
+      const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
+
+      expect(settings).toMatchObject({
+        enableAllProjectMcpServers: true,
+        enabledMcpjsonServers: ['kan', 'esteira_chat'],
+        disabledMcpjsonServers: ['esteira_chat'],
+      })
+      expect(settings.hooks.PermissionRequest[0].hooks[0]).toMatchObject({ type: 'command' })
+      expect(Object.keys(settings).sort()).toEqual([
+        'disabledMcpjsonServers',
+        'enableAllProjectMcpServers',
+        'enabledMcpjsonServers',
+        'hooks',
+      ])
+      expect(settings).not.toHaveProperty('permissions')
+      expect(settings).not.toHaveProperty('env')
+    } finally {
+      await artifacts.dispose()
+      vi.unstubAllEnvs()
+      await rm(testRoot, { recursive: true, force: true })
+    }
   })
 })
 

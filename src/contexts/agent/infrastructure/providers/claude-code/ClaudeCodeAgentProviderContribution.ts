@@ -10,6 +10,7 @@ import { buildAgentLaunchCommand } from '../../cli/AgentCommandFactory'
 import { ExistingAgentProviderDetector } from '../shared/AgentProviderDetector'
 import { createAgentHookRelay } from '../shared/AgentHookRelay'
 import { createTemporaryProviderConfig } from '../shared/TemporaryProviderConfig'
+import { readClaudeProjectMcpApprovals } from './ClaudeProjectMcpApprovals'
 
 export interface ClaudeCodeAgentProviderContributionOptions {
   readonly channel?: AgentHookChannel
@@ -100,10 +101,14 @@ export class ClaudeCodeAgentProviderContribution implements AgentProviderContrib
       runtimePlatform: this.runtimePlatform,
       artifacts: command.artifacts,
     })
+    const mcpApprovals = await readClaudeProjectMcpApprovals(command.workspaceDirectory)
     const settings = await createTemporaryProviderConfig(
       'opencove-claude-settings-',
       'settings.json',
-      JSON.stringify({ hooks: createClaudeHooks(relay.command, relay.args) }),
+      JSON.stringify({
+        ...mcpApprovals,
+        hooks: createClaudeHooks(relay.command, relay.args),
+      }),
     )
     command.artifacts.track('claude-hook-settings', settings)
     return {
