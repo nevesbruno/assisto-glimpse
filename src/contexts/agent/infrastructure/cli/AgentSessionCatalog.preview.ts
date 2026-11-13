@@ -194,11 +194,11 @@ export function parseGeminiFirstUserPreview(parsed: unknown): string | null {
   return null
 }
 
-export async function readFirstMatchingJsonlValue<T>(
+async function scanJsonlFile(
   filePath: string,
-  match: (parsed: unknown) => T | null,
-  maxBytes: number = JSONL_SCAN_MAX_BYTES,
-): Promise<T | null> {
+  maxBytes: number,
+  onValue: (parsed: unknown) => boolean,
+): Promise<void> {
   let handle: Awaited<ReturnType<typeof fs.open>> | null = null
 
   try {
@@ -228,9 +228,8 @@ export async function readFirstMatchingJsonlValue<T>(
         }
 
         try {
-          const matched = match(JSON.parse(trimmed))
-          if (matched !== null) {
-            return matched
+          if (onValue(JSON.parse(trimmed))) {
+            return
           }
         } catch {
           // Ignore malformed or irrelevant lines and continue scanning.
@@ -239,22 +238,73 @@ export async function readFirstMatchingJsonlValue<T>(
     }
 
     if (bytesReadTotal >= maxBytes) {
-      return null
+      return
     }
 
     const finalLine = `${remainder}${decoder.end()}`.trim()
     if (finalLine.length === 0) {
-      return null
+      return
     }
 
     try {
-      return match(JSON.parse(finalLine))
+      onValue(JSON.parse(finalLine))
     } catch {
-      return null
+      // Ignore a malformed trailing line.
     }
   } catch {
-    return null
+    // Missing/unreadable files are treated as no match.
   } finally {
     await handle?.close().catch(() => undefined)
   }
+}
+
+export async function readFirstMatchingJsonlValue<T>(
+  filePath: string,
+  match: (parsed: unknown) => T | null,
+  maxBytes: number = JSONL_SCAN_MAX_BYTES,
+): Promise<T | null> {
+  const state: { value: T | null } = { value: null }
+
+  await scanJsonlFile(filePath, maxBytes, parsed => {
+    const matched = match(parsed)
+    if (matched === null) {
+      return false
+    }
+
+    state.value = matched
+    return true
+  })
+
+  return state.value
+}
+
+export interface ClaudeSessionFilePreview {
+  preview: string | null
+  aiTitle: string | null
+}
+
+/**
+ * 单次打开、单次顺序扫描,同时取出 Claude 会话的首条用户消息与 ai-title。
+ *
+ * 两者位置不同(预览在文件开头,标题可能埋在深处),合并扫描避免对同一文件
+ * 打开两次、重复读取。找到两者后立即停止;没有 ai-title 时最多扫到深度上限。
+ */
+export async function readClaudeSessionFilePreview(
+  filePath: string,
+): Promise<ClaudeSessionFilePreview> {
+  const state: ClaudeSessionFilePreview = { preview: null, aiTitle: null }
+
+  await scanJsonlFile(filePath, JSONL_DEEP_SCAN_MAX_BYTES, parsed => {
+    if (state.preview === null) {
+      state.preview = parseClaudeFirstUserPreview(parsed)
+    }
+
+    if (state.aiTitle === null) {
+      state.aiTitle = parseClaudeAiTitle(parsed)
+    }
+
+    return state.preview !== null && state.aiTitle !== null
+  })
+
+  return state
 }
