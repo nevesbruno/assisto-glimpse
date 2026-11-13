@@ -198,6 +198,7 @@ export interface NoticeRow {
   kind: string
   dispatch_id: string | null
   delivery_state: string
+  dedupe_key: string
 }
 
 /** Rows of one query, or null while the database cannot be read yet (boot, hot journal). */
@@ -246,7 +247,7 @@ export async function readNoticesForDispatch(
 ): Promise<NoticeRow[] | null> {
   return readRows<NoticeRow>(
     userDataDir,
-    `SELECT id, kind, dispatch_id, delivery_state FROM orchestration_notices
+    `SELECT id, kind, dispatch_id, delivery_state, dedupe_key FROM orchestration_notices
       WHERE dispatch_id = ? ORDER BY created_at`,
     [dispatchId],
   )
@@ -258,7 +259,7 @@ export async function readNoticesForExecutor(
 ): Promise<NoticeRow[] | null> {
   return readRows<NoticeRow>(
     userDataDir,
-    `SELECT id, kind, dispatch_id, delivery_state FROM orchestration_notices
+    `SELECT id, kind, dispatch_id, delivery_state, dedupe_key FROM orchestration_notices
       WHERE executor_node_id = ? ORDER BY created_at`,
     [executorNodeId],
   )

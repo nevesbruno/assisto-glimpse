@@ -104,6 +104,19 @@ describe('I-03 service death (real runtime and supervisor over a fake process)',
     expect(service.healthOf(EXECUTOR_NODE)).toBe('unavailable')
     expect(rig.dispatchRow(ID)).toMatchObject({ state: 'failed', reason: 'executor_down' })
     expect(rig.linkRow()?.state).toBe('active')
+    // Every death has its own incident key: four deaths, four executor_down notices.
+    const downNotices = rig.notices().filter(notice => notice.kind === 'executor_down')
+    expect(downNotices).toHaveLength(4)
+    expect(new Set(downNotices.map(notice => notice.dedupeKey)).size).toBe(4)
+    expect(downNotices.map(notice => notice.dedupeKey.split(':').at(-1)).sort()).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+    ])
+    for (const notice of downNotices) {
+      expect(notice.dedupeKey).toMatch(new RegExp(`^down:${EXECUTOR_NODE}:[0-9a-f-]{36}:[1-4]$`))
+    }
     // ADR de despacho, linhas 175-176, e RC4 da onda 3: o `uncertain` vem do `send_uncertain`
     // do envio em tempo de execução, e o `executor_down_in_turn` da transição final; são dois
     // avisos de estado do despacho. Cada reinício só acrescenta um `executor_down`.
@@ -178,17 +191,14 @@ describe('I-03 service death (real runtime and supervisor over a fake process)',
     },
   )
 
-  it.fails(
-    'after executor.recovered the TUI is relaunched on the same node with the new service (risk table, I-03)',
-    async () => {
-      const { env, worker } = await startLinkedCodexWorker(rig)
-      const launched = worker.spawnSession.mock.calls.length
-      await killService(env, 1000)
-      await settle()
-      expect(env.clients).toHaveLength(2)
-      expect(worker.spawnSession.mock.calls.length).toBe(launched + 1)
-    },
-  )
+  it('after executor.recovered the TUI is relaunched on the same node with the new service (wave 6 R1)', async () => {
+    const { env, worker } = await startLinkedCodexWorker(rig)
+    const launched = worker.spawnSession.mock.calls.length
+    await killService(env, 1000)
+    await settle()
+    expect(env.clients).toHaveLength(2)
+    expect(worker.spawnSession.mock.calls.length).toBe(launched + 1)
+  })
 })
 
 const REAL_CODEX = process.env.OPENCOVE_TEST_REAL_CODEX === '1'

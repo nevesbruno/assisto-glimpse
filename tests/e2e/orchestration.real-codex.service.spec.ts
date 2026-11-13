@@ -9,7 +9,6 @@ import {
   type LaunchedApp,
   type RealCodexFixture,
 } from './orchestration.real-codex.helpers'
-/* oxlint-disable no-await-in-loop, no-unmodified-loop-condition -- the killer loop polls the pids and sleeps in order */
 import {
   appServerPidsUnder,
   killAppServerUnder,
@@ -32,9 +31,8 @@ import {
 
 // E-03: kill -9 on the real Codex app-server while the Worker keeps running. The supervisor
 // restarts the service, the dispatch is reconciled after `executor.recovered`, and four deaths
-// inside 60 s exhaust the 1/2/4 s backoff and leave the executor unavailable. The TUI relaunch
-// case is a known defect (`handleExecutorIncident` does not call `relaunchExecutorTui`); it runs
-// as an expected failure with the cause below and must be flipped when the wave 6 card lands.
+// inside 60 s exhaust the 1/2/4 s backoff and leave the executor unavailable. Every death yields
+// one `executor_down` notice with its own dedupe key, and the TUI is relaunched on the same node.
 
 interface StatusLink {
   title: string
@@ -267,7 +265,7 @@ test.describe('orchestration phase 2 with real service deaths', () => {
     const downNotices = (
       (await readNoticesForExecutor(launched.userDataDir, serviceExecutorNodeId)) ?? []
     ).filter(notice => notice.kind === 'executor_down')
-    expect(downNotices.length).toBeGreaterThanOrEqual(1)
+    expect(downNotices, 'one executor_down per death').toHaveLength(1)
 
     const linkAfter = (await readLink(launched.userDataDir, serviceExecutorNodeId)) as LinkRow
     expect(linkAfter.state).toBe('active')
@@ -283,7 +281,7 @@ test.describe('orchestration phase 2 with real service deaths', () => {
     expect(await hashProfileFiles(personalCodexHome())).toEqual(profileBefore)
   })
 
-  test('E-03 after executor.recovered the TUI is relaunched on the same node (known defect)', async () => {
+  test('E-03 after executor.recovered the TUI is relaunched on the same node', async () => {
     test.setTimeout(240_000)
     app = await launchRealCodexApp(fixture)
     const launched = app
@@ -300,10 +298,6 @@ test.describe('orchestration phase 2 with real service deaths', () => {
       })
       .toBe('ready')
 
-    // Known defect (card of wave 6): handleExecutorIncident in reconcileOnBoot.ts only reconciles
-    // the dispatch and records the service identity; it never calls relaunchExecutorTui, so the
-    // node keeps the dead TUI session while the risk table says it is relaunched on the same node.
-    test.fail()
     await expect
       .poll(
         async () => {
@@ -318,7 +312,7 @@ test.describe('orchestration phase 2 with real service deaths', () => {
       .toBe(true)
   })
 
-  test('E-03 four deaths in 60 s leave the executor unavailable, fail the queued dispatch with not_sent and keep the link active', async () => {
+  test('E-03 four deaths in 60 s leave the executor unavailable, fail the in-flight dispatch with executor_down and keep the link active', async () => {
     test.setTimeout(420_000)
     app = await launchRealCodexApp(fixture)
     const launched = app
@@ -343,10 +337,8 @@ test.describe('orchestration phase 2 with real service deaths', () => {
       })
       .toBe('ready')
 
-    // Second and third deaths while idle: the third restart gets the full 4 s backoff window,
-    // where the next dispatch is accepted as `queued`. Every launch after it is killed before
-    // readiness, so the supervisor exhausts the 1/2/4 s backoff with the dispatch still queued
-    // (ADR: queued + unavailable -> failed(not_sent), refund).
+    // Second and third deaths while idle: every launch is waited up to readiness before the next
+    // SIGKILL, so each death lands on a service the supervisor is already watching.
     await killAppServerUnder(launched.pid, secondPid)
     const thirdPid = await waitForReplacementService(launched, secondPid)
     await expect
@@ -356,74 +348,98 @@ test.describe('orchestration phase 2 with real service deaths', () => {
       })
       .toBe('ready')
     await killAppServerUnder(launched.pid, thirdPid)
-    const killed = new Set<number>([firstPid, secondPid, thirdPid])
-    let stopKiller = false
-    const killer = (async () => {
-      while (!stopKiller) {
-        const pids = await appServerPidsUnder(launched.pid).catch(() => [] as number[])
-        for (const pid of pids) {
-          if (killed.has(pid)) {
-            continue
-          }
-          killed.add(pid)
-          knownServicePids = [...new Set([...knownServicePids, pid])]
-          try {
-            process.kill(pid, 'SIGKILL')
-          } catch {
-            // The attempt already died.
-          }
-        }
-        await sleep(50)
-      }
-    })()
-    try {
-      const queuedId = await dispatchToExecutor(
-        launched,
-        `EXEC_TASK ${serviceExecutorTitle} SLEEP=45`,
-      )
-      await expect
-        .poll(async () => (await readDispatch(launched.userDataDir, queuedId))?.state ?? '', {
-          timeout: 30_000,
-          message: 'dispatch queued during the backoff',
-        })
-        .toBe('queued')
-      await expect
-        .poll(async () => (await statusLinkOf(launched))?.health ?? 'missing', {
-          timeout: 90_000,
-          intervals: [500],
-          message: 'executor unavailable after four restart cycles',
-        })
-        .toBe('unavailable')
 
-      const status = await statusOf(launched)
-      const link = status?.links.find(candidate => candidate.title === serviceExecutorTitle)
-      expect(link?.health).toBe('unavailable')
-      expect(link?.admission).toMatchObject({
-        canDispatch: false,
-        reason: 'executor_unavailable',
+    // The third restart waits the full 4 s backoff, so the next dispatch is accepted as `queued`
+    // instead of starting a turn. The fourth launch is waited until it has a session and a pid of
+    // its own (ready-then-kill), so the death lands on a service the supervisor already watches;
+    // the queued dispatch is sent as soon as that service is ready and is in flight at the kill.
+    await expect
+      .poll(async () => (await statusLinkOf(launched))?.health ?? 'missing', {
+        timeout: 30_000,
+        message: 'third death observed before the queued dispatch',
       })
+      .toBe('starting')
+    const queuedId = await dispatchToExecutor(
+      launched,
+      `EXEC_TASK ${serviceExecutorTitle} SLEEP=45`,
+    )
+    await expect
+      .poll(async () => (await readDispatch(launched.userDataDir, queuedId))?.state ?? '', {
+        timeout: 30_000,
+        message: 'dispatch queued during the backoff',
+      })
+      .toBe('queued')
+    const fourthPid = await waitForReplacementService(launched, thirdPid)
+    await expect
+      .poll(async () => (await readDispatch(launched.userDataDir, queuedId))?.state ?? '', {
+        timeout: 30_000,
+        message: 'queued dispatch sent by the fourth service',
+      })
+      .toBe('sent')
+    await killAppServerUnder(launched.pid, fourthPid)
 
-      await waitForFinalDispatch(launched, queuedId, 'failed', 'not_sent')
-      await expectNotice(launched, queuedId, 'failed_not_sent')
-      const linkAfter = (await readLink(launched.userDataDir, serviceExecutorNodeId)) as LinkRow
-      expect(linkAfter.state).toBe('active')
-      expect(linkAfter.rounds_used).toBe(1)
-      expect(linkAfter.rounds_limit).toBe(3)
+    // Four deaths inside 60 s exhaust the 1/2/4 s backoff: the executor is unavailable and the
+    // in-flight dispatch fails with executor_down, so no work stays without a final state.
+    await expect
+      .poll(async () => (await statusLinkOf(launched))?.health ?? 'missing', {
+        timeout: 90_000,
+        intervals: [500],
+        message: 'executor unavailable after four restart cycles',
+      })
+      .toBe('unavailable')
 
-      const refused = await cli(launched.userDataDir, [
-        'orch',
-        'dispatch',
-        '--to',
-        serviceExecutorNodeId,
-        '--text',
-        `EXEC_TASK ${serviceExecutorTitle}`,
-      ])
-      expect(refused.exitCode).toBe(1)
-      expect(refused.stderr).toContain('executor_unavailable')
-      expect(await hashProfileFiles(personalCodexHome())).toEqual(profileBefore)
-    } finally {
-      stopKiller = true
-      await killer
+    const status = await statusOf(launched)
+    const link = status?.links.find(candidate => candidate.title === serviceExecutorTitle)
+    expect(link?.health).toBe('unavailable')
+    expect(link?.admission).toMatchObject({
+      canDispatch: false,
+      reason: 'executor_unavailable',
+    })
+
+    await waitForFinalDispatch(launched, queuedId, 'failed', 'executor_down')
+    await expectNotice(launched, queuedId, 'executor_down_in_turn')
+    // Four deaths, four notices: the dedupe key is the incident identity, so a death that
+    // arrives before the previous recovery cannot collide with it.
+    await expect
+      .poll(
+        async () =>
+          (
+            (await readNoticesForExecutor(launched.userDataDir, serviceExecutorNodeId)) ?? []
+          ).filter(notice => notice.kind === 'executor_down').length,
+        { timeout: 60_000, message: 'one executor_down notice per death' },
+      )
+      .toBe(4)
+    const downNotices = (
+      (await readNoticesForExecutor(launched.userDataDir, serviceExecutorNodeId)) ?? []
+    ).filter(notice => notice.kind === 'executor_down')
+    expect(downNotices).toHaveLength(4)
+    expect(new Set(downNotices.map(notice => notice.dedupe_key)).size).toBe(4)
+    expect(downNotices.map(notice => notice.dedupe_key.split(':').at(-1)).sort()).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+    ])
+    for (const notice of downNotices) {
+      expect(notice.dedupe_key).toMatch(
+        new RegExp(`^down:${serviceExecutorNodeId}:[0-9a-f-]{36}:[1-4]$`),
+      )
     }
+    const linkAfter = (await readLink(launched.userDataDir, serviceExecutorNodeId)) as LinkRow
+    expect(linkAfter.state).toBe('active')
+    expect(linkAfter.rounds_used).toBe(2)
+    expect(linkAfter.rounds_limit).toBe(3)
+
+    const refused = await cli(launched.userDataDir, [
+      'orch',
+      'dispatch',
+      '--to',
+      serviceExecutorNodeId,
+      '--text',
+      `EXEC_TASK ${serviceExecutorTitle}`,
+    ])
+    expect(refused.exitCode).toBe(1)
+    expect(refused.stderr).toContain('executor_unavailable')
+    expect(await hashProfileFiles(personalCodexHome())).toEqual(profileBefore)
   })
 })

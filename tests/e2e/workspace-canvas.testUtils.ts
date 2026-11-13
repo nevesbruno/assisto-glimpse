@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync, statfsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'path'
+import { claimE2EUserDataOwner, pruneE2EUserDataDirs } from './e2e-user-data-retention'
 
 const E2E_PATH_DELETE_RETRY_MS = 500
 const E2E_PATH_DELETE_MAX_ATTEMPTS = 40
@@ -58,7 +59,11 @@ export async function createTestUserDataDir(): Promise<string> {
 
   const parentDir = path.join(baseTmpDir, E2E_PARENT_DIR_NAME)
   await mkdir(parentDir, { recursive: true })
-  return await mkdtemp(path.join(parentDir, E2E_USER_DATA_DIR_PREFIX))
+  // Old runs leave hundreds of MB behind; keep the latest runs for debugging, never a live one.
+  await pruneE2EUserDataDirs(parentDir, E2E_USER_DATA_DIR_PREFIX)
+  const userDataDir = await mkdtemp(path.join(parentDir, E2E_USER_DATA_DIR_PREFIX))
+  await claimE2EUserDataOwner(userDataDir)
+  return userDataDir
 }
 
 export async function removePathWithRetry(

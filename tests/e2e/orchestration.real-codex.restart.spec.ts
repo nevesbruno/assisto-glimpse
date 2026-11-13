@@ -34,9 +34,8 @@ import {
 
 // E-02: the real Glimpse dies by SIGKILL while a Codex turn is running and reopens on the same
 // data directory. The new Worker must reap the old app-server, resume the thread, settle the
-// dispatch from the turn the service already holds, and emit one notice for it. The notice
-// delivery itself is blocked today: after the resume the orchestrator has no authoritative idle
-// observation yet, so the outbox holds the batch. Both halves live below.
+// dispatch from the turn the service already holds, and deliver one notice for it without any
+// orchestrator input (wave 6: resilient boot and an authoritative idle after the resume).
 
 const executorTitle = 'alpha'
 
@@ -65,9 +64,6 @@ interface RestartEvidence {
 }
 
 const jsonOf = <T>(text: string): T => JSON.parse(text) as T
-
-/** The wave 6 boot defect after a crash with a sent dispatch; the only setup failure we retry. */
-class KnownRestartBootError extends Error {}
 
 /** Playwright's expect.poll proves the condition; this one also hands the value back. */
 async function pollValue<T>(
@@ -297,61 +293,19 @@ test.describe('orchestration phase 2 with a real Glimpse restart', () => {
           ) {
             return { link, pids }
           }
-          if (restarted.stderr().includes('orch.executor_unavailable')) {
-            throw new KnownRestartBootError(
-              'orchestration boot failed with orch.executor_unavailable',
-            )
-          }
           return null
         },
         90_000,
-        'resumed app-server identity',
+        'resumed app-server identity; the degraded boot must reconcile, never abort with orch.executor_unavailable',
       )
 
-    let restarted = await launchRealCodexApp(fixture, killed.userDataDir, claudeEnv)
+    // One relaunch only: the crash boot reconciles in degraded mode and retries by itself, so an
+    // app-level retry would hide a regression instead of proving that the boot no longer aborts.
+    const restarted = await launchRealCodexApp(fixture, killed.userDataDir, claudeEnv)
     app = restarted
     expect(restarted.userDataDir).toBe(killed.userDataDir)
     expect(restarted.pid).not.toBe(firstAppPid)
-    let serviceAttempt: { link: LinkRow; pids: number[] }
-    try {
-      serviceAttempt = await waitForRestartService(restarted)
-    } catch (error) {
-      if (!(error instanceof KnownRestartBootError)) {
-        throw error
-      }
-      // Wave 6 defect: after a crash with a sent dispatch the boot can fail with
-      // orch.executor_unavailable. One restart retry tolerates that known flake; any other
-      // setup failure still reaches the test as unexpected.
-      const failedPids = await appServerPidsUnder(restarted.pid)
-      knownServicePids = [...new Set([...knownServicePids, ...failedPids])]
-      await closeLaunchedApp(restarted)
-      app = null
-      const signalGroup = (pid: number, signal: NodeJS.Signals) => {
-        try {
-          process.kill(process.platform === 'win32' ? pid : -pid, signal)
-        } catch {
-          // Already gone.
-        }
-      }
-      for (const pid of failedPids) {
-        signalGroup(pid, 'SIGTERM')
-      }
-      await new Promise(resolve => setTimeout(resolve, 1_500))
-      for (const pid of failedPids) {
-        if (processAlive(pid)) {
-          signalGroup(pid, 'SIGKILL')
-        }
-      }
-      await expect
-        .poll(() => pidsGone(failedPids), {
-          timeout: 30_000,
-          message: 'failed boot app-server pids',
-        })
-        .toBe(true)
-      restarted = await launchRealCodexApp(fixture, killed.userDataDir, claudeEnv)
-      app = restarted
-      serviceAttempt = await waitForRestartService(restarted)
-    }
+    const serviceAttempt = await waitForRestartService(restarted)
     const linkAfter = serviceAttempt.link
     const newServicePids = serviceAttempt.pids
     expect(newServicePids.length).toBeGreaterThanOrEqual(1)
@@ -464,24 +418,24 @@ test.describe('orchestration phase 2 with a real Glimpse restart', () => {
   }, testInfo) => {
     test.setTimeout(300_000)
     const run = await restartMidTurn(testInfo)
-    // Wave 6: the resumed orchestrator has no authoritative idle; a user turn is what would
-    // unblock the pump today. This case pins that the notice stays queued without any input.
-    expect(run.notice.delivery_state, 'notice pending without orchestrator input').toBe('pending')
+    // Wave 6 R1/R2: the crash boot reconciles the run state and the pump reaches an authoritative
+    // idle on its own, so the notice is delivered with no user turn to unblock it.
+    await expect
+      .poll(
+        async () =>
+          (await readNoticesForDispatch(run.userDataDir, run.before.id))?.[0]?.delivery_state ?? '',
+        { timeout: 20_000, message: 'notice delivery without orchestrator input' },
+      )
+      .toBe('delivered')
   })
 
-  // Wave 6 defect: after the restart the resumed orchestrator reports state=unknown,
-  // quality=degraded and source=null; orchestratorReadiness returns hook_stale, noticePump holds
-  // the batch and the notice stays pending. SessionStart resets the run state instead of closing
-  // a turn (AgentRunStateRuntime), so no input means no delivery. This test is the canary until
-  // that card lands; it must flip to a plain pass once the app produces an authoritative idle.
+  // E-02 acceptance canary (wave 6): after the restart the resumed orchestrator reaches idle
+  // without any input, so the outbox delivers the batch on the normal window.
   test('E-02 the notice is delivered after the restart without orchestrator input', async ({
     browserName: _browserName,
   }, testInfo) => {
     test.setTimeout(300_000)
     const run = await restartMidTurn(testInfo)
-    // Only the delivery assertion below is the known failure. Calling test.fail() after the
-    // restart keeps any setup failure (app-server identity, pids, dispatch) unexpected.
-    test.fail()
     await expect
       .poll(
         async () =>

@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { expect } from '@playwright/test'
 import { createTestUserDataDir } from './workspace-canvas.testUtils'
@@ -301,6 +301,11 @@ export interface LaunchedApp {
   stderr: () => string
 }
 
+// The app runs with a throwaway HOME; uv (used by the personal Codex hooks) would rebuild its
+// cache there on every launch. Point it at the runner's shared cache instead.
+const uvCacheDir =
+  process.env['UV_CACHE_DIR'] ?? path.join(process.env['HOME'] ?? homedir(), '.cache', 'uv')
+
 /** Launches the built app on `userDataDir` (reused on restart); CODEX_HOME stays the personal one. */
 export async function launchRealCodexApp(
   fixture: RealCodexFixture,
@@ -311,6 +316,12 @@ export async function launchRealCodexApp(
   const dirs = ['home', 'config', 'cache', 'runtime'].map(name => path.join(dataDir, name))
   await Promise.all(dirs.map(dir => mkdir(dir, { recursive: true, mode: 0o700 })))
   const [home, config, cache, runtime] = dirs
+  // Some personal Codex MCP servers start through `uvx` without the app environment, so they fall
+  // back to `$HOME/.cache/uv`. The symlink keeps that cache shared even when the variable is lost.
+  const homeCache = path.join(home, '.cache')
+  await mkdir(homeCache, { recursive: true, mode: 0o700 })
+  await mkdir(uvCacheDir, { recursive: true }).catch(() => undefined)
+  await symlink(uvCacheDir, path.join(homeCache, 'uv')).catch(() => undefined)
   const baseEnv = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] =>
@@ -331,6 +342,7 @@ export async function launchRealCodexApp(
       XDG_CONFIG_HOME: config,
       XDG_CACHE_HOME: cache,
       XDG_RUNTIME_DIR: runtime,
+      UV_CACHE_DIR: uvCacheDir,
       CODEX_HOME: process.env['CODEX_HOME'] ?? path.join(process.env['HOME'] ?? '', '.codex'),
       PATH: `${fixture.wrapperDir}${path.delimiter}${process.env['PATH'] ?? ''}`,
       OPENCOVE_TEST_WORKSPACE: fixture.workspace,
