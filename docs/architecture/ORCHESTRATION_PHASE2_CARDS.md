@@ -26,6 +26,7 @@ Critério de aceite da fase, vindo do plano: o Claude Code cria dois executores 
 | 3 | F2-08b, F2-09b, F2-11, F2-12, F2-13, F2-17a e F2-17b | F2-08b etapa 1, F2-09b, F2-13 e F2-17a abrem em paralelo; F2-11 e F2-08b etapa 2 abrem depois da etapa 1; F2-17b depois do F2-17a; F2-12 depois do F2-08b inteiro |
 | 4 | F2-14 | Ondas 2 e 3 integradas |
 | 5 | F2-16 | F2-14 e F2-17b integrados |
+| 6 | R1 a R6b | Correções de continuidade da onda 5, antes da fase 3 |
 | Trilha OC | OC-01 | OC-00 entregue; cabe na onda 2 ou 3, sem arquivo em comum com elas |
 
 Ordem da onda 2: o F2-01b vai primeiro. O F2-02b e o F2-02c vêm depois dele e rodam em paralelo, porque os arquivos são disjuntos. Os cards F2-05 a F2-10 seguem, cada um depois das suas dependências.
@@ -273,6 +274,10 @@ Ajuste pela Q2 (11/11/2026):
 - O E-06 aprova hook só por `-c` no processo lançado e tolera o pedido de revisão de hooks do perfil pessoal.
 - O dono do smoke Electron é o card S1. O F2-16 não edita `tests/e2e/orchestration.smoke.spec.ts` nem `orchestration.smoke.helpers.ts`.
 - Depende também de A, B1, B2, C, D1, E e SEC (ver [onda 5](ORCHESTRATION_PHASE2_CARDS_WAVE_5.md#f2-16-ajuste-pela-q2)).
+
+## Onda 6
+
+As correções de continuidade encontradas na onda 5, o lock do writer e os canários virados estão em [onda 6](ORCHESTRATION_PHASE2_CARDS_WAVE_6.md). A onda vem antes da fase 3 e não abre PR (O25).
 
 ## Trilha OC
 
