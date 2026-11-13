@@ -13,8 +13,8 @@ const schedule = (callback: () => void, delayMs: number) => {
   return () => clearTimeout(timer)
 }
 
-async function supervised() {
-  const spawned = await spawnedHarness()
+async function supervised(existing?: Awaited<ReturnType<typeof spawnedHarness>>) {
+  const spawned = existing ?? (await spawnedHarness())
   const { harness } = spawned
   const woken: string[] = []
   const supervisor = createSupervisor({
@@ -100,12 +100,22 @@ describe('supervisor (U-06)', () => {
     expect(kinds(s)).toEqual([])
   })
 
-  it('notices a down executor once per incident', async () => {
+  it('notices a down executor once per incident, and the next death after a recovery', async () => {
     const s = await supervised()
-    const down = { type: 'executor.down', reason: 'exit', exitCode: 1, signal: null } as const
+    const down = {
+      type: 'executor.down',
+      reason: 'process_exit',
+      exitCode: 1,
+      signal: null,
+    } as const
     s.runtime.emit(down)
     await s.settle()
-    s.runtime.emit(down)
+    s.runtime.emit({
+      type: 'executor.down',
+      reason: 'restarts_exhausted',
+      exitCode: null,
+      signal: null,
+    })
     await s.settle()
     expect(kinds(s)).toEqual(['executor_down'])
     s.runtime.emit({ type: 'executor.recovered', sessionRef: 's' })
@@ -113,6 +123,54 @@ describe('supervisor (U-06)', () => {
     s.runtime.emit(down)
     await s.settle()
     expect(kinds(s)).toEqual(['executor_down', 'executor_down'])
+  })
+
+  it('notices a death that arrives before the previous recovery, one notice per incident', async () => {
+    const s = await supervised()
+    const died = async () => {
+      s.runtime.emit({ type: 'executor.down', reason: 'process_exit', exitCode: 1, signal: null })
+      await s.settle()
+    }
+    const recovered = async () => {
+      s.runtime.emit({ type: 'executor.recovered', sessionRef: 's' })
+      await s.settle()
+    }
+    await died()
+    await recovered()
+    await died()
+    await recovered()
+    await died()
+    await died()
+    s.runtime.emit({
+      type: 'executor.down',
+      reason: 'restarts_exhausted',
+      exitCode: null,
+      signal: null,
+    })
+    await s.settle()
+    expect(kinds(s)).toEqual(['executor_down', 'executor_down', 'executor_down', 'executor_down'])
+  })
+
+  it('does not reuse the death key of a previous supervisor over the same outbox', async () => {
+    const first = await supervised()
+    first.runtime.emit({
+      type: 'executor.down',
+      reason: 'process_exit',
+      exitCode: 1,
+      signal: null,
+    })
+    await first.settle()
+    expect(kinds(first)).toEqual(['executor_down'])
+    first.cancel()
+    const second = await supervised(first)
+    second.runtime.emit({
+      type: 'executor.down',
+      reason: 'process_exit',
+      exitCode: 1,
+      signal: null,
+    })
+    await second.settle()
+    expect(kinds(second)).toEqual(['executor_down', 'executor_down'])
   })
 
   it('notices a dispatch past its deadline once, and not after it completed', async () => {

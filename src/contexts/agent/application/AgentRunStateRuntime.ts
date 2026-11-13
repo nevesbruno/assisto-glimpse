@@ -126,13 +126,19 @@ export class AgentRunStateRuntime {
   }
 
   metadata(event: TerminalSessionMetadataEvent): void {
-    const provider = event.agentProvider ?? event.terminalAgentActivity?.provider
-    if (!provider) {
-      return
-    }
     const existing = this.sessions.get(event.sessionId)
     if (existing?.mirrored) {
       this.applyBinding(event.sessionId)
+      return
+    }
+    const providerSessionStart = this.isProviderSessionStart(event, existing)
+    const provider =
+      event.agentProvider ??
+      event.terminalAgentActivity?.provider ??
+      (providerSessionStart
+        ? this.registry.get({ sessionId: event.sessionId })?.provider
+        : undefined)
+    if (!provider) {
       return
     }
     const incarnation =
@@ -175,9 +181,62 @@ export class AgentRunStateRuntime {
     const pending = this.pending.get(event.sessionId)
     this.pending.delete(event.sessionId)
     pending?.forEach(observation => this.observe(observation))
+    if (providerSessionStart) {
+      this.observeSessionStart(event.sessionId, provider, session)
+    }
     if (event.terminalAgentActivity?.phase === 'exited') {
       this.exit(event.sessionId)
     }
+  }
+
+  /**
+   * A metadata event carrying a provider session id can close the unobserved initial state of an
+   * invocation: the managed launch registered the session without evidence, and the first
+   * SessionStart identity proves the agent is at the prompt. It never overrides evidence.
+   */
+  private isProviderSessionStart(
+    event: TerminalSessionMetadataEvent,
+    existing: { remote: boolean } | undefined,
+  ): boolean {
+    if (!existing || event.resumeSessionId === null) {
+      return false
+    }
+    const current = this.registry.get({ sessionId: event.sessionId })
+    return current?.state === 'unknown' && current.source === null
+  }
+
+  /**
+   * The first SessionStart identity of a new invocation proves the agent is at the prompt. It
+   * closes the turn a crash left unobserved; the outcome is unknown because no provider reply
+   * proves it.
+   */
+  private observeSessionStart(
+    sessionId: string,
+    provider: AgentProviderId,
+    session: { incarnation: string; sequence: number; remote: boolean },
+  ): void {
+    const source =
+      provider === 'claude-code'
+        ? 'claude_hook'
+        : provider === 'codex'
+          ? 'codex_hook'
+          : provider === 'pi'
+            ? 'pi_hook'
+            : null
+    if (!source || session.remote) {
+      return
+    }
+    this.registry.observe(sessionId, {
+      incarnation: session.incarnation,
+      sourceSequence: ++session.sequence,
+      source,
+      observedAt: this.now(),
+      state: 'idle',
+      hookEventName: 'SessionStart',
+      // The first SessionStart of a new invocation closes the turn the crash left unobserved;
+      // the outcome is unknown because no provider reply proves it.
+      boundary: { kind: 'end', outcome: 'unknown' },
+    })
   }
 
   private mirror(event: TerminalSessionStateEvent): void {

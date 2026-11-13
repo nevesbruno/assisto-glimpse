@@ -3,6 +3,7 @@ import type { AgentLink } from '../domain/agentLink'
 import { sanitizeExcerpt } from '../domain/noticeComposer'
 import { reconcileDeletedNodes } from './nodeDeletion'
 import { executorHealthOf } from './executorHealth'
+import { relaunchExecutorTuiOnSlot } from './executorTuiRelaunch'
 import { enqueueNotice, failOpenDispatch, settleDispatch } from './linkLifecycle'
 import type { ExecutorSlot, OrchestrationContext } from './OrchestrationService'
 import type { ExecutorRuntimeEvent, ExecutorTurnSnapshot, FindTurnResult } from './ports'
@@ -103,32 +104,61 @@ async function reconcileLink(ctx: OrchestrationContext, link: AgentLink): Promis
     return
   }
   const slot = ctx.slotOf(link.executorNodeId)
-  try {
-    await restartLinkedService(ctx, link)
-  } catch {
-    ctx.onRuntimeEvent(slot, { type: 'service.unavailable' })
+  let startFailure: unknown = null
+  // A retry after a partially failed boot must not replace a service that already came up.
+  if (!slot.runtime || executorHealthOf(slot.health) === 'unavailable') {
+    try {
+      await restartLinkedService(ctx, link)
+    } catch (error) {
+      startFailure = error
+      ctx.onRuntimeEvent(slot, { type: 'service.unavailable' })
+    }
   }
   const open = await ctx.deps.dispatches.findInFlightByExecutor(link.executorNodeId)
-  if (!open) {
-    return
+  if (open) {
+    if (executorHealthOf(slot.health) === 'unavailable') {
+      await failOpenDispatch(ctx, open)
+    } else {
+      await resolveInFlight(ctx, slot, open)
+    }
   }
-  if (executorHealthOf(slot.health) === 'unavailable') {
-    await failOpenDispatch(ctx, open)
-    return
+  // The dispatch is already settled fail-closed; the throw only asks the boot to retry the
+  // service start with backoff instead of staying degraded until the next incident.
+  if (startFailure) {
+    throw startFailure
   }
-  await resolveInFlight(ctx, slot, open)
 }
 
-/** Steps 1 to 6 of the restart reconciliation; the pump only runs after the last one. */
+/** One failing link never stops the others; the boot still learns that a step failed. */
+async function eachLink(
+  ctx: OrchestrationContext,
+  list: readonly AgentLink[],
+  task: (link: AgentLink) => Promise<void>,
+): Promise<void> {
+  const results = await Promise.allSettled(
+    list.map(link => ctx.runExclusive(link.executorNodeId, () => task(link))),
+  )
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  )
+  if (failure) {
+    throw failure.reason
+  }
+}
+
+/** Steps 1 to 6 of the restart reconciliation; the pump always opens, degraded or not. */
 export async function reconcileOnBoot(ctx: OrchestrationContext): Promise<void> {
-  const each = (list: readonly AgentLink[], task: (link: AgentLink) => Promise<void>) =>
-    Promise.all(list.map(link => ctx.runExclusive(link.executorNodeId, () => task(link))))
-  const links = await ctx.deps.links.listActive()
-  await each(links, link => markReservedUncertain(ctx, link.executorNodeId))
-  await ctx.deps.reapOrphanServices?.(links)
-  await reconcileDeletedNodes(ctx)
-  await each(await ctx.deps.links.listActive(), link => reconcileLink(ctx, link))
-  await ctx.finishBoot()
+  try {
+    const links = await ctx.deps.links.listActive()
+    await eachLink(ctx, links, link => markReservedUncertain(ctx, link.executorNodeId))
+    await ctx.deps.reapOrphanServices?.(links)
+    await reconcileDeletedNodes(ctx)
+    await eachLink(ctx, await ctx.deps.links.listActive(), link => reconcileLink(ctx, link))
+  } finally {
+    // Degraded boot: the pump may open before every step succeeded, because an open dispatch
+    // still blocks its executor and the Worker retries this reconciliation with backoff.
+    await ctx.finishBoot().catch(error => ctx.deps.onBackgroundError?.(error))
+  }
 }
 
 type Incident = Extract<ExecutorRuntimeEvent, { type: 'executor.down' | 'executor.recovered' }>
@@ -152,5 +182,12 @@ export async function handleExecutorIncident(
     await resolveInFlight(ctx, slot, open)
   }
   await ctx.deps.runState.recordExecutorRecovered(slot.executorNodeId)
+  // The boot has its own relaunch step; only an incident after boot owns the TUI here. The slot
+  // is already held by the routed event, so the unlocked body avoids re-entering the queue.
+  if (ctx.bootDone()) {
+    await relaunchExecutorTuiOnSlot(ctx, slot.executorNodeId).catch(error =>
+      ctx.deps.onBackgroundError?.(error),
+    )
+  }
   ctx.onRuntimeEvent(slot, { type: 'reconciliation.finished' })
 }

@@ -78,9 +78,9 @@ export function promptAdmission(
     s.source !== promptHookSource(s.provider) ||
     s.turn ||
     fence.lastTurnEnd?.source !== s.source ||
-    !(s.provider === 'codex' ? ['Stop'] : ['Stop', 'StopFailure']).includes(
-      fence.lastTurnEnd?.hookEventName ?? '',
-    )
+    !(
+      s.provider === 'codex' ? ['Stop', 'SessionStart'] : ['Stop', 'StopFailure', 'SessionStart']
+    ).includes(fence.lastTurnEnd?.hookEventName ?? '')
   ) {
     return { code: 'agent.state_unknown', reason: 'readiness_unobserved' }
   }

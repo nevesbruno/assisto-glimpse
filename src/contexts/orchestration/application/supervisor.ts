@@ -38,10 +38,26 @@ interface NoticeSpec {
   readonly dispatchId?: string
 }
 
+interface IncidentState {
+  /** Monotonic number of deaths seen for the executor, independent of recoveries. */
+  readonly count: number
+  /** Key of the death still in progress; null after `executor.recovered` closes it. */
+  readonly openKey: string | null
+}
+
+/** The runtime reuses the dead service to say the restart budget ran out. */
+const RESTARTS_EXHAUSTED = 'restarts_exhausted'
+
 /** Turns executor events and deadlines into outbox notices; the settle of a dispatch writes its own. */
 export function createSupervisor(deps: SupervisorDeps): Supervisor {
   const timers = new Map<string, () => void>()
-  const incidents = new Map<string, number>()
+  const incidents = new Map<string, IncidentState>()
+  /**
+   * The outbox is durable and dedupes forever, so the monotonic count of one supervisor is not
+   * enough: a later supervisor over the same outbox would repeat the first keys. The scope is
+   * the identity of this supervisor across the rows already stored.
+   */
+  const incidentScope = deps.ids.uuid()
   const approvalDelayMs = deps.approvalDelayMs ?? APPROVAL_NOTICE_DELAY_MS
 
   const cancel = (key: string): void => {
@@ -105,6 +121,22 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     })
   }
 
+  /**
+   * Each death opens an incident with a key that never repeats, even when the next death
+   * arrives before `executor.recovered`. The exhausted signal of the runtime closes the one
+   * already open, so it reuses the key and the outbox drops the repeated notice.
+   */
+  function incidentKey(id: string, reason: string): string {
+    const previous = incidents.get(id)
+    if (reason === RESTARTS_EXHAUSTED && previous?.openKey) {
+      return previous.openKey
+    }
+    const count = (previous?.count ?? 0) + 1
+    const openKey = `down:${id}:${incidentScope}:${count}`
+    incidents.set(id, { count, openKey })
+    return openKey
+  }
+
   async function react(link: AgentLink, event: ExecutorRuntimeEvent): Promise<void> {
     const id = link.executorNodeId
     switch (event.type) {
@@ -120,12 +152,16 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
       case 'executor.down':
         await enqueue(link, {
           kind: 'executor_down',
-          dedupeKey: `down:${id}:${incidents.get(id) ?? 0}`,
+          dedupeKey: incidentKey(id, event.reason),
         })
         return
-      case 'executor.recovered':
-        incidents.set(id, (incidents.get(id) ?? 0) + 1)
+      case 'executor.recovered': {
+        const previous = incidents.get(id)
+        if (previous?.openKey) {
+          incidents.set(id, { count: previous.count, openKey: null })
+        }
         return
+      }
       case 'turn.started':
         if (event.dispatchId) {
           await armDeadline(link, event.dispatchId)

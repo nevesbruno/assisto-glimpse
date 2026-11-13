@@ -89,7 +89,14 @@ describe('lazyOrchestration (F2-14 4b2)', () => {
 })
 
 describe('createOrchestrationBoot (F2-14 4b2)', () => {
-  function bootFixture(over: { active?: string[]; live?: string[]; stopped?: () => boolean } = {}) {
+  function bootFixture(
+    over: {
+      active?: string[]
+      live?: string[]
+      stopped?: () => boolean
+      schedule?: (callback: () => void, delayMs: number) => () => void
+    } = {},
+  ) {
     const calls: string[] = []
     const log = vi.fn()
     const service = {
@@ -114,6 +121,7 @@ describe('createOrchestrationBoot (F2-14 4b2)', () => {
       events,
       log,
       isStopped: over.stopped ?? (() => false),
+      ...(over.schedule ? { schedule: over.schedule } : {}),
     })
     return { run, calls, log, service, events, links }
   }
@@ -152,6 +160,41 @@ describe('createOrchestrationBoot (F2-14 4b2)', () => {
     service.reconcileOnBoot.mockRejectedValueOnce(new Error('db locked'))
     await expect(run()).resolves.toBeUndefined()
     expect(log).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the boot running when the reconciliation fails and retries it with backoff', async () => {
+    const scheduled: { callback: () => void; delayMs: number }[] = []
+    const { run, calls, log, service } = bootFixture({
+      active: ['1'],
+      schedule: (callback, delayMs) => {
+        scheduled.push({ callback, delayMs })
+        return () => undefined
+      },
+    })
+    service.reconcileOnBoot.mockRejectedValueOnce(new Error('orch.executor_unavailable'))
+
+    await run()
+
+    expect(calls).toEqual(['sync', 'poke:orch-1', 'relaunch:1'])
+    expect(log).toHaveBeenCalledWith('orchestration boot step failed', {
+      error: expect.stringContaining('orch.executor_unavailable'),
+    })
+    expect(scheduled).toHaveLength(1)
+    expect(scheduled[0].delayMs).toBe(1_000)
+
+    scheduled[0].callback()
+    await settle()
+
+    expect(service.reconcileOnBoot).toHaveBeenCalledTimes(2)
+    expect(calls).toEqual([
+      'sync',
+      'poke:orch-1',
+      'relaunch:1',
+      'reconcile',
+      'sync',
+      'poke:orch-1',
+      'relaunch:1',
+    ])
   })
 
   it('stops between steps once the composition is disposed', async () => {

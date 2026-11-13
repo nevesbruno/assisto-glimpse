@@ -35,6 +35,8 @@ import {
 import { createCodexOrphanReaper } from '../../../../contexts/orchestration/infrastructure/codex/CodexOrphanReaper'
 import { createOrchestrationBoot } from './composeOrchestrationBoot'
 import { createExecutorTuiLauncher } from './executorTuiLauncher'
+import { withCodexWriterLockRecovery } from './codexWriterLockRuntime'
+import { recoverCodexWriterLock } from '../handlers/codexResumeRecovery'
 
 export const ORCHESTRATION_BUSY_TIMEOUT_MS = 5000
 
@@ -131,6 +133,61 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
     liveSessionOf: nodeId => sessions.liveSessionOf(nodeId)?.sessionId ?? null,
     bindSession: sessions.bindSession,
   })
+  const runtimeFactory = (provider: ExecutorRuntimeProvider) => {
+    const factory = createRuntimeFactory({
+      provider,
+      overrides: { ...codex, resolveExecutable },
+      approvedHooks,
+      getPersistenceStore: input.getPersistenceStore,
+      createCodexFactory: input.createCodexFactory,
+    })
+    if (provider !== 'codex') {
+      return factory
+    }
+    return {
+      probe: () => factory.probe(),
+      start: async spec => {
+        const link = await links.findActiveByExecutor(spec.executorNodeId).catch(() => null)
+        const runtime = await factory.start(spec)
+        try {
+          const self = await runtime.serviceIdentity().catch(() => null)
+          const protectedPids = [
+            ...(await links.listActive())
+              .filter(other => other.id !== link?.id)
+              .map(other => other.servicePid)
+              .filter((pid): pid is number => pid !== null),
+            ...(self === null ? [] : [self.pid]),
+          ]
+          return withCodexWriterLockRecovery(runtime, {
+            recover: async resumeRef => {
+              const recovery = await recoverCodexWriterLock({
+                resumeSessionId: resumeRef,
+                codexHome: spec.env['CODEX_HOME'] ?? process.env['CODEX_HOME'],
+                cwd: spec.cwd,
+                expectedTokenSha256: link?.serviceTokenSha256 ?? null,
+                protectedPids,
+              })
+              const killedPids = 'killedPids' in recovery ? recovery.killedPids : []
+              if (killedPids.length > 0) {
+                input.log('codex writer lock holder ended', {
+                  pids: killedPids.join(','),
+                })
+              }
+              if (recovery.outcome !== 'released') {
+                input.log('codex writer lock held by another process', {
+                  owners: recovery.owners.map(owner => owner.pid).join(','),
+                })
+              }
+              return recovery
+            },
+          })
+        } catch (error) {
+          await runtime.close('restart').catch(() => undefined)
+          throw error
+        }
+      },
+    }
+  }
   const service = new OrchestrationService({
     links,
     dispatches,
@@ -143,14 +200,7 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
     tui,
     runState,
     events: wiring?.events ?? { publishLinksUpdated: () => undefined },
-    runtimeFactory: (provider: ExecutorRuntimeProvider) =>
-      createRuntimeFactory({
-        provider,
-        overrides: { ...codex, resolveExecutable },
-        approvedHooks,
-        getPersistenceStore: input.getPersistenceStore,
-        createCodexFactory: input.createCodexFactory,
-      }),
+    runtimeFactory,
     reapOrphanServices: createCodexOrphanReaper(),
     readLiveNodeIds: createLiveNodeIdsReader(input.getPersistenceStore),
     isStopped: () => stopped,
@@ -174,6 +224,7 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
       log: input.log,
       isStopped: () => stopped,
       ready: input.getPersistenceStore,
+      schedule: input.schedule,
     }),
     dispose: async () => {
       stopped = true

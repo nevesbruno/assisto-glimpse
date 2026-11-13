@@ -33,6 +33,8 @@ export interface ExecutorPolicy {
 
 export interface ExecutorStartSpec {
   readonly executorNodeId: string
+  /** Readable node title; names the provider thread for humans. */
+  readonly title: string
   readonly provider: ExecutorRuntimeProvider
   readonly cwd: string
   readonly env: Readonly<Record<string, string>>

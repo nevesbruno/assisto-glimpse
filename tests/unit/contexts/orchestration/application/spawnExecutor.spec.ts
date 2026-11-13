@@ -9,6 +9,7 @@ import {
   spawnedHarness,
   USER,
   uuidFrom,
+  type FakeRuntime,
 } from './fakes'
 
 const orq = orchestratorPrincipal()
@@ -130,6 +131,27 @@ describe('spawnExecutor (U-02)', () => {
     expect([...harness.links.rows.values()][0]).toMatchObject({
       state: 'closed',
       closeReason: 'spawn_failed',
+    })
+  })
+
+  it('closes the app-server it started when the resume fails and stores no identity', async () => {
+    const harness = await bootedHarness()
+    let started: FakeRuntime | null = null
+    harness.hooks.onRuntimeStart = runtime => {
+      started = runtime
+      runtime.ensureSessionError = codedError('executor.rejected')
+    }
+
+    await expect(
+      harness.service.spawn(orq, { requestId: SPAWN_REQUEST_ID, provider: 'codex' }),
+    ).rejects.toMatchObject({ code: 'orch.executor_unavailable' })
+
+    expect(started!.closes).toEqual(['restart'])
+    expect([...harness.links.rows.values()][0]).toMatchObject({
+      state: 'closed',
+      closeReason: 'spawn_failed',
+      servicePid: null,
+      serviceTokenSha256: null,
     })
   })
 

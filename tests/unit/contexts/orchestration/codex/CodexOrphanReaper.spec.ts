@@ -5,7 +5,11 @@ import { createCodexOrphanReaper } from '../../../../../src/contexts/orchestrati
 const link = (servicePid: number | null, serviceTokenSha256: string | null) =>
   ({ servicePid, serviceTokenSha256 }) as never
 
-function setup(commandLines: Record<number, string | null>, aliveAfterTerm = false) {
+function setup(
+  commandLines: Record<number, string | null>,
+  aliveAfterTerm = false,
+  lockOwnerPids?: readonly number[],
+) {
   const signals: [number, string][] = []
   let alive = true
   const reap = createCodexOrphanReaper({
@@ -18,6 +22,7 @@ function setup(commandLines: Record<number, string | null>, aliveAfterTerm = fal
     },
     isAlive: () => alive,
     sleep: async () => undefined,
+    ...(lockOwnerPids ? { listLockOwnerPids: async () => lockOwnerPids } : {}),
   })
   return { reap, signals }
 }
@@ -51,6 +56,22 @@ describe('CodexOrphanReaper (F2-11)', () => {
       [10, 'SIGTERM'],
       [10, 'SIGKILL'],
     ])
+  })
+
+  it('ends the thread writer lock owner when the stored pid is stale', async () => {
+    const { reap, signals } = setup({ 11: cmd('abc') }, false, [11])
+    await reap([
+      { servicePid: 10, serviceTokenSha256: 'abc', executorSessionRef: 'thread-1' } as never,
+    ])
+    expect(signals).toEqual([[11, 'SIGTERM']])
+  })
+
+  it('never ends a thread writer lock owner whose command line has another hash', async () => {
+    const { reap, signals } = setup({ 11: cmd('zzz') }, false, [11])
+    await reap([
+      { servicePid: null, serviceTokenSha256: 'abc', executorSessionRef: 'thread-1' } as never,
+    ])
+    expect(signals).toEqual([])
   })
 
   it('does not stop at the first failing link', async () => {

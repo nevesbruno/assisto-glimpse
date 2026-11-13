@@ -1,17 +1,23 @@
-import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { promisify } from 'node:util'
+/* oxlint-disable no-await-in-loop -- lock probes and termination polling are sequential by design */
 import { getAppErrorDebugMessage } from '../../../../shared/errors/appError'
-
-const execFileAsync = promisify(execFile)
+import {
+  endProcessGroup,
+  isOwnedCodexWriterLockHolder,
+  isProcessAlive,
+  listCodexWriterLockOwnerPids,
+  readProcessCommandLine,
+  resolveCodexThreadWriterLockPath,
+  type CodexWriterLockOwner,
+} from '../../../../contexts/orchestration/infrastructure/codex/CodexWriterLock'
 
 const DEFAULT_WRITER_LOCK_WAIT_MS = 1_500
 const MAX_WRITER_LOCK_WAIT_MS = 5_000
 const DEFAULT_WRITER_LOCK_POLL_MS = 100
-// Loaded macOS hosts can take well over 500 ms to enumerate open files.
-const LSOF_TIMEOUT_MS = 2_000
+const END_GRACE_MS = 3_000
+const END_POLL_MS = 100
 const ACTIVE_WRITER_PATTERN = /(?:-32600\b|already has an active writer)/iu
+
+export type { CodexWriterLockOwner }
 
 export type CodexWriterLockProbeResult = 'available' | 'occupied' | 'unknown'
 export type CodexWriterLockWaitResult = CodexWriterLockProbeResult | 'timed_out'
@@ -45,34 +51,6 @@ export function resolveCodexWriterLockWaitMs(env: NodeJS.ProcessEnv = process.en
   )
 }
 
-function resolveWriterLockPath(
-  resumeSessionId: string,
-  codexHome: string | undefined,
-): string | null {
-  const normalizedSessionId = resumeSessionId.trim()
-  if (
-    !codexHome ||
-    normalizedSessionId.length === 0 ||
-    normalizedSessionId.includes('/') ||
-    normalizedSessionId.includes('\\') ||
-    normalizedSessionId === '.' ||
-    normalizedSessionId === '..'
-  ) {
-    return null
-  }
-
-  return resolve(codexHome, 'thread-writer-locks', `${normalizedSessionId}.lock`)
-}
-
-function isNoOpenFileResult(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: unknown }).code === 1
-  )
-}
-
 export async function probeCodexWriterLock(options: {
   resumeSessionId: string
   codexHome?: string
@@ -83,24 +61,19 @@ export async function probeCodexWriterLock(options: {
     return 'unknown'
   }
 
-  const lockPath = resolveWriterLockPath(
+  const lockPath = resolveCodexThreadWriterLockPath(
     options.resumeSessionId,
     options.codexHome ?? process.env['CODEX_HOME'],
   )
-  if (!lockPath || !existsSync(lockPath)) {
+  if (!lockPath) {
     return 'available'
   }
 
-  try {
-    const { stdout } = await execFileAsync('lsof', ['-t', '--', lockPath], {
-      timeout: LSOF_TIMEOUT_MS,
-      maxBuffer: 64 * 1024,
-      windowsHide: true,
-    })
-    return stdout.trim().length > 0 ? 'occupied' : 'available'
-  } catch (error) {
-    return isNoOpenFileResult(error) ? 'available' : 'unknown'
+  const ownerPids = await listCodexWriterLockOwnerPids(lockPath)
+  if (ownerPids === null) {
+    return 'unknown'
   }
+  return ownerPids.length > 0 ? 'occupied' : 'available'
 }
 
 export async function waitForCodexWriterLockRelease(options: {
@@ -149,6 +122,151 @@ export async function waitForCodexWriterLockRelease(options: {
   return await poll()
 }
 
+export interface CodexWriterLockRecoveryDeps {
+  readonly listOwnerPids: (lockPath: string) => Promise<readonly number[] | null>
+  readonly readCommandLine: (pid: number) => Promise<string | null>
+  readonly killGroup: (pid: number, signal: NodeJS.Signals) => void
+  readonly isAlive: (pid: number) => boolean
+  readonly sleep: Sleep
+}
+
+export const realCodexWriterLockRecoveryDeps: CodexWriterLockRecoveryDeps = {
+  listOwnerPids: listCodexWriterLockOwnerPids,
+  readCommandLine: readProcessCommandLine,
+  killGroup: endProcessGroup,
+  isAlive: isProcessAlive,
+  sleep: delay,
+}
+
+export interface RecoverCodexWriterLockInput {
+  readonly resumeSessionId: string
+  readonly codexHome?: string
+  readonly cwd: string
+  /** Hash recorded by the link of the service that owned the thread before the crash. */
+  readonly expectedTokenSha256?: string | null
+  /** Services of other active links: holding another thread never makes them a kill target. */
+  readonly protectedPids?: readonly number[]
+  readonly waitMs?: number
+  readonly pollIntervalMs?: number
+}
+
+export type CodexWriterLockRecoveryResult =
+  | { readonly outcome: 'released'; readonly killedPids: readonly number[] }
+  | {
+      readonly outcome: 'held'
+      readonly killedPids: readonly number[]
+      readonly owners: readonly CodexWriterLockOwner[]
+    }
+  | { readonly outcome: 'unknown'; readonly owners: readonly CodexWriterLockOwner[] }
+
+interface ObservedOwner {
+  readonly pid: number
+  readonly commandLine: string | null
+}
+
+async function observeOwners(
+  lockPath: string,
+  deps: CodexWriterLockRecoveryDeps,
+): Promise<ObservedOwner[] | null> {
+  const pids = await deps.listOwnerPids(lockPath)
+  if (pids === null) {
+    return null
+  }
+  return await Promise.all(
+    pids.map(async pid => ({ pid, commandLine: await deps.readCommandLine(pid) })),
+  )
+}
+
+function knownOwners(owners: readonly ObservedOwner[]): CodexWriterLockOwner[] {
+  return owners.flatMap(owner =>
+    owner.commandLine === null ? [] : [{ pid: owner.pid, commandLine: owner.commandLine }],
+  )
+}
+
+async function endOwnedGroup(pid: number, deps: CodexWriterLockRecoveryDeps): Promise<void> {
+  deps.killGroup(pid, 'SIGTERM')
+  const deadline = Date.now() + END_GRACE_MS
+  while (Date.now() < deadline) {
+    if (!deps.isAlive(pid)) {
+      return
+    }
+    await deps.sleep(END_POLL_MS)
+  }
+  if (deps.isAlive(pid)) {
+    deps.killGroup(pid, 'SIGKILL')
+  }
+}
+
+/**
+ * Ends the lock holder only when its command line proves it is a Glimpse app-server of this
+ * project or the remote TUI this app launched for the same thread and cwd; anything else is left
+ * alive and reported. Never falls back to a pattern kill.
+ */
+export async function recoverCodexWriterLock(
+  input: RecoverCodexWriterLockInput,
+  overrides: Partial<CodexWriterLockRecoveryDeps> = {},
+): Promise<CodexWriterLockRecoveryResult> {
+  const deps = { ...realCodexWriterLockRecoveryDeps, ...overrides }
+  const lockPath = resolveCodexThreadWriterLockPath(
+    input.resumeSessionId,
+    input.codexHome ?? process.env['CODEX_HOME'],
+  )
+  if (!lockPath) {
+    return { outcome: 'unknown', owners: [] }
+  }
+
+  let observed = await observeOwners(lockPath, deps)
+  if (observed === null) {
+    return { outcome: 'unknown', owners: [] }
+  }
+
+  const killedPids: number[] = []
+  const matching = observed.filter(
+    owner =>
+      owner.commandLine !== null &&
+      isOwnedCodexWriterLockHolder({
+        pid: owner.pid,
+        commandLine: owner.commandLine,
+        expectedTokenSha256: input.expectedTokenSha256,
+        cwd: input.cwd,
+        protectedPids: input.protectedPids,
+        threadId: input.resumeSessionId,
+      }),
+  )
+  for (const owner of matching) {
+    killedPids.push(owner.pid)
+    await endOwnedGroup(owner.pid, deps)
+  }
+
+  const waitMs = normalizeBoundedInteger(
+    input.waitMs,
+    resolveCodexWriterLockWaitMs(),
+    MAX_WRITER_LOCK_WAIT_MS,
+  )
+  const pollIntervalMs = Math.max(
+    1,
+    normalizeBoundedInteger(
+      input.pollIntervalMs,
+      DEFAULT_WRITER_LOCK_POLL_MS,
+      MAX_WRITER_LOCK_WAIT_MS,
+    ),
+  )
+  const deadline = Date.now() + waitMs
+  while (true) {
+    observed = await observeOwners(lockPath, deps)
+    if (observed === null) {
+      return { outcome: 'unknown', owners: [] }
+    }
+    if (observed.length === 0) {
+      return { outcome: 'released', killedPids }
+    }
+    if (Date.now() >= deadline) {
+      return { outcome: 'held', killedPids, owners: knownOwners(observed) }
+    }
+    await deps.sleep(pollIntervalMs)
+  }
+}
+
 function describeError(error: unknown): string {
   const debugMessage = getAppErrorDebugMessage(
     error instanceof Error || typeof error === 'string' ? error : null,
@@ -172,11 +290,14 @@ export function isCodexActiveWriterError(error: unknown): boolean {
 
 export class CodexWriterLockRecoveryExhaustedError extends Error {
   public readonly cause: unknown
+  public readonly owners: readonly CodexWriterLockOwner[]
 
-  public constructor(cause: unknown) {
-    super(describeError(cause) || 'Codex writer lock remained occupied')
+  public constructor(cause: unknown, owners: readonly CodexWriterLockOwner[] = []) {
+    const detail = owners.length === 0 ? '' : ` (lock owners: ${owners.map(o => o.pid).join(',')})`
+    super((describeError(cause) || 'Codex writer lock remained occupied') + detail)
     this.name = 'CodexWriterLockRecoveryExhaustedError'
     this.cause = cause
+    this.owners = owners
   }
 }
 

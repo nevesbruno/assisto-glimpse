@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolveCodexThreadWriterLockPath } from '../../../src/contexts/orchestration/infrastructure/codex/CodexWriterLock'
 import {
   CodexWriterLockRecoveryExhaustedError,
   isCodexActiveWriterError,
+  recoverCodexWriterLock,
   runCodexResumeWithRetry,
   waitForCodexWriterLockRelease,
   probeCodexWriterLock,
+  type CodexWriterLockRecoveryDeps,
 } from '../../../src/app/main/controlSurface/handlers/codexResumeRecovery'
 
 describe('codex resume writer recovery', () => {
@@ -101,6 +104,311 @@ describe('codex resume writer recovery', () => {
       }),
     ).rejects.toBeInstanceOf(CodexWriterLockRecoveryExhaustedError)
     expect(launch).toHaveBeenCalledTimes(3)
+  })
+
+  it('resolves the default Codex home when CODEX_HOME is absent', () => {
+    expect(resolveCodexThreadWriterLockPath('thread-1', undefined)).toBe(
+      join(homedir(), '.codex', 'thread-writer-locks', 'thread-1.lock'),
+    )
+  })
+
+  describe('recoverCodexWriterLock', () => {
+    const hash = (letter: string) => letter.repeat(64)
+    const appServer = (token: string, cwd = '/work') =>
+      `/bin/codex -c model=x app-server --listen ws://127.0.0.1:9 --ws-auth capability-token ` +
+      `--ws-token-sha256 ${token} -c projects={${JSON.stringify(cwd)}={trust_level="trusted"}}`
+
+    const remoteTui = (
+      options: {
+        threadId?: string
+        cwd?: string
+        url?: string
+        /** `null` omits the token env pair, like a third-party remote client. */
+        tokenEnv?: string | null
+        withRemote?: boolean
+      } = {},
+    ) => {
+      const parts = ['/home/bruno/.local/bin/codex', 'resume', options.threadId ?? 'thread-1']
+      if (options.withRemote ?? true) {
+        parts.push('--remote', options.url ?? 'ws://127.0.0.1:43127')
+        const tokenEnv =
+          options.tokenEnv === undefined ? 'OPENCOVE_EXECUTOR_REMOTE_TOKEN' : options.tokenEnv
+        if (tokenEnv !== null) {
+          parts.push('--remote-auth-token-env', tokenEnv)
+        }
+      }
+      parts.push('-C', options.cwd ?? '/work')
+      return parts.join(' ')
+    }
+
+    function ownerRig(holders: { pid: number; commandLine: string }[]) {
+      const signals: [number, string][] = []
+      const alive = new Set(holders.map(holder => holder.pid))
+      const deps: CodexWriterLockRecoveryDeps = {
+        listOwnerPids: async () =>
+          holders
+            .map(holder => holder.pid)
+            .filter(pid => alive.has(pid))
+            .sort((a, b) => a - b),
+        readCommandLine: async pid =>
+          holders.find(holder => holder.pid === pid)?.commandLine ?? null,
+        killGroup: (pid, signal) => {
+          signals.push([pid, signal])
+          alive.delete(pid)
+        },
+        isAlive: pid => alive.has(pid),
+        sleep: async () => undefined,
+      }
+      return { deps, signals }
+    }
+
+    it('ends the app-server whose hash matches the link and resumes when the lock is released', async () => {
+      const { deps, signals } = ownerRig([{ pid: 77, commandLine: appServer(hash('a')) }])
+
+      await expect(
+        recoverCodexWriterLock(
+          {
+            resumeSessionId: 'thread-1',
+            codexHome: '/codex-home',
+            cwd: '/work',
+            expectedTokenSha256: hash('a'),
+            waitMs: 100,
+          },
+          deps,
+        ),
+      ).resolves.toEqual({ outcome: 'released', killedPids: [77] })
+      expect(signals).toEqual([[77, 'SIGTERM']])
+    })
+
+    it('never ends an app-server of another project even with the expected hash', async () => {
+      const { deps, signals } = ownerRig([{ pid: 77, commandLine: appServer(hash('a'), '/other') }])
+
+      await expect(
+        recoverCodexWriterLock(
+          {
+            resumeSessionId: 'thread-1',
+            codexHome: '/codex-home',
+            cwd: '/work',
+            expectedTokenSha256: hash('a'),
+            waitMs: 0,
+          },
+          deps,
+        ),
+      ).resolves.toMatchObject({ outcome: 'held', killedPids: [] })
+      expect(signals).toEqual([])
+    })
+
+    it('never ends a lock holder whose identity is unknown', async () => {
+      const { deps, signals } = ownerRig([{ pid: 77, commandLine: '/usr/bin/other --lock' }])
+
+      const result = await recoverCodexWriterLock(
+        {
+          resumeSessionId: 'thread-1',
+          codexHome: '/codex-home',
+          cwd: '/work',
+          expectedTokenSha256: hash('a'),
+          waitMs: 0,
+        },
+        deps,
+      )
+      expect(result.outcome).toBe('held')
+      expect(result.outcome === 'held' ? result.owners.map(owner => owner.pid) : []).toEqual([77])
+      expect(signals).toEqual([])
+    })
+
+    it('never ends an app-server of the same project when the link has no token', async () => {
+      const { deps, signals } = ownerRig([{ pid: 77, commandLine: appServer(hash('b')) }])
+
+      await expect(
+        recoverCodexWriterLock(
+          {
+            resumeSessionId: 'thread-1',
+            codexHome: '/codex-home',
+            cwd: '/work',
+            expectedTokenSha256: null,
+            protectedPids: [42],
+            waitMs: 0,
+          },
+          deps,
+        ),
+      ).resolves.toMatchObject({ outcome: 'held', killedPids: [] })
+      expect(signals).toEqual([])
+    })
+
+    it('never ends an app-server whose hash differs from the link, even on the same cwd', async () => {
+      const { deps, signals } = ownerRig([{ pid: 77, commandLine: appServer(hash('b')) }])
+
+      await expect(
+        recoverCodexWriterLock(
+          {
+            resumeSessionId: 'thread-1',
+            codexHome: '/codex-home',
+            cwd: '/work',
+            expectedTokenSha256: hash('a'),
+            waitMs: 0,
+          },
+          deps,
+        ),
+      ).resolves.toMatchObject({
+        outcome: 'held',
+        killedPids: [],
+        owners: [expect.objectContaining({ pid: 77 })],
+      })
+      expect(signals).toEqual([])
+    })
+
+    it('never ends a pid protected by another link even when the hash matches', async () => {
+      const { deps, signals } = ownerRig([{ pid: 42, commandLine: appServer(hash('b')) }])
+
+      await expect(
+        recoverCodexWriterLock(
+          {
+            resumeSessionId: 'thread-1',
+            codexHome: '/codex-home',
+            cwd: '/work',
+            expectedTokenSha256: hash('b'),
+            protectedPids: [42],
+            waitMs: 0,
+          },
+          deps,
+        ),
+      ).resolves.toMatchObject({ outcome: 'held', killedPids: [] })
+      expect(signals).toEqual([])
+    })
+
+    it('never ends an app-server whose cwd only shares a prefix with the project path', async () => {
+      const { deps, signals } = ownerRig([
+        { pid: 77, commandLine: appServer(hash('a'), '/work-other') },
+      ])
+
+      await expect(
+        recoverCodexWriterLock(
+          {
+            resumeSessionId: 'thread-1',
+            codexHome: '/codex-home',
+            cwd: '/work',
+            expectedTokenSha256: hash('a'),
+            waitMs: 0,
+          },
+          deps,
+        ),
+      ).resolves.toMatchObject({ outcome: 'held', killedPids: [] })
+      expect(signals).toEqual([])
+    })
+
+    it('never ends a protected service even when it holds the lock of the same project', async () => {
+      const { deps, signals } = ownerRig([{ pid: 42, commandLine: appServer(hash('b')) }])
+
+      await expect(
+        recoverCodexWriterLock(
+          {
+            resumeSessionId: 'thread-1',
+            codexHome: '/codex-home',
+            cwd: '/work',
+            expectedTokenSha256: null,
+            protectedPids: [42],
+            waitMs: 0,
+          },
+          deps,
+        ),
+      ).resolves.toMatchObject({ outcome: 'held', killedPids: [] })
+      expect(signals).toEqual([])
+    })
+
+    describe('remote TUI holders', () => {
+      const recoverTui = async (
+        commandLine: string,
+        overrides: {
+          protectedPids?: readonly number[]
+          waitMs?: number
+          threadId?: string
+          cwd?: string
+        } = {},
+      ) => {
+        const { deps, signals } = ownerRig([{ pid: 99, commandLine }])
+        const result = await recoverCodexWriterLock(
+          {
+            resumeSessionId: overrides.threadId ?? 'thread-1',
+            codexHome: '/codex-home',
+            cwd: overrides.cwd ?? '/work',
+            expectedTokenSha256: hash('a'),
+            protectedPids: overrides.protectedPids,
+            waitMs: overrides.waitMs ?? 0,
+          },
+          deps,
+        )
+        return { result, signals }
+      }
+
+      it('ends the Glimpse remote TUI of the same thread and cwd', async () => {
+        const { result, signals } = await recoverTui(remoteTui())
+
+        expect(result).toEqual({ outcome: 'released', killedPids: [99] })
+        expect(signals).toEqual([[99, 'SIGTERM']])
+      })
+
+      it('never ends a user TUI of the same thread without the Glimpse remote marker', async () => {
+        const { result, signals } = await recoverTui(remoteTui({ withRemote: false }))
+
+        expect(result).toMatchObject({ outcome: 'held', killedPids: [] })
+        expect(signals).toEqual([])
+      })
+
+      it('never ends a remote TUI of another thread', async () => {
+        const { result, signals } = await recoverTui(remoteTui({ threadId: 'thread-2' }))
+
+        expect(result).toMatchObject({ outcome: 'held', killedPids: [] })
+        expect(signals).toEqual([])
+      })
+
+      it('never ends a remote TUI of another cwd, even one that shares a prefix', async () => {
+        const { result, signals } = await recoverTui(remoteTui({ cwd: '/work-other' }))
+
+        expect(result).toMatchObject({ outcome: 'held', killedPids: [] })
+        expect(signals).toEqual([])
+      })
+
+      it('never ends a remote TUI without the Glimpse token env variable', async () => {
+        const withoutEnv = await recoverTui(remoteTui({ tokenEnv: null }))
+        const otherEnv = await recoverTui(remoteTui({ tokenEnv: 'CODEX_REMOTE_TOKEN' }))
+
+        expect(withoutEnv.result).toMatchObject({ outcome: 'held', killedPids: [] })
+        expect(withoutEnv.signals).toEqual([])
+        expect(otherEnv.result).toMatchObject({ outcome: 'held', killedPids: [] })
+        expect(otherEnv.signals).toEqual([])
+      })
+
+      it('never ends a remote TUI whose endpoint is not loopback', async () => {
+        const { result, signals } = await recoverTui(remoteTui({ url: 'ws://192.168.0.5:43127' }))
+
+        expect(result).toMatchObject({ outcome: 'held', killedPids: [] })
+        expect(signals).toEqual([])
+      })
+
+      it('never ends a remote TUI whose pid another link protects', async () => {
+        const { result, signals } = await recoverTui(remoteTui(), { protectedPids: [99] })
+
+        expect(result).toMatchObject({ outcome: 'held', killedPids: [] })
+        expect(signals).toEqual([])
+      })
+    })
+
+    it('reports unknown when the lock probe fails', async () => {
+      const deps: CodexWriterLockRecoveryDeps = {
+        listOwnerPids: async () => null,
+        readCommandLine: async () => null,
+        killGroup: () => undefined,
+        isAlive: () => false,
+        sleep: async () => undefined,
+      }
+
+      await expect(
+        recoverCodexWriterLock(
+          { resumeSessionId: 'thread-1', codexHome: '/codex-home', cwd: '/work', waitMs: 0 },
+          deps,
+        ),
+      ).resolves.toEqual({ outcome: 'unknown', owners: [] })
+    })
   })
 
   it.skipIf(process.platform !== 'darwin')(

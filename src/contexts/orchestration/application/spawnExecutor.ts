@@ -22,6 +22,7 @@ export interface SpawnInput {
 
 export interface ServiceStart {
   readonly link: AgentLink
+  readonly title: string
   readonly cwd: string
   readonly model: string | null
   readonly version: string
@@ -37,6 +38,7 @@ export async function startExecutorService(
   ctx.onRuntimeEvent(slot, { type: 'service.starting' })
   const runtime = await ctx.deps.runtimeFactory(link.provider as ExecutorRuntimeProvider).start({
     executorNodeId: link.executorNodeId,
+    title: start.title,
     provider: link.provider as ExecutorRuntimeProvider,
     cwd: start.cwd,
     env: {},
@@ -45,24 +47,34 @@ export async function startExecutorService(
     policy: { approvals: 'user', sandbox: null },
   })
   slot.runtime = runtime
-  slot.unsubscribe = runtime.subscribe(event => ctx.onRuntimeEvent(slot, event))
-  const session = await runtime.ensureSession({
-    resumeRef: link.executorSessionRef,
-    fresh: false,
-  })
-  if (session.sessionRef !== link.executorSessionRef) {
-    await updateLink(ctx, link.id, current => ({
-      ...current,
-      executorSessionRef: session.sessionRef,
-    }))
+  try {
+    slot.unsubscribe = runtime.subscribe(event => ctx.onRuntimeEvent(slot, event))
+    const session = await runtime.ensureSession({
+      resumeRef: link.executorSessionRef,
+      fresh: false,
+    })
+    if (session.sessionRef !== link.executorSessionRef) {
+      await updateLink(ctx, link.id, current => ({
+        ...current,
+        executorSessionRef: session.sessionRef,
+      }))
+    }
+    await recordServiceIdentity(ctx, link.id, runtime)
+    ctx.onRuntimeEvent(slot, {
+      type: 'executor.ready',
+      sessionRef: session.sessionRef,
+      resumed: session.resumed,
+      version: start.version,
+    })
+  } catch (error) {
+    // The service this attempt started is already up; the caller retries the start, so nothing
+    // may outlive the attempt and the link keeps the old identity as evidence for the reaper.
+    slot.unsubscribe?.()
+    slot.unsubscribe = null
+    slot.runtime = null
+    await runtime.close('restart').catch(() => undefined)
+    throw error
   }
-  await recordServiceIdentity(ctx, link.id, runtime)
-  ctx.onRuntimeEvent(slot, {
-    type: 'executor.ready',
-    sessionRef: session.sessionRef,
-    resumed: session.resumed,
-    version: start.version,
-  })
 }
 
 /** Starts again the service of an existing link, for boot and for the hooks restart. */
@@ -80,7 +92,13 @@ export async function restartLinkedService(
   if (!probe.compatible) {
     throw new OrchestrationError('orch.protocol_mismatch')
   }
-  await startExecutorService(ctx, { link, cwd: node.cwd, version: probe.version, model: null })
+  await startExecutorService(ctx, {
+    link,
+    title: node.title,
+    cwd: node.cwd,
+    version: probe.version,
+    model: null,
+  })
 }
 
 /** Scoped by orchestrator, like the unique index of the spawn request. */
@@ -178,6 +196,7 @@ async function createLinkedExecutor(
   return {
     link: persisted.link,
     first: persisted.dispatch,
+    title: executor.title,
     cwd: executor.cwd,
     version: probe.version,
   }
@@ -207,10 +226,14 @@ export async function spawnExecutor(
     if (known) {
       return existingSpawn(ctx, known, input)
     }
-    const { link, first, cwd, version } = await createLinkedExecutor(ctx, orchestratorNodeId, input)
+    const { link, first, title, cwd, version } = await createLinkedExecutor(
+      ctx,
+      orchestratorNodeId,
+      input,
+    )
     return ctx.runExclusive(link.executorNodeId, async () => {
       try {
-        await startExecutorService(ctx, { link, cwd, version, model: input.model ?? null })
+        await startExecutorService(ctx, { link, title, cwd, version, model: input.model ?? null })
         await launchTui(ctx, link.executorNodeId)
       } catch (error) {
         await closeExecutorLink(ctx, link, 'spawn_failed', true)

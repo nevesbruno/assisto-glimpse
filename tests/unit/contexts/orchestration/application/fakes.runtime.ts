@@ -26,6 +26,7 @@ export class FakeRuntime implements ExecutorRuntime {
   public readResults = new Map<string, ExecutorTurnSnapshot>()
   public knownApprovals = new Set<string>()
   public startTurnError: (Error & { code: string }) | null = null
+  public ensureSessionError: Error | null = null
   public identity: ExecutorServiceIdentity | null
   public identityError: Error | null = null
   public resumeRefs: (string | null)[] = []
@@ -37,6 +38,9 @@ export class FakeRuntime implements ExecutorRuntime {
 
   public ensureSession = async (input: { resumeRef: string | null; fresh: boolean }) => {
     this.resumeRefs.push(input.resumeRef)
+    if (this.ensureSessionError) {
+      throw this.ensureSessionError
+    }
     return {
       sessionRef: input.resumeRef ?? `session-of-${this.spec.executorNodeId}`,
       resumed: input.resumeRef !== null,

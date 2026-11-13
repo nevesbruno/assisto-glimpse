@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createDispatch,
   type DispatchState,
@@ -60,7 +60,8 @@ async function reboot(state: DispatchState, response: FindTurnResult | 'unavaila
     harness.hooks.onRuntimeStart = runtime => runtime.findResults.set(D, response)
   }
   const service = harness.restart()
-  await service.reconcileOnBoot()
+  // A failed service start is settled fail-closed and then surfaced so the boot retries it.
+  await service.reconcileOnBoot().catch(() => undefined)
   await service.whenIdle()
   const noticeKinds = harness.notices.rows.map(row => row.entry.kind)
   return {
@@ -219,6 +220,39 @@ describe('reconcileOnBoot matrix', () => {
     expect(harness.dispatches.rows.get(D)?.state).toBe('sent')
   })
 
+  it('closes the service it started on a failed resume and keeps the old identity for the reaper', async () => {
+    const { harness, linkId, executorNodeId } = await spawnedHarness()
+    const before = harness.links.rows.get(linkId)!
+    harness.hooks.onRuntimeStart = runtime => {
+      runtime.ensureSessionError = codedError('executor.rejected')
+    }
+    const service = harness.restart()
+
+    await service.reconcileOnBoot().catch(() => undefined)
+    await service.whenIdle()
+
+    expect(harness.runtimes.get(executorNodeId)!.closes).toEqual(['restart'])
+    expect(harness.links.rows.get(linkId)).toMatchObject({
+      state: 'active',
+      servicePid: before.servicePid,
+      serviceTokenSha256: before.serviceTokenSha256,
+    })
+  })
+
+  it('opens the pump even when a boot step throws (wave 6 I5)', async () => {
+    const { harness } = await spawnedHarness()
+    const service = harness.restart()
+    const finishBoot = vi.spyOn(service, 'finishBoot')
+    ;(service as unknown as { deps: { reapOrphanServices: unknown } }).deps.reapOrphanServices =
+      async () => {
+        throw new Error('orch.executor_unavailable')
+      }
+
+    await expect(service.reconcileOnBoot()).rejects.toThrow('orch.executor_unavailable')
+
+    expect(finishBoot).toHaveBeenCalledTimes(1)
+  })
+
   it('reserved becomes uncertain before any answer and orphans are reaped before the start', async () => {
     const calls: string[] = []
     const { harness, linkId } = await spawnedHarness()
@@ -262,6 +296,13 @@ describe('executor incident after boot', () => {
     runtime.emit({ type: 'executor.recovered', sessionRef: 's' })
     await harness.service.whenIdle()
     expect(harness.runState.recordExecutorRecovered).toEqual([[executorNodeId]])
+  })
+
+  it('executor.recovered relaunches the TUI of the same node after boot (wave 6 R1)', async () => {
+    const { harness, runtime, executorNodeId } = await spawnedHarness()
+    runtime.emit({ type: 'executor.recovered', sessionRef: 's' })
+    await harness.service.whenIdle()
+    expect(harness.tuiRelaunches).toEqual([executorNodeId])
   })
 
   it('executor.down does not feed the recovery', async () => {
