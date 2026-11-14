@@ -46,7 +46,10 @@ export class ClaudeCodeAgentProviderContribution implements AgentProviderContrib
         mode: command.mode,
         prompt: command.prompt,
         model: command.model,
-        resumeSessionId: command.mode === 'new' ? randomUUID() : command.resumeSessionId,
+        resumeSessionId:
+          command.mode === 'new'
+            ? (command.sessionIdOverride?.trim() ?? '') || randomUUID()
+            : command.resumeSessionId,
         agentFullAccess: command.agentFullAccess,
         injectedArgs: telemetry.args,
       })

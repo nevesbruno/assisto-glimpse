@@ -30,6 +30,7 @@ export interface AgentRuntimeLaunchResult {
   runtimeKind: TerminalRuntimeKind | undefined
   effectiveModel: string | null
   resumeSessionId: string | null
+  launchMode: 'new' | 'resume'
   startedAt: string
   executionDirectory: string
   terminalGeometry: { cols: number; rows: number }
@@ -145,6 +146,7 @@ export async function launchAgentRuntime({
       runtimeKind: launched.runtimeKind ?? undefined,
       effectiveModel: launched.effectiveModel,
       resumeSessionId: mode === 'resume' ? resumeSessionId : (launched.resumeSessionId ?? null),
+      launchMode: launched.launchMode ?? mode,
       startedAt: launched.startedAt,
       executionDirectory: launched.executionContext.workingDirectory,
       terminalGeometry: launchGeometry.terminalGeometry,
@@ -179,6 +181,7 @@ export async function launchAgentRuntime({
     runtimeKind: launched.runtimeKind,
     effectiveModel: launched.effectiveModel,
     resumeSessionId: mode === 'resume' ? resumeSessionId : (launched.resumeSessionId ?? null),
+    launchMode: launched.launchMode ?? mode,
     startedAt: new Date().toISOString(),
     executionDirectory,
     terminalGeometry: launchGeometry.terminalGeometry,

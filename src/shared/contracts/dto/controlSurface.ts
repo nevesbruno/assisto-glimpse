@@ -1,4 +1,4 @@
-import type { AgentProviderId } from './agent'
+import type { AgentLaunchMode, AgentProviderId } from './agent'
 import type { TerminalPtyGeometry, TerminalRuntimeKind } from './terminal'
 import type { PresentationSnapshotTerminalResult } from './terminal'
 import type { WorkerEndpointKindDto } from './topology'
@@ -264,6 +264,7 @@ export interface LaunchAgentSessionResult {
   profileId: string | null
   runtimeKind: TerminalRuntimeKind | null
   resumeSessionId: string | null
+  launchMode: AgentLaunchMode
   effectiveModel: string | null
   command: string
   args: string[]

@@ -3,7 +3,9 @@ import type { TerminalDiagnosticsLogInput } from '@shared/contracts/dto'
 import { hasVisibleTerminalBufferContent } from './terminalRuntimeDiagnostics'
 import { createRestoredAgentVisibleOutputObserver } from './useTerminalRuntimeSession.support'
 
-type RevealReason = 'hydration_revealed' | 'visible_output'
+type RevealReason = 'hydration_revealed' | 'visible_output' | 'timeout'
+
+const RESTORED_AGENT_REVEAL_TIMEOUT_MS = 3_000
 
 export function createRestoredAgentVisibilityGate({
   terminal,
@@ -29,7 +31,25 @@ export function createRestoredAgentVisibilityGate({
   log: (event: string, details?: TerminalDiagnosticsLogInput['details']) => void
 }) {
   let isAwaitingAgentVisibleOutput = false
+  let revealTimeoutHandle: number | null = null
   const hasVisibleOutput = () => hasVisibleTerminalBufferContent(terminal)
+  const clearRevealTimeout = (): void => {
+    if (revealTimeoutHandle === null) {
+      return
+    }
+
+    window.clearTimeout(revealTimeoutHandle)
+    revealTimeoutHandle = null
+  }
+  const scheduleRevealTimeout = (): void => {
+    clearRevealTimeout()
+    revealTimeoutHandle = window.setTimeout(() => {
+      revealTimeoutHandle = null
+      if (isAwaitingAgentVisibleOutput) {
+        revealRuntimeTerminal('timeout')
+      }
+    }, RESTORED_AGENT_REVEAL_TIMEOUT_MS)
+  }
   const revealRuntimeTerminal = (reason: RevealReason): void => {
     if (isDisposed()) {
       return
@@ -37,6 +57,7 @@ export function createRestoredAgentVisibilityGate({
 
     const wasAwaitingAgentVisibleOutput = isAwaitingAgentVisibleOutput
     isAwaitingAgentVisibleOutput = false
+    clearRevealTimeout()
     visibleOutputObserver.stopWaiting()
     if (shouldAwaitAgentVisibleOutput) {
       protectVisibleBaseline()
@@ -67,6 +88,7 @@ export function createRestoredAgentVisibilityGate({
       if (shouldAwaitAgentVisibleOutput && !hasVisibleOutput()) {
         isAwaitingAgentVisibleOutput = true
         visibleOutputObserver.beginWaiting()
+        scheduleRevealTimeout()
         scheduleTranscriptSync()
         reportThemeMode()
         log('agent-visible-output-wait', { reason: 'empty_hydration_baseline' })
@@ -90,6 +112,7 @@ export function createRestoredAgentVisibilityGate({
       }
     },
     dispose: () => {
+      clearRevealTimeout()
       visibleOutputObserver.dispose()
     },
   }

@@ -191,6 +191,7 @@ describe('workspaceAgentLaunch.shared', () => {
     expect(launched).toEqual({
       sessionId: 'session-2',
       resumeSessionId: null,
+      launchMode: 'new',
       profileId: 'profile-1',
       runtimeKind: 'posix',
       effectiveModel: 'gpt-5.2-codex',
@@ -268,6 +269,7 @@ describe('workspaceAgentLaunch.shared', () => {
       const response = {
         sessionId: 'runtime-a',
         resumeSessionId: 'claude-a',
+        launchMode: 'new',
         profileId: null,
         effectiveModel: null,
         executionContext: {
@@ -300,6 +302,7 @@ describe('workspaceAgentLaunch.shared', () => {
         retryResolveMountBinding: async () => ({ mountId: 'mount-a', executionDirectory: '/repo' }),
       })
       expect(launched.resumeSessionId).toBe('claude-a')
+      expect(launched.launchMode).toBe('new')
     },
   )
 })

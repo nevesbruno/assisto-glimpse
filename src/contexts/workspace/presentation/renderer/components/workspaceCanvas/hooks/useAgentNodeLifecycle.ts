@@ -280,7 +280,7 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
 
               const nextAgentData: AgentNodeData = {
                 ...launchData,
-                launchMode: mode,
+                launchMode: launched.launchMode,
                 effectiveModel: launched.effectiveModel,
                 executionDirectory: launched.executionDirectory,
                 expectedDirectory: mountId
@@ -288,8 +288,8 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
                   : requestedExpectedDirectory,
                 ...resolveLaunchedAgentResumeBinding(
                   launchData.provider,
-                  mode,
-                  mode === 'resume' ? requestedResumeSessionId : launched.resumeSessionId,
+                  launched.launchMode,
+                  launched.resumeSessionId,
                 ),
               }
 

@@ -65,6 +65,11 @@ export interface CreateAgentLaunchPlanCommand {
   } | null
   readonly prompt?: string
   readonly resumeSessionId: string | null
+  /**
+   * Explicit conversation id for a fresh launch. Claude uses it as --session-id instead of
+   * generating a new UUID; other providers ignore it.
+   */
+  readonly sessionIdOverride?: string | null
   readonly workspaceDirectory: string
 }
 

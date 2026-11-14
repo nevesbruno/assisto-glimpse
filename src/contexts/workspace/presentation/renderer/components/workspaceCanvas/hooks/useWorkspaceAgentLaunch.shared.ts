@@ -27,6 +27,7 @@ export interface WorkspaceAgentLaunchBinding {
 export interface WorkspaceAgentSessionLaunchResult {
   sessionId: string
   resumeSessionId: string | null
+  launchMode: 'new' | 'resume'
   profileId: string | null
   runtimeKind: TerminalRuntimeKind | undefined
   effectiveModel: string | null
@@ -317,6 +318,7 @@ export async function launchWorkspaceAgentSession({
       return {
         sessionId: launched.sessionId,
         resumeSessionId: launched.resumeSessionId ?? null,
+        launchMode: launched.launchMode ?? mode,
         profileId: launched.profileId ?? null,
         runtimeKind: launched.runtimeKind ?? undefined,
         effectiveModel: launched.effectiveModel,
@@ -347,6 +349,7 @@ export async function launchWorkspaceAgentSession({
       return {
         sessionId: launched.sessionId,
         resumeSessionId: launched.resumeSessionId ?? null,
+        launchMode: launched.launchMode ?? mode,
         profileId: launched.profileId ?? null,
         runtimeKind: launched.runtimeKind ?? undefined,
         effectiveModel: launched.effectiveModel,
@@ -389,6 +392,7 @@ export async function launchWorkspaceAgentSession({
     return {
       sessionId: launched.sessionId,
       resumeSessionId: launched.resumeSessionId ?? null,
+      launchMode: launched.launchMode ?? mode,
       profileId: launched.profileId ?? null,
       runtimeKind: launched.runtimeKind ?? undefined,
       effectiveModel: launched.effectiveModel,
@@ -422,6 +426,7 @@ export async function launchWorkspaceAgentSession({
   return {
     sessionId: launched.sessionId,
     resumeSessionId: launched.resumeSessionId ?? null,
+    launchMode: launched.launchMode ?? mode,
     profileId: launched.profileId ?? null,
     runtimeKind: launched.runtimeKind,
     effectiveModel: launched.effectiveModel,

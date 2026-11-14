@@ -151,7 +151,7 @@ export async function resumeTaskAgentSessionAction(
         prompt: record.prompt,
         model: record.model,
         effectiveModel: launched.effectiveModel,
-        launchMode: 'resume',
+        launchMode: launched.launchMode,
         resumeSessionId: record.resumeSessionId,
         resumeSessionIdVerified: true,
         executionDirectory: launched.executionDirectory,
