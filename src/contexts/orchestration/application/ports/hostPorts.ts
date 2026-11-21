@@ -7,6 +7,8 @@ export interface ExecutorNodeInfo {
   readonly provider: string
   readonly title: string
   readonly cwd: string | null
+  /** Conversation bound to the node, read from the live session first and from the stored resume id after. */
+  readonly sessionRef: string | null
 }
 
 export interface CreateExecutorNodeInput {

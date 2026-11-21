@@ -216,13 +216,22 @@ export async function snapshotFixture(
   })
   const registry = createTestAgentProviderRegistry()
   Object.assign(registry.require('claude-code').launcher, {
-    createLaunchPlan: async (input: { mode: string; resumeSessionId: string }) => ({
+    createLaunchPlan: async (input: {
+      mode: string
+      resumeSessionId: string
+      sessionIdOverride?: string | null
+    }) => ({
       command: '/bin/sh',
       args: [],
       env: {},
       effectiveModel: null,
       launchMode: input.mode,
-      resumeSessionId: input.mode === 'resume' ? input.resumeSessionId : 'new-conversation',
+      // The real Claude planner keeps the requested conversation id when a missing
+      // transcript turns a resume into a new launch, so the binding never changes.
+      resumeSessionId:
+        input.mode === 'resume'
+          ? input.resumeSessionId
+          : (input.sessionIdOverride?.trim() ?? '') || 'new-conversation',
     }),
   })
   const deps = {

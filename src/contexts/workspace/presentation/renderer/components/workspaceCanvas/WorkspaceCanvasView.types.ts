@@ -1,5 +1,5 @@
 import type * as React from 'react'
-import type { Edge, Node, NodeTypes, OnNodesChange, Viewport } from '@xyflow/react'
+import type { Edge, EdgeTypes, Node, NodeTypes, OnNodesChange, Viewport } from '@xyflow/react'
 import type { WorkspacePathOpenerId } from '@shared/contracts/dto'
 import type { LabelColor, NodeLabelColorOverride } from '@shared/types/labelColor'
 import type {
@@ -16,6 +16,7 @@ import type {
 import type { WorkspaceArrangeStyle } from '../../utils/workspaceArrange'
 import type { SpaceExplorerOpenDocumentBlock } from './hooks/useSpaceExplorer.guards'
 import type {
+  OrchestrationConnectPromptRenderInput,
   SpaceVisual,
   SpaceWorktreeMismatchDropWarningState,
   SpaceWorktreeOperationPhase,
@@ -26,6 +27,7 @@ import type {
 import type { SpaceExplorerClipboardItem } from './view/WorkspaceSpaceExplorerOverlay.operations'
 import type { WorkspaceCanvasActionKind } from './view/WorkspaceCanvasActionBar'
 import type { CanvasLod } from './view/canvasLod'
+import type { OrchestrationConnectApi } from './hooks/useOrchestrationConnect'
 
 export interface WorkspaceCanvasViewProps {
   workspaceId: string
@@ -51,12 +53,19 @@ export interface WorkspaceCanvasViewProps {
   resolveDropTargetLabel: (point: { x: number; y: number }) => string | null
   nodes: Node<TerminalNodeData>[]
   edges: Edge[]
+  edgeTypes: EdgeTypes
   nodeTypes: NodeTypes
   onNodesChange: OnNodesChange<Node<TerminalNodeData>>
   onPaneClick: (event: React.MouseEvent | MouseEvent) => void
   onPaneContextMenu: (event: React.MouseEvent | MouseEvent) => void
   onNodeClick: (event: React.MouseEvent, node: Node<TerminalNodeData>) => void
   onNodeContextMenu: (event: React.MouseEvent, node: Node<TerminalNodeData>) => void
+  onEdgeClick: (event: React.MouseEvent, edge: Edge) => void
+  orchestrationConnect: OrchestrationConnectApi
+  renderOrchestrationConnectPrompt?: (
+    input: OrchestrationConnectPromptRenderInput,
+  ) => React.ReactNode
+  clearOrchestrationLinkSelection: () => void
   onSelectionContextMenu: (event: React.MouseEvent, selectedNodes: Node<TerminalNodeData>[]) => void
   onNodeDragStart: (
     event: React.MouseEvent,

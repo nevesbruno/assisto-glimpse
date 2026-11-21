@@ -294,13 +294,13 @@ it('keeps the foreign project closed outside the lineage subtree', async () => {
   expect(await f.invoke('agent.get', { nodeId: stranger })).toBeNull()
 
   const listed = await f.invoke<ListSpacesResult>('space.list', { projectId: projectB })
-  const listedNodeIds = listed.spaces.flatMap(space => space.nodes.map(node => node.id))
+  const listedNodeIds = listed.spaces.flatMap(space => space.nodes.map(child => child.id))
   expect(listedNodeIds).toEqual(expect.arrayContaining([childB, noteB]))
   expect(listedNodeIds).not.toContain(stranger)
 
   const got = await f.invoke<GetSpaceResult>('space.get', { spaceId: spaceB })
-  expect(got.space.nodes.map(node => node.id)).toEqual(expect.arrayContaining([childB, noteB]))
-  expect(got.space.nodes.map(node => node.id)).not.toContain(stranger)
+  expect(got.space.nodes.map(child => child.id)).toEqual(expect.arrayContaining([childB, noteB]))
+  expect(got.space.nodes.map(child => child.id)).not.toContain(stranger)
 })
 
 it.each(['node', 'agent'] as const)(

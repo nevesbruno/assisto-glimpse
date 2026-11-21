@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { bootedHarness, codedError, ORCHESTRATOR, orchestratorPrincipal, USER } from './fakes'
 
 const EXECUTOR = 'exec-manual'
+const DISPATCH_ID = '22222222-2222-4222-8222-222222222221'
 
 async function harnessWithNodes() {
   const harness = await bootedHarness()
@@ -98,5 +99,43 @@ describe('createLink (orch.link.create)', () => {
       closeReason: 'spawn_failed',
     })
     expect(harness.tuiRelaunches).toEqual([])
+  })
+})
+
+describe('orch.link.close with a dispatch in flight (A-06)', () => {
+  async function linkedWithRunningDispatch() {
+    const { harness, input } = await harnessWithNodes()
+    await harness.service.createLink(USER, input)
+    await harness.service.dispatch(orchestratorPrincipal(), {
+      dispatchId: DISPATCH_ID,
+      to: EXECUTOR,
+      text: 'do it',
+    })
+    await harness.service.whenIdle()
+    expect(harness.dispatches.rows.get(DISPATCH_ID)?.state).toBe('sent')
+    return harness
+  }
+
+  it('refuses without force, then force fails the turn as executor_down and closes the service', async () => {
+    const harness = await linkedWithRunningDispatch()
+    await expect(harness.service.close(USER, { to: EXECUTOR })).rejects.toMatchObject({
+      code: 'orch.dispatch_in_flight',
+      blocking: { dispatchId: DISPATCH_ID, state: 'sent', round: 1 },
+    })
+    expect(harness.dispatches.rows.get(DISPATCH_ID)?.state).toBe('sent')
+    expect(harness.links.rows.size).toBe(1)
+    expect(harness.links.rows.get([...harness.links.rows.keys()][0])?.state).toBe('active')
+
+    await harness.service.close(USER, { to: EXECUTOR, force: true })
+    expect(harness.dispatches.rows.get(DISPATCH_ID)).toMatchObject({
+      state: 'failed',
+      reason: 'executor_down',
+    })
+    expect(harness.links.rows.get([...harness.links.rows.keys()][0])).toMatchObject({
+      state: 'closed',
+      closeReason: 'user',
+    })
+    expect(harness.runtimes.get(EXECUTOR)?.closes).toEqual(['user'])
+    expect(harness.tuiRetired).toEqual([EXECUTOR])
   })
 })

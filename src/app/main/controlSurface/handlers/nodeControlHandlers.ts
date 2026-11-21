@@ -248,8 +248,10 @@ export function registerNodeControlHandlers(
     handle: async (ctx, input) => {
       const { store, locatorDeps } = await withDeps(ctx)
       const scope = grantProjectOf(ctx)
-      const foreign =
-        scope !== undefined && input.projectId !== undefined && input.projectId !== scope
+      // normalizeListPayload writes `projectId: null` when the caller omits it, so a null
+      // request is the grant's own project, never a foreign one.
+      const requestedProject = input.projectId ?? null
+      const foreign = scope !== undefined && requestedProject !== null && requestedProject !== scope
       if (!foreign) {
         return await listNodesForNodeControl({ store, locatorDeps, input, projectScope: scope })
       }

@@ -105,6 +105,7 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
     getPersistenceStore: input.getPersistenceStore,
     topology: input.topology,
     now,
+    liveSessionOf: nodeId => sessions.liveSessionOf(nodeId)?.sessionId ?? null,
   })
   const wiring =
     input.events &&

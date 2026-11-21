@@ -1,4 +1,5 @@
-import type { Node } from '@xyflow/react'
+import type { EdgeTypes, Node } from '@xyflow/react'
+import type { ReactNode } from 'react'
 import type {
   AgentNodeData,
   Point,
@@ -20,6 +21,7 @@ import type { SpaceBoundary } from '@shared/types/spaceBoundary'
 import type { TerminalPtyGeometryDisplayMetrics } from '@contexts/workspace/domain/terminalPtyGeometry'
 import type { CanvasCollapseState } from '../../utils/canvasCollapse'
 import type { ManagedClaudeLifecycleReceipt } from '@shared/contracts/managedClaudeLaunch'
+import type { OrchestrationConnectPromptState } from './hooks/useOrchestrationConnect'
 
 export type WorkspaceCanvasMessageTone = 'info' | 'warning' | 'error'
 
@@ -27,6 +29,13 @@ export type ShowWorkspaceCanvasMessage = (
   message: string,
   tone?: WorkspaceCanvasMessageTone,
 ) => void
+
+/** Supplied by the app composition; the canvas owns the state, the app owns the controls. */
+export interface OrchestrationConnectPromptRenderInput {
+  readonly prompt: OrchestrationConnectPromptState
+  readonly onAccept: () => void
+  readonly onCancel: () => void
+}
 
 export interface WorkspaceCanvasProps {
   workspaceId: string
@@ -53,6 +62,13 @@ export interface WorkspaceCanvasProps {
   focusNodeInput?: boolean
   focusSpaceId?: string | null
   focusSequence?: number
+  /** Edge components rendered by the app composition. */
+  orchestrationEdgeTypes?: EdgeTypes
+  /** Selected orchestration arrow, owned by the app composition. */
+  orchestrationSelectedLinkId?: string | null
+  onOrchestrationLinkSelect?: (linkId: string | null) => void
+  /** Rendered by the app composition so the canvas never imports app UI. */
+  renderOrchestrationConnectPrompt?: (input: OrchestrationConnectPromptRenderInput) => ReactNode
 }
 
 export interface WorkspaceCanvasInnerProps extends WorkspaceCanvasProps {

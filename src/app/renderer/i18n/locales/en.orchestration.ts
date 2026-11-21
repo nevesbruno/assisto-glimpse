@@ -10,6 +10,41 @@ export const enOrchestration = {
     },
     link: {
       degradedLabel: 'Executor unavailable',
+      closeAction: 'Close',
+      closeTitle: 'Close {{target}}?',
+      closeBody: 'The link ends and the executor service stops. The conversation is archived.',
+      closeConfirm: 'Close',
+      closeCancel: 'Cancel',
+      closeForceBody: 'There is a turn in progress in {{target}} (round r{{round}}/{{limit}}).',
+      closeForceWarning: 'Closing interrupts the turn; part of the work may be lost.',
+      closeForce: 'Interrupt and close',
+      closeError: 'The link was not closed.',
+    },
+    connect: {
+      title: 'Link {{source}} to {{target}}?',
+      body: 'This starts the executor service and reopens the window attached to it.',
+      reattach: 'The current conversation is preserved.',
+      busy: 'The running turn may be interrupted.',
+      accept: 'Link',
+      cancel: 'Cancel',
+      hint: {
+        sourceNotOrchestrator:
+          'Only a claude-code session organizes the work. Drag from that session.',
+        sameNode: 'Choose another session.',
+        orchestratorIsExecutor:
+          'This session executes for an orchestrator and cannot organize another.',
+        targetLinked:
+          'This session already executes for an orchestrator. Close the current link first.',
+        peerPending: 'This release links only codex or opencode sessions.',
+        crossProject: 'Both sessions must be in the same project.',
+        dropOnExecutor: 'Drop onto the session that will execute.',
+      },
+      error: {
+        invalid: 'The link violates the orchestration rules.',
+        unavailable: 'The executor is unavailable.',
+        mismatch: 'The executor service version is outside the validated subset.',
+        generic: 'The link was not created.',
+      },
     },
     approvals: {
       sectionLabel: 'Waiting for you',
