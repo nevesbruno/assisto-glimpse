@@ -27,6 +27,7 @@ export type OrchestrationHandlerService = Pick<
   | 'interrupt'
   | 'close'
   | 'extendRounds'
+  | 'pendingAttention'
   | 'respondApproval'
   | 'approveHooks'
   | 'createLink'

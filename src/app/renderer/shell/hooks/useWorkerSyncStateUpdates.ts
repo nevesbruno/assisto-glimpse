@@ -15,6 +15,7 @@ import {
 import { stripLocalViewStateFromPersistedState } from '@contexts/workspace/presentation/renderer/utils/persistence/viewState'
 import { useAppStore } from '../store/useAppStore'
 import { orchestrationLinks } from '@contexts/orchestration/presentation/renderer/orchestrationLinksStore'
+import { orchestrationAttention } from '@contexts/orchestration/presentation/renderer/orchestrationAttentionStore'
 import { canonicalContent } from '@shared/sync/mergeValue'
 import type { SyncEventPayload } from '@shared/contracts/dto'
 import { toShellWorkspaceStateForSync } from './workerSync/mergeWorkspaceStateForSync'
@@ -123,6 +124,15 @@ export function resolveWorkspacesForWorkerSync({
     : nextWorkspaces
 }
 
+/** The link event is also the cue to read the pending approvals again; nothing is mirrored. */
+export function routeAttentionSyncEvent(event: SyncEventPayload): boolean {
+  if (event.type !== 'orchestration.links.updated' && event.type !== 'resync_required') {
+    return false
+  }
+  orchestrationAttention.handleSyncEvent(event)
+  return true
+}
+
 export function useWorkerSyncStateUpdates(options: { enabled: boolean }): void {
   const refreshTimerRef = useRef<number | null>(null)
   const refreshScheduledAtMsRef = useRef<number | null>(null)
@@ -223,6 +233,7 @@ export function useWorkerSyncStateUpdates(options: { enabled: boolean }): void {
 
             // The link mirror is display-only and read apart from the app-state refresh below.
             orchestrationLinks.handleSyncEvent(event)
+            routeAttentionSyncEvent(event)
             if (event.type === 'orchestration.links.updated') {
               return
             }

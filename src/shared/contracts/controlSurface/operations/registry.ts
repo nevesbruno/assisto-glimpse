@@ -10,6 +10,7 @@ import { mountTargetOperations } from './domains/mountTarget'
 import { nodeOperations } from './domains/node'
 import { noteOperations } from './domains/note'
 import { orchOperations } from './domains/orch'
+import { orchAttentionOperations } from './domains/orchAttention'
 import { pluginOperations } from './domains/plugin'
 import { projectOperations } from './domains/project'
 import { ptyOperations } from './domains/pty'
@@ -33,6 +34,7 @@ export const CONTROL_SURFACE_OPERATIONS = Object.freeze([
   ...nodeOperations,
   ...noteOperations,
   ...orchOperations,
+  ...orchAttentionOperations,
   ...pluginOperations,
   ...projectOperations,
   ...ptyOperations,

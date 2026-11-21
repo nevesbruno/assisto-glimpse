@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ControlSurfaceContext } from '../../../src/app/main/controlSurface/types'
 import { registerOrchestrationHandlers } from '../../../src/app/main/controlSurface/handlers/orchestrationHandlers'
+import { registerOrchestrationAttentionHandlers } from '../../../src/app/main/controlSurface/handlers/orchestrationAttentionHandlers'
 import type { ExecutorRuntimeEvent } from '../../../src/contexts/orchestration/application/ports/executorRuntime'
 import { ORCHESTRATOR_PROVIDER } from '../../../src/contexts/orchestration/domain/agentLink'
 import type { CodexWorker } from './codexServiceRig'
@@ -53,14 +54,16 @@ function handlersOf(worker: CodexWorker['worker']) {
       validate: (payload: unknown) => unknown
     }
   >()
-  registerOrchestrationHandlers(
-    { register: (id: string, handler: never) => registered.set(id, handler) } as never,
-    {
-      backend: () => ({ service: worker.composed.service, links: worker.composed.links }),
-      providerOfNode: async nodeId =>
-        nodeId === ORCHESTRATOR_NODE ? ORCHESTRATOR_PROVIDER : 'codex',
-    },
-  )
+  const deps = {
+    backend: () => ({ service: worker.composed.service, links: worker.composed.links }),
+    providerOfNode: async (nodeId: string) =>
+      nodeId === ORCHESTRATOR_NODE ? ORCHESTRATOR_PROVIDER : 'codex',
+  }
+  const surface = {
+    register: (id: string, handler: never) => registered.set(id, handler),
+  } as never
+  registerOrchestrationHandlers(surface, deps)
+  registerOrchestrationAttentionHandlers(surface, deps)
   return (id: string, payload: unknown, ctx: ControlSurfaceContext): Promise<unknown> => {
     const handler = registered.get(id)!
     return handler.handle(ctx, handler.validate(payload))
@@ -121,6 +124,19 @@ describe('I-06 approvals (real runtime and supervisor over a fake process)', () 
     await settle()
     expect(await pendingCount(worker)).toBe(1)
 
+    const listed = (await call('orch.approval.list', { executorNodeId: EXECUTOR_NODE }, user)) as {
+      links: { approvals: { requestId: string; kind: string; summary: string; turnRef: string }[] }
+    }
+    expect(listed.links[0].approvals).toEqual([
+      {
+        requestId: 'req-respond',
+        kind: 'command',
+        summary: expect.any(String),
+        turnRef: 'turn-1',
+      },
+    ])
+    expect(listed.links[0].approvals[0].summary.length).toBeGreaterThan(0)
+
     await expect(
       call(
         'orch.approval.respond',
@@ -136,6 +152,10 @@ describe('I-06 approvals (real runtime and supervisor over a fake process)', () 
     await expect(held).resolves.toEqual({ decision: 'acceptForSession' })
     await settle()
     expect(await pendingCount(worker)).toBe(0)
+    const after = (await call('orch.approval.list', { executorNodeId: EXECUTOR_NODE }, user)) as {
+      links: { approvals: unknown[] }
+    }
+    expect(after.links[0].approvals).toEqual([])
     expect(events).toContainEqual({
       type: 'approval.resolved',
       requestId: 'req-respond',
@@ -191,6 +211,30 @@ describe('I-06 approvals (real runtime and supervisor over a fake process)', () 
     })
     await settle()
     expect(answered).toBe(false)
+  })
+
+  it('refuses the list for an executor grant and an unknown target', async () => {
+    const { worker } = await startLinkedCodexWorker(rig)
+    const call = handlersOf(worker)
+    const grantOfExecutor: ControlSurfaceContext = {
+      ...grantOfOrchestrator,
+      requestAuth: {
+        kind: 'session-grant',
+        grant: {
+          projectId: 'project-1',
+          spaceId: 'space-1',
+          nodeId: EXECUTOR_NODE,
+          sessionId: 'session-exec-1',
+        },
+      },
+    } as never
+
+    await expect(call('orch.approval.list', {}, grantOfExecutor)).rejects.toMatchObject({
+      code: 'orch.forbidden',
+    })
+    await expect(
+      call('orch.approval.list', { executorNodeId: 'ghost' }, user),
+    ).rejects.toMatchObject({ code: 'orch.not_linked' })
   })
 
   it('settle(120000) queues exactly one approval_unanswered and never repeats it', async () => {

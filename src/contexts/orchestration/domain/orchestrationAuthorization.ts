@@ -16,6 +16,7 @@ export type OrchestrationOperation =
   | 'orch.link.create'
   | 'orch.link.close'
   | 'orch.link.extend'
+  | 'orch.approval.list'
   | 'orch.approval.respond'
   | 'orch.hooks.approve'
 
@@ -58,6 +59,7 @@ const TARGETED_OPERATIONS: readonly OrchestrationOperation[] = [
   'orch.interrupt',
   'orch.close',
   'orch.status',
+  'orch.approval.list',
 ]
 
 const READ_OPERATIONS: readonly OrchestrationOperation[] = ['orch.status', 'orch.link.list']

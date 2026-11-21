@@ -29,12 +29,26 @@ describe('executor approvals', () => {
       [spawned.executorNodeId, 'req-1', 'rm -rf build'],
     ])
     expect(await pendingCount(spawned)).toBe(1)
+    expect(
+      (
+        await spawned.harness.service.pendingAttention(USER, {
+          executorNodeId: spawned.executorNodeId,
+        })
+      ).links[0].approvals,
+    ).toEqual([{ requestId: 'req-1', kind: 'command', summary: 'rm -rf build', turnRef: null }])
     spawned.runtime.emit({ type: 'approval.resolved', requestId: 'req-1', resolvedBy: 'screen' })
     await spawned.harness.service.whenIdle()
     expect(spawned.harness.runState.recordApprovalResolved).toEqual([
       [spawned.executorNodeId, 'req-1'],
     ])
     expect(await pendingCount(spawned)).toBe(0)
+    expect(
+      (
+        await spawned.harness.service.pendingAttention(USER, {
+          executorNodeId: spawned.executorNodeId,
+        })
+      ).links[0].approvals,
+    ).toEqual([])
   })
 
   it.each([

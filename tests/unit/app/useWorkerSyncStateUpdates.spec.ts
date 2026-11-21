@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_AGENT_SETTINGS } from '../../../src/contexts/settings/domain/agentSettings'
 import {
   DEFAULT_WORKSPACE_MINIMAP_VISIBLE,
@@ -9,8 +9,11 @@ import {
 import { toPersistedState } from '../../../src/contexts/workspace/presentation/renderer/utils/persistence/toPersistedState'
 import {
   resolveWorkspacesForWorkerSync,
+  routeAttentionSyncEvent,
   shouldApplyWorkerSyncRefresh,
 } from '../../../src/app/renderer/shell/hooks/useWorkerSyncStateUpdates'
+import { orchestrationAttention } from '../../../src/contexts/orchestration/presentation/renderer/orchestrationAttentionStore'
+import type { SyncEventPayload } from '../../../src/shared/contracts/dto/sync'
 
 function createWorkspace(id: string, overrides: Partial<WorkspaceState> = {}): WorkspaceState {
   return {
@@ -106,6 +109,34 @@ function createSpace(id: string): WorkspaceSpaceState {
 }
 
 describe('useWorkerSyncStateUpdates helpers', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('routes link and resync events to the attention read, apart from the app-state mirror', () => {
+    const handle = vi
+      .spyOn(orchestrationAttention, 'handleSyncEvent')
+      .mockImplementation(() => undefined)
+    const event = (payload: SyncEventPayload) => routeAttentionSyncEvent(payload)
+
+    expect(
+      event({
+        type: 'orchestration.links.updated',
+        revision: 4,
+        linksRevision: 2,
+        operationId: 'op-1',
+      }),
+    ).toBe(true)
+    expect(event({ type: 'resync_required', revision: 5 })).toBe(true)
+    expect(event({ type: 'app_state.updated', revision: 6, operationId: 'op-2' })).toBe(false)
+
+    expect(handle).toHaveBeenCalledTimes(2)
+    expect(handle.mock.calls.map(([payload]) => payload.type)).toEqual([
+      'orchestration.links.updated',
+      'resync_required',
+    ])
+  })
+
   it('skips worker sync refresh when persisted state only echoes the current durable state', () => {
     const workspace = createWorkspace('workspace-1')
     const currentState = {

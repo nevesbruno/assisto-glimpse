@@ -39,6 +39,7 @@ import {
   notifyAfterStateWrite,
 } from './orchestration/nodeDeletionTrigger'
 import { registerOrchestrationHandlers } from './handlers/orchestrationHandlers'
+import { registerOrchestrationAttentionHandlers } from './handlers/orchestrationAttentionHandlers'
 import { createDirectInputGuard } from './handlers/directInputGuard'
 import {
   createNodeProviderReader,
@@ -201,6 +202,7 @@ export function registerControlSurfaceHandlers(
     closePluginNode: nodeId => deps.plugins.closeNodeViews(nodeId),
   })
   registerOrchestrationHandlers(controlSurface, orchestrationDeps)
+  registerOrchestrationAttentionHandlers(controlSurface, orchestrationDeps)
   registerPluginHostHandlers(controlSurface, deps)
   registerPluginHandlers(controlSurface, deps.plugins, deps.pluginDistribution)
   registerPluginCommandHandlers(controlSurface, {

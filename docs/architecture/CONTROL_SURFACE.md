@@ -153,17 +153,20 @@ Canvas node control:
 - `node.delete`
 - `canvas.focus`
 
-Orchestration (`orch.*`, handlers in `handlers/orchestrationHandlers.ts`):
+Orchestration (`orch.*`, handlers in `handlers/orchestrationHandlers.ts`; the attention read lives
+in `handlers/orchestrationAttentionHandlers.ts`):
 
 - `orch.spawn`, `orch.dispatch`, `orch.status`, `orch.cancel`, `orch.interrupt`, `orch.close`
 - `orch.link.create`, `orch.link.close`, `orch.link.list`, `orch.link.extend`
-- `orch.approval.respond`, `orch.hooks.approve`
+- `orch.approval.list`, `orch.approval.respond`, `orch.hooks.approve`
 
 The handlers receive the orchestration service as a dependency that the Worker composes; until it
 is composed every `orch.*` call fails with `common.unavailable`. A session grant is an agent
 principal whose `provider` is read from the app state at call time, never from the grant or from
 the synced links mirror; any other credential is the user. `orch.link.close`, `orch.link.create`,
 `orch.link.extend`, `orch.approval.respond` and `orch.hooks.approve` are admin scope.
+`orch.approval.list` is interact scope: the user sees every visible link without a target; an agent
+principal needs its own `executorNodeId` and receives `orch.not_linked` without one.
 
 Errors: `orch.*` codes map one to one. `orch.dispatch_in_flight` (also `orch.cancel` and the close
 operations) carries the blocking dispatch as `details: { dispatchId, state, round }`; the other
@@ -172,8 +175,10 @@ invalid dispatch transition `common.unexpected`. `orch.dispatch` and `orch.hooks
 declare `common.invalid_input`.
 
 Results: `orch.dispatch`, `orch.spawn` and `orch.status` return the dispatch, spawn and status DTOs
-of `shared/contracts/dto/orchestration.ts`; `orch.cancel` returns the dispatch view;
-`orch.link.list` returns `{ linksRevision, links }`; `orch.link.extend` returns
+of `shared/contracts/dto/orchestration.ts`; `orch.approval.list` returns
+`{ linksRevision, links: [{ executorNodeId, approvals, hooks }] }` with the approval summary cut to
+500 characters (`shared/contracts/dto/orchestrationAttention.ts`); `orch.cancel` returns the
+dispatch view; `orch.link.list` returns `{ linksRevision, links }`; `orch.link.extend` returns
 `{ linkId, roundsLimit }`; `orch.hooks.approve` returns `{ approved, restart: 'done' | 'scheduled' }`
 (`orchestrationHooksApproveResultSchema`); `orch.interrupt`, `orch.close`, `orch.link.close` and
 `orch.approval.respond` return `{ ok: true }`.
