@@ -67,6 +67,7 @@ stateDiagram-v2
   uncertain --> completed: turno achado concluído
   uncertain --> failed: ausência provada ou executor indisponível
   sent --> completed: turno concluído
+  sent --> uncertain: serviço caiu durante o turno
   sent --> failed: turno falhou, interrompido ou executor caiu
   completed --> [*]
   failed --> [*]
@@ -84,10 +85,12 @@ stateDiagram-v2
 | `reserved` | Falha depois da escrita, queda do serviço ou reinício do Worker | `uncertain` | Nenhum reenvio |
 | `uncertain` | Reconciliação achou o turno em curso | `sent` | Segue o fluxo normal |
 | `uncertain` | Reconciliação achou o turno encerrado | `completed` ou `failed` | Gera aviso |
-| `uncertain` | Reconciliação provou ausência | `failed(not_sent)` | Devolve a rodada e gera aviso |
+| `uncertain` sem turno aceito | Reconciliação provou ausência | `failed(not_sent)` | Devolve a rodada e gera aviso |
+| `uncertain` com turno aceito | Reconciliação provou ausência | `failed(executor_down)` | Nenhuma rodada devolvida; o turno pode ter rodado |
 | `uncertain` | Executor `unavailable` sem reconciliar | `failed(executor_down)` | O aviso diz que o turno pode ter rodado |
 | `sent` | `turn.completed` com sucesso | `completed` | Grava o trecho e gera aviso |
 | `sent` | Turno falhou ou foi interrompido | `failed(turn_failed)` ou `failed(interrupted)` | Gera aviso |
+| `sent` | Serviço caiu durante o turno | `uncertain` | Nenhum reenvio; a reconciliação depois de `executor.recovered` decide |
 | `sent` | Executor caiu e a reconciliação achou o turno parado | `failed(executor_down)` | Gera aviso |
 | `sent` | Prazo estourou | `sent` | Aviso único de prazo; o turno segue |
 

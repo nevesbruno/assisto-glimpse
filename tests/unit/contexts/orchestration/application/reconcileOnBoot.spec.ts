@@ -203,6 +203,22 @@ describe('reconcileOnBoot matrix', () => {
     expect(harness.notices.rows).toHaveLength(1)
   })
 
+  it('uncertain that already had a turn: absence fails as executor_down and keeps the round', async () => {
+    const { harness, linkId } = await spawnedHarness()
+    seed(harness, linkId, 'sent')
+    harness.dispatches.rows.set(D, { ...harness.dispatches.rows.get(D)!, state: 'uncertain' })
+    harness.hooks.onRuntimeStart = runtime => runtime.findResults.set(D, { kind: 'absent' })
+    const service = harness.restart()
+    await service.reconcileOnBoot().catch(() => undefined)
+    await service.whenIdle()
+    expect(harness.dispatches.rows.get(D)).toMatchObject({
+      state: 'failed',
+      reason: 'executor_down',
+    })
+    expect(roundsUsed(harness)).toBe(1)
+    expect(harness.notices.rows.map(row => row.entry.kind)).toEqual(['executor_down_in_turn'])
+  })
+
   it('ends in finishBoot: queued work is sent only after the reconciliation', async () => {
     const { harness, linkId, executorNodeId } = await spawnedHarness()
     seed(harness, linkId, 'queued')

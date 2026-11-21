@@ -174,7 +174,7 @@ describe('I-03 service death (real runtime and supervisor over a fake process)',
     expect(rig.linkRow()?.roundsUsed).toBe(0)
   })
 
-  it.fails(
+  it(
     'a death during a sent turn leaves the dispatch uncertain until the reconciliation (risk table, I-03)',
     async () => {
       const { env, worker } = await startLinkedCodexWorker(rig)

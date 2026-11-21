@@ -89,6 +89,7 @@ const events: Record<string, DispatchEvent> = {
   service_accepted: { type: 'service_accepted', turnRef: 'tr', now: later },
   service_rejected: { type: 'service_rejected', now: later },
   send_uncertain: { type: 'send_uncertain', now: later },
+  turn_uncertain: { type: 'turn_uncertain', now: later },
   turn_found_running: { type: 'turn_found_running', turnRef: 'tr', now: later },
   turn_finished: { type: 'turn_finished', now: later, ...finished },
   turn_absent: { type: 'turn_absent', now: later },
@@ -128,6 +129,7 @@ const TABLE: readonly Row[] = [
     refund: false,
   },
   { from: 'sent', event: 'turn_finished', to: 'completed', reason: null, refund: false },
+  { from: 'sent', event: 'turn_uncertain', to: 'uncertain', reason: null, refund: false },
   { from: 'sent', event: 'executor_down', to: 'failed', reason: 'executor_down', refund: false },
 ]
 

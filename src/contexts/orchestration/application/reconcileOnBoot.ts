@@ -41,7 +41,10 @@ function eventOf(dispatch: Dispatch, result: FindTurnResult, now: Date): Dispatc
   if (result.kind === 'unknown') {
     return null
   }
-  return { type: dispatch.state === 'uncertain' ? 'turn_absent' : 'executor_down', now }
+  // Absence proves the send never happened only while no turn was accepted: a dispatch that came
+  // back from `sent` keeps its turnRef, so a missing turn means the service lost it.
+  const notSent = dispatch.state === 'uncertain' && dispatch.turnRef === null
+  return { type: notSent ? 'turn_absent' : 'executor_down', now }
 }
 
 /** The turn runs but the run state never saw it start: opens it, once per turn of this Worker. */
@@ -74,16 +77,30 @@ async function resolveInFlight(
   const result = await slot.runtime!.findTurnByDispatch(open.id, since).catch(() => UNKNOWN)
   const running =
     result.kind === 'found' && result.turn.status === 'running' ? result.turn.turnRef : null
-  const glimpseTurnId = running ? await adoptRunningTurn(ctx, slot, running) : null
+  // The run state ingress needs a live TUI session, and the boot only relaunches the TUI after
+  // this reconciliation. A proven turn settles the dispatch now; the retry adopts it once the
+  // session exists, instead of leaving a `sent` dispatch stuck in `uncertain`.
+  let glimpseTurnId: string | null = null
+  let adoptionFailure: unknown = null
+  if (running) {
+    try {
+      glimpseTurnId = await adoptRunningTurn(ctx, slot, running)
+    } catch (error) {
+      adoptionFailure = error
+    }
+  }
   const base = eventOf(open, result, ctx.deps.clock.now())
   const event = base?.type === 'turn_found_running' ? { ...base, glimpseTurnId } : base
   if (event) {
     await settleDispatch(ctx, open, event)
-    return
+  } else {
+    const link = await ctx.deps.links.findById(open.linkId)
+    if (link && open.state === 'uncertain') {
+      await enqueueNotice(ctx, open, link)
+    }
   }
-  const link = await ctx.deps.links.findById(open.linkId)
-  if (link && open.state === 'uncertain') {
-    await enqueueNotice(ctx, open, link)
+  if (adoptionFailure) {
+    throw adoptionFailure
   }
 }
 
@@ -94,6 +111,19 @@ async function markReservedUncertain(ctx: OrchestrationContext, executorNodeId: 
       ctx,
       open,
       { type: 'send_uncertain', now: ctx.deps.clock.now() },
+      { notice: 'none' },
+    )
+  }
+}
+
+/** The service died mid-turn: the turn ran, but its outcome waits for the reconciliation. */
+async function markSentUncertain(ctx: OrchestrationContext, executorNodeId: string) {
+  const open = await ctx.deps.dispatches.findInFlightByExecutor(executorNodeId)
+  if (open?.state === 'sent') {
+    await settleDispatch(
+      ctx,
+      open,
+      { type: 'turn_uncertain', now: ctx.deps.clock.now() },
       { notice: 'none' },
     )
   }
@@ -171,6 +201,7 @@ export async function handleExecutorIncident(
 ): Promise<void> {
   await markReservedUncertain(ctx, slot.executorNodeId)
   if (event.type === 'executor.down') {
+    await markSentUncertain(ctx, slot.executorNodeId)
     return
   }
   const link = await ctx.deps.links.findActiveByExecutor(slot.executorNodeId)

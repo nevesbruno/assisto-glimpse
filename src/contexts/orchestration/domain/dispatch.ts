@@ -144,6 +144,7 @@ export type DispatchEvent =
     }
   | { readonly type: 'service_rejected'; readonly now: Date }
   | { readonly type: 'send_uncertain'; readonly now: Date }
+  | { readonly type: 'turn_uncertain'; readonly now: Date }
   | {
       readonly type: 'turn_found_running'
       readonly turnRef: string
@@ -222,6 +223,8 @@ function applyEvent(dispatch: Dispatch, event: DispatchEvent): DispatchTransitio
       return state === 'reserved' ? refund(finish(dispatch, 'failed', 'not_sent', event.now)) : null
     case 'send_uncertain':
       return state === 'reserved' ? keep(bump(dispatch, { state: 'uncertain', text: null })) : null
+    case 'turn_uncertain':
+      return state === 'sent' ? keep(bump(dispatch, { state: 'uncertain' })) : null
     case 'turn_found_running':
       return state === 'uncertain'
         ? keep(

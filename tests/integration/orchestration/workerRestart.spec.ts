@@ -74,13 +74,12 @@ describe('I-02 Worker restart in the middle of a dispatch (fake runtime)', () =>
   })
 
   /**
-   * App defect found on 11/11/2026, src untouched (card F2-16a1): `adoptRunningTurn` calls the real
-   * run state ingress before the boot relaunches the TUI, and `recordTurnStarted` throws "No live
-   * session for executor node" without a bound session. The boot logs and swallows it, so the
-   * dispatch stays `uncertain` with no notice instead of following as `sent` (documented in
-   * ORCHESTRATION_RISKS_AND_TESTS.md, I-02). The test fails while the defect exists.
+   * The run state ingress needs a live TUI session, and the boot only relaunches the TUI after
+   * this reconciliation. The proven turn settles the dispatch as `sent` before the adoption
+   * failure surfaces, so the boot retry adopts it instead of leaving the dispatch `uncertain`
+   * without a notice (documented in ORCHESTRATION_RISKS_AND_TESTS.md, I-02).
    */
-  it.fails(
+  it(
     'after the write and before the answer: the turn is found by dispatchId and follows as sent, with one turn/start in the service',
     async () => {
       const first = await workerDyingAt(runtime => {
