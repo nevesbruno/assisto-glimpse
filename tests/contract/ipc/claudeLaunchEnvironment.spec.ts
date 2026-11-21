@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { ApprovedWorkspaceStore } from '../../../src/contexts/workspace/infrastructure/approval/ApprovedWorkspaceStore'
 import type { PtyRuntime } from '../../../src/contexts/terminal/presentation/main-ipc/runtime'
 import type { PersistenceStore } from '../../../src/platform/persistence/sqlite/PersistenceStore'
-import { IPC_CHANNELS } from '../../../src/shared/constants/ipc'
+import { IPC_CHANNELS } from '../../../src/shared/contracts/ipc'
 import { invokeHandledIpc } from './ipcTestUtils'
 
 afterEach(() => {
@@ -20,6 +20,7 @@ it('desktop Claude launch uses one resolved shell environment for both reservati
   vi.stubEnv('OPENCOVE_TEST_USE_REAL_AGENTS', '1')
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
   vi.doMock('electron', () => ({
+    app: { getPath: () => process.cwd() },
     ipcMain: {
       handle: (id: string, handler: (...args: unknown[]) => unknown) => handlers.set(id, handler),
       removeHandler() {},

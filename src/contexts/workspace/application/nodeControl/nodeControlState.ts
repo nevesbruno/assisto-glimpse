@@ -1,4 +1,4 @@
-import type { PersistWriteResult } from '../../../../shared/contracts/dto'
+import type { AppErrorDescriptor, PersistWriteResult } from '../../../../shared/contracts/dto'
 import { createAppError } from '../../../../shared/errors/appError'
 import type { LabelColor, NodeLabelColorOverride } from '../../../../shared/types/labelColor'
 import type { NodeWorkerBinding } from '../../../../shared/types/nodeWorkerBinding'
@@ -8,6 +8,7 @@ export type NodeControlNode = {
   sessionId: string | null
   title: string
   titlePinnedByUser?: boolean
+  titleIsLiteral?: boolean
   position: { x: number; y: number }
   width: number
   height: number
@@ -65,7 +66,18 @@ export type NodeControlAppState = {
 }
 
 export interface NodeControlAppStateStore {
+  isRuntimeReferenced?: (id: string) => boolean
+  isManagedNode?: (id: string) => boolean
+  nodeLineage?: import('../nodeLineage/NodeLineageRepository').NodeLineageRepository
+  commitCreatedNodeState?: (
+    state: NodeControlAppState,
+    options: {
+      expectedRevision: number
+      lineage: import('../../domain/nodeLineage').NodeLineageRecord
+    },
+  ) => Promise<PersistWriteResult>
   readAppState: () => Promise<NodeControlAppState | null>
+  isAppStateRevisionCurrent?: (revision: number) => boolean
   readAppStateRevision: () => Promise<number>
   writeAppState: (
     state: NodeControlAppState,
@@ -81,6 +93,14 @@ export function requireNodeControlState(state: NodeControlAppState | null): Node
   }
 
   return state
+}
+
+/** Retry only a known rejected snapshot; unrelated or unknown write failures are not replayed. */
+export function isNodeControlRevisionConflict(error: AppErrorDescriptor): boolean {
+  return (
+    error.code === 'persistence.invalid_state' &&
+    /^App state revision conflict(?:\s|\(|$)/.test(error.debugMessage ?? '')
+  )
 }
 
 export async function persistNodeControlState(

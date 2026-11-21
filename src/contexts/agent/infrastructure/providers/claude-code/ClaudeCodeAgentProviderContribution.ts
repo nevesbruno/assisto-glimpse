@@ -1,3 +1,4 @@
+import { AGENT_PROVIDER_DESCRIPTORS } from '../../../../../shared/contracts/agentProviderDescriptors'
 import { managedHookCoverage } from '../shared/ManagedHookCoverage'
 import { randomUUID } from 'node:crypto'
 import type { AgentHookChannel } from '../../../../../shared/runtime/agentHook/agentHookChannel'
@@ -9,10 +10,14 @@ import type {
 import { buildAgentLaunchCommand } from '../../cli/AgentCommandFactory'
 import { ExistingAgentProviderDetector } from '../shared/AgentProviderDetector'
 import { createAgentHookRelay } from '../shared/AgentHookRelay'
-import { createTemporaryProviderConfig } from '../shared/TemporaryProviderConfig'
 import { readClaudeProjectMcpApprovals } from './ClaudeProjectMcpApprovals'
+import {
+  createAgentLaunchArtifactFile,
+  type AgentLaunchArtifactRoot,
+} from '../shared/AgentLaunchArtifactFile'
 
 export interface ClaudeCodeAgentProviderContributionOptions {
+  readonly artifactRoot: AgentLaunchArtifactRoot
   readonly channel?: AgentHookChannel
   readonly detector?: AgentProviderDetector
   readonly runtimeExecutable?: string
@@ -22,7 +27,7 @@ export interface ClaudeCodeAgentProviderContributionOptions {
 export class ClaudeCodeAgentProviderContribution implements AgentProviderContribution {
   readonly prompting = { supported: true, submitDelayMs: 300 } as const
   readonly descriptor = {
-    displayName: 'Claude Code',
+    displayName: AGENT_PROVIDER_DESCRIPTORS['claude-code'].label,
     documentationUrl: 'https://docs.anthropic.com/claude/docs/claude-code',
     id: 'claude-code',
     launch: {
@@ -63,11 +68,13 @@ export class ClaudeCodeAgentProviderContribution implements AgentProviderContrib
     },
   }
 
+  private readonly artifactRoot: AgentLaunchArtifactRoot
   private readonly channel?: AgentHookChannel
   private readonly runtimeExecutable: string
   private readonly runtimePlatform: NodeJS.Platform
 
-  constructor(options: ClaudeCodeAgentProviderContributionOptions = {}) {
+  constructor(options: ClaudeCodeAgentProviderContributionOptions) {
+    this.artifactRoot = options.artifactRoot
     this.channel = options.channel
     this.runtimeExecutable = options.runtimeExecutable ?? process.execPath
     this.runtimePlatform = options.runtimePlatform ?? process.platform
@@ -77,7 +84,12 @@ export class ClaudeCodeAgentProviderContribution implements AgentProviderContrib
   private async prepareTelemetry(
     command: Pick<
       CreateAgentLaunchPlanCommand,
-      'artifacts' | 'executablePathOverride' | 'workspaceDirectory' | 'environment'
+      | 'artifacts'
+      | 'executablePathOverride'
+      | 'workspaceDirectory'
+      | 'environment'
+      | 'residentContext'
+      | 'isInvocationCurrent'
     >,
   ) {
     if (!this.channel) {
@@ -88,7 +100,11 @@ export class ClaudeCodeAgentProviderContribution implements AgentProviderContrib
         hookInstallState: 'not_installed' as const,
       }
     }
-    const reservation = await this.channel.reserveSpawn({ environment: command.environment })
+    const reservation = await this.channel.reserveSpawn({
+      environment: command.environment,
+      residentContext: command.residentContext,
+      isInvocationCurrent: command.isInvocationCurrent,
+    })
     if (!reservation.usesHook) {
       return {
         args: [],
@@ -99,13 +115,15 @@ export class ClaudeCodeAgentProviderContribution implements AgentProviderContrib
     }
     command.artifacts.track('claude-hook-reservation', reservation)
     const relay = await createAgentHookRelay({
+      artifactRoot: this.artifactRoot,
       provider: 'claude',
       runtimeExecutable: this.runtimeExecutable,
       runtimePlatform: this.runtimePlatform,
       artifacts: command.artifacts,
     })
     const mcpApprovals = await readClaudeProjectMcpApprovals(command.workspaceDirectory)
-    const settings = await createTemporaryProviderConfig(
+    const settings = await createAgentLaunchArtifactFile(
+      this.artifactRoot,
       'opencove-claude-settings-',
       'settings.json',
       JSON.stringify({

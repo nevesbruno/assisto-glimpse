@@ -6,69 +6,50 @@ import {
   createWebsiteNodeAtFlowPosition,
 } from './useInteractions.paneNodeCreation'
 import type { UseWorkspaceCanvasInteractionsParams } from './useInteractions.types'
+import {
+  useCanvasUiCommands,
+  useReadCanvasDocument,
+  useReadCanvasUi,
+} from '../../../store/canvasStoreContext'
 
 type FlowNodeCreationParams = Pick<
   UseWorkspaceCanvasInteractionsParams,
   | 'workspaceId'
-  | 'contextMenu'
-  | 'setContextMenu'
-  | 'setEmptySelectionPrompt'
-  | 'cancelSpaceRename'
   | 'standardWindowSizeBucket'
   | 'createNoteNode'
   | 'createWebsiteNode'
   | 'browserDefaultMode'
   | 'websiteWindowsEnabled'
-  | 'spacesRef'
-  | 'nodesRef'
-  | 'setNodes'
-  | 'onSpacesChange'
+  | 'updateCanvasDocument'
 >
 
 export function useWorkspaceCanvasFlowNodeCreation({
   workspaceId,
-  contextMenu,
-  setContextMenu,
-  setEmptySelectionPrompt,
-  cancelSpaceRename,
   standardWindowSizeBucket,
   createNoteNode,
   createWebsiteNode,
   browserDefaultMode,
   websiteWindowsEnabled,
-  spacesRef,
-  nodesRef,
-  setNodes,
-  onSpacesChange,
+  updateCanvasDocument,
 }: FlowNodeCreationParams) {
+  const ui = useCanvasUiCommands()
+  const readDocument = useReadCanvasDocument()
+  const readUi = useReadCanvasUi()
+
   const createNoteNodeAtFlowPoint = useCallback(
     (anchor: Point): void => {
-      setContextMenu(null)
-      setEmptySelectionPrompt(null)
-      cancelSpaceRename()
+      ui.closeContextMenu()
+      ui.cancelSpaceRename()
       createNoteNodeAtFlowPosition({
         workspaceId,
         anchor,
         standardWindowSizeBucket,
         createNoteNode,
-        spacesRef,
-        nodesRef,
-        setNodes,
-        onSpacesChange,
+        readDocument,
+        updateCanvasDocument,
       })
     },
-    [
-      cancelSpaceRename,
-      createNoteNode,
-      nodesRef,
-      onSpacesChange,
-      setContextMenu,
-      setEmptySelectionPrompt,
-      setNodes,
-      spacesRef,
-      standardWindowSizeBucket,
-      workspaceId,
-    ],
+    [createNoteNode, ui, readDocument, standardWindowSizeBucket, updateCanvasDocument, workspaceId],
   )
   const createWebsiteNodeAtFlowPoint = useCallback(
     (anchor: Point): void => {
@@ -76,9 +57,8 @@ export function useWorkspaceCanvasFlowNodeCreation({
         return
       }
 
-      setContextMenu(null)
-      setEmptySelectionPrompt(null)
-      cancelSpaceRename()
+      ui.closeContextMenu()
+      ui.cancelSpaceRename()
       createWebsiteNodeAtFlowPosition({
         workspaceId,
         anchor,
@@ -86,23 +66,17 @@ export function useWorkspaceCanvasFlowNodeCreation({
         browserDefaultMode,
         url: '',
         createWebsiteNode,
-        spacesRef,
-        nodesRef,
-        setNodes,
-        onSpacesChange,
+        readDocument,
+        updateCanvasDocument,
       })
     },
     [
       browserDefaultMode,
-      cancelSpaceRename,
       createWebsiteNode,
-      nodesRef,
-      onSpacesChange,
-      setContextMenu,
-      setEmptySelectionPrompt,
-      setNodes,
-      spacesRef,
+      ui,
+      readDocument,
       standardWindowSizeBucket,
+      updateCanvasDocument,
       websiteWindowsEnabled,
       workspaceId,
     ],
@@ -110,25 +84,21 @@ export function useWorkspaceCanvasFlowNodeCreation({
   const createNoteNodeFromContextMenu = useCallback(() => {
     createNoteNodeFromPaneContextMenu({
       workspaceId,
-      contextMenu,
+      contextMenu: readUi().contextMenu,
+      ui,
       createNoteNode,
       standardWindowSizeBucket,
-      spacesRef,
-      nodesRef,
-      setNodes,
-      onSpacesChange,
-      setContextMenu,
+      readDocument,
+      updateCanvasDocument,
     })
   }, [
     workspaceId,
-    contextMenu,
     createNoteNode,
-    nodesRef,
-    onSpacesChange,
-    setContextMenu,
-    setNodes,
-    spacesRef,
+    readUi,
+    ui,
+    readDocument,
     standardWindowSizeBucket,
+    updateCanvasDocument,
   ])
 
   return { createNoteNodeAtFlowPoint, createWebsiteNodeAtFlowPoint, createNoteNodeFromContextMenu }

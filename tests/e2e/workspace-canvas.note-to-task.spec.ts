@@ -12,7 +12,7 @@ import {
 import { readSeededWorkspaceLayout, rectsOverlap } from './workspace-canvas.arrange.shared'
 
 test.describe('Workspace Canvas - Note to Task', () => {
-  test.skip('converts selected note to task via context menu', async () => {
+  test('converts selected note to task via context menu', async () => {
     const { electronApp, window } = await launchApp()
 
     try {
@@ -49,11 +49,17 @@ test.describe('Workspace Canvas - Note to Task', () => {
 
       const minimapDock = window.locator('.workspace-canvas__minimap-dock')
       await expect(minimapDock).toBeVisible()
-      await minimapDock.hover()
       const minimapToggle = window.locator('[data-testid="workspace-minimap-toggle"]')
-      await expect(minimapToggle).toBeVisible()
-      await minimapToggle.click()
-      await expect(window.locator('.workspace-canvas__minimap')).toHaveCount(0)
+      // The toggle only shows while the dock is hovered; an intercepted click loses that hover,
+      // so retry hover and click together until the minimap is gone.
+      await expect(async () => {
+        await minimapDock.hover()
+        await expect(minimapToggle).toBeVisible({ timeout: 2_000 })
+        await minimapToggle.click({ timeout: 2_000 })
+        await expect(window.locator('.workspace-canvas__minimap')).toHaveCount(0, {
+          timeout: 2_000,
+        })
+      }).toPass({ timeout: 20_000 })
 
       const noteHeader = noteNode.locator('.note-node__header')
       await expect(noteHeader).toBeVisible()
@@ -62,6 +68,7 @@ test.describe('Workspace Canvas - Note to Task', () => {
 
       await noteNode.click({ button: 'right', position: { x: 60, y: 16 } })
       const selectionMenu = window.locator('.workspace-context-menu').first()
+      await expect(selectionMenu).toBeVisible()
       const menuIds = await selectionMenu
         .locator('button')
         .evaluateAll(buttons => buttons.map(button => button.getAttribute('data-testid')))
@@ -148,11 +155,17 @@ test.describe('Workspace Canvas - Note to Task', () => {
       // Keep the interactive minimap overlay from stealing the note click in smaller/offscreen windows.
       const minimapDock = window.locator('.workspace-canvas__minimap-dock')
       await expect(minimapDock).toBeVisible()
-      await minimapDock.hover()
       const minimapToggle = window.locator('[data-testid="workspace-minimap-toggle"]')
-      await expect(minimapToggle).toBeVisible()
-      await minimapToggle.click()
-      await expect(window.locator('.workspace-canvas__minimap')).toHaveCount(0)
+      // The toggle only shows while the dock is hovered; an intercepted click loses that hover,
+      // so retry hover and click together until the minimap is gone.
+      await expect(async () => {
+        await minimapDock.hover()
+        await expect(minimapToggle).toBeVisible({ timeout: 2_000 })
+        await minimapToggle.click({ timeout: 2_000 })
+        await expect(window.locator('.workspace-canvas__minimap')).toHaveCount(0, {
+          timeout: 2_000,
+        })
+      }).toPass({ timeout: 20_000 })
 
       const noteNode = window.locator('.note-node').first()
       await expect(noteNode).toBeVisible()

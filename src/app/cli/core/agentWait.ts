@@ -12,6 +12,7 @@ import { AgentWaitProjection, type WaitSnapshot } from './agentWaitProjection'
 import { presentAgentTurnError } from './agentTurnError'
 import { AgentWaitEvidence, agentWaitWatermarkSchema } from './agentWaitEvidence'
 import * as z from 'zod'
+import { AgentWaitPolicy } from './agentWaitPolicy'
 
 export type WaitUntil = 'idle' | 'waiting' | 'exited' | 'turn-end'
 export interface WaitOptions {
@@ -19,6 +20,7 @@ export interface WaitOptions {
   until?: WaitUntil
   turnId?: string
   any: boolean
+  throughWaiting?: boolean
   timeoutMs: number
   connection: Connection
   fetch: typeof fetch
@@ -59,9 +61,13 @@ export async function waitForAgents(
   const result = () => ({
     until: options.until,
     mode: options.any ? 'any' : 'all',
-    agents: nodeIds.map(
-      nodeId => projection.snapshot(nodeId) ?? { nodeId, state: 'unknown' as const },
-    ),
+    agents: nodeIds.map(nodeId => ({
+      ...(projection.snapshot(nodeId) ?? {
+        nodeId,
+        state: 'unknown' as const,
+      }),
+      ...policy.completion(nodeId),
+    })),
   })
   let evidence: AgentWaitEvidence | undefined
   const conflicts = new Map<string, Set<string>>()
@@ -74,20 +80,8 @@ export async function waitForAgents(
       ? { ...ended, state: current?.sessionId === ended.sessionId ? current.state : ended.state }
       : result()
   }
-  const satisfied = () => {
-    if (options.turnId !== undefined) {
-      return !!evidence?.result
-    }
-    const matches = nodeIds.map(nodeId => {
-      const snapshot = projection.snapshot(nodeId)
-      return options.until === 'turn-end'
-        ? !!snapshot?.endedTurn
-        : snapshot?.state === options.until &&
-            (options.until !== 'idle' ||
-              (snapshot?.turn === null && snapshot?.quality !== 'degraded'))
-    })
-    return options.any ? matches.some(Boolean) : matches.every(Boolean)
-  }
+  const policy = new AgentWaitPolicy({ ...options, nodeIds })
+  const satisfied = (retain = true) => policy.satisfied(projection, !!evidence?.result, retain)
   const query = async (id: 'agent.get' | 'agent.list' | 'agent.finalMessage', payload: unknown) => {
     controller.signal.throwIfAborted()
     return options.query(id, payload, controller.signal)
@@ -102,22 +96,28 @@ export async function waitForAgents(
           agents: z.array(agentRunSnapshotSchema),
           turnArchive: z.boolean().optional(),
         })
-        .parse(
-          // eslint-disable-next-line no-await-in-loop
-          await query('agent.list', {}),
-        )
+        .parse(await query('agent.list', {}))
       let cursor = { epoch: baseline.epoch, seq: baseline.seq }
-      projection = new AgentWaitProjection(nodeIds, options.turnId, conflicts)
+      projection = new AgentWaitProjection(
+        nodeIds,
+        options.turnId,
+        conflicts,
+        (nodeId, sessionId) => policy.bind(nodeId, sessionId),
+      )
       evidence =
         options.turnId === undefined
           ? undefined
           : new AgentWaitEvidence(options.turnId, query, baseline.turnArchive === true)
       // Only the Worker's binding-aware get resolves owners, including exited sessions.
-      // eslint-disable-next-line no-await-in-loop
       await projection.initialize(get)
-      // eslint-disable-next-line no-await-in-loop
       projection.reconciliation.defer(await watermark())
-      const evaluate = async (event?: AgentRunEvent): Promise<'done' | 'pending' | 'resync'> => {
+      const evaluate = async (
+        event?: AgentRunEvent,
+        allowAttention = false,
+      ): Promise<'done' | 'pending' | 'resync'> => {
+        if (event) {
+          policy.retainCompletion(event)
+        }
         const selected = projection.snapshot(nodeIds[0])
         // Retain monotonic identity evidence during replay; success still needs a coherent cursor.
         if (selected) {
@@ -129,16 +129,23 @@ export async function waitForAgents(
         }
         await evidence?.observe(selected, event, nodeIds[0])
         controller.signal.throwIfAborted()
-        if (evidence?.reconcile(cursor)) {
-          return 'resync'
+        const evidenceStatus = evidence?.reconcile(cursor) ?? 'ready'
+        if (evidenceStatus !== 'ready') {
+          return evidenceStatus
         }
-        return satisfied() ? 'done' : 'pending'
+        policy.promoteCompletions()
+        if (satisfied(allowAttention)) {
+          return 'done'
+        }
+        if (allowAttention) {
+          policy.attention(projection)
+          projection.assertTargetsPresent()
+        }
+        return 'pending'
       }
-      // eslint-disable-next-line no-await-in-loop
       const initial = await evaluate()
       if (initial === 'done') {
         // Complete optional IO before finally aborts/cleans up this wait.
-        // eslint-disable-next-line no-await-in-loop
         return await success()
       }
       if (initial === 'resync') {
@@ -155,9 +162,19 @@ export async function waitForAgents(
       const watch = async () => {
         while (!subscription.signal.aborted) {
           try {
-            // eslint-disable-next-line no-await-in-loop
             for await (const raw of agentEvents({
               ...options,
+              onOpen: async () => {
+                // Capture after every successful (re)subscription, before consuming replay.
+                projection.reconciliation.defer(await watermark())
+                const status = await evaluate(undefined, true)
+                if (status === 'resync') {
+                  resync = true
+                }
+                if (status !== 'pending') {
+                  stop()
+                }
+              },
               nodeId: undefined,
               epoch: cursor.epoch,
               afterSeq: cursor.seq,
@@ -190,7 +207,6 @@ export async function waitForAgents(
               if (resolutions.length) {
                 const owner = projection.owner(nodeIds[0])
                 for (const nodeId of resolutions) {
-                  // eslint-disable-next-line no-await-in-loop
                   await projection.resolve(nodeId, get)
                 }
                 projection.reconciliation.defer(await watermark())
@@ -203,7 +219,7 @@ export async function waitForAgents(
                 }
               }
               const applied = projection.apply(event)
-              const status = await evaluate(applied ? event : undefined)
+              const status = await evaluate(applied ? event : undefined, true)
               if (status === 'resync') {
                 resync = true
                 stop()
@@ -223,13 +239,11 @@ export async function waitForAgents(
             }
           }
           if (!subscription.signal.aborted) {
-            // eslint-disable-next-line no-await-in-loop
             await delay(100, undefined, { signal: subscription.signal }).catch(() => {})
           }
         }
       }
       try {
-        // eslint-disable-next-line no-await-in-loop
         await watch()
       } finally {
         stop()
@@ -238,7 +252,6 @@ export async function waitForAgents(
       controller.signal.throwIfAborted()
       if (!resync && satisfied()) {
         // Complete optional IO before finally aborts/cleans up this wait.
-        // eslint-disable-next-line no-await-in-loop
         return await success()
       }
     }
@@ -251,7 +264,7 @@ export async function waitForAgents(
         timedOut ? 124 : 130,
         timedOut ? 'Timed out waiting for agents.' : 'Agent wait interrupted.',
         'Inspect with opencove agent get --node <selector>; waiting never sends input.',
-        { lastKnown: result() },
+        { ...(timedOut ? { reason: 'wait_timeout' } : {}), lastKnown: result() },
       )
     }
     if (error instanceof z.ZodError) {

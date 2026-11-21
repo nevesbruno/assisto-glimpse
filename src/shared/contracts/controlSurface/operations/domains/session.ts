@@ -1,3 +1,4 @@
+import { managedClaudeLaunchIntentSchema } from '../managedClaudeLaunchSchema'
 import { normalizeTerminalAgentActivityList } from '../sessionActivityNormalize'
 import { normalizeLaunchAgentInMountPayload } from '../sessionMountNormalize'
 import { normalizeWorkspaceIdPayload } from '../sessionPrepareNormalize'
@@ -24,6 +25,7 @@ export const sessionAttachAgentStateWatcherOperation = defineOperation({
     resumeSessionId: z.unknown().optional().describe('Resume id; non-strings become null'),
   }),
   normalize: normalizeAttachPayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeAttachPayload,
   errors: ['session.not_found'],
   id: 'session.attachAgentStateWatcher',
@@ -35,6 +37,7 @@ export const sessionAttachAgentStateWatcherOperation = defineOperation({
 export const sessionDetachAgentStateWatcherOperation = defineOperation({
   input: z.looseObject({ sessionId: z.string().describe('Terminal or agent session identifier') }),
   normalize: normalizeDetachPayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeDetachPayload,
   errors: [],
   id: 'session.detachAgentStateWatcher',
@@ -102,6 +105,7 @@ export const sessionKillOperation = defineOperation({
     'worker.unavailable',
     'persistence.unavailable',
     'terminal.kill_failed',
+    'agent.managed_launch_rejected',
   ],
   kind: 'command',
   scope: 'interact',
@@ -118,6 +122,7 @@ export const sessionLaunchAgentOperation = defineOperation({
     spaceId: z.string().nullish(),
     cwd: z.string().nullish(),
     prompt: z.string(),
+    intent: managedClaudeLaunchIntentSchema.optional(),
     provider: z.string().nullish(),
     model: z.string().nullish(),
     mode: z.string().nullish(),
@@ -134,6 +139,8 @@ export const sessionLaunchAgentOperation = defineOperation({
     'space.not_found',
     'persistence.unavailable',
     'agent.launch_failed',
+    'agent.managed_launch_rejected',
+    'agent.managed_launch_commit_failed',
     'terminal.runtime_not_ready',
     'worker.unavailable',
   ],
@@ -143,6 +150,7 @@ export const sessionLaunchAgentInMountOperation = defineOperation({
     mountId: z.string().describe('Project mount to run the agent in'),
     cwdUri: z.string().nullish().describe('File URI within the mount'),
     prompt: z.string().describe('Agent prompt'),
+    intent: managedClaudeLaunchIntentSchema.optional(),
     codexReuseRunningAppServer: z
       .boolean()
       .nullish()
@@ -184,8 +192,15 @@ export const sessionLaunchAgentInMountOperation = defineOperation({
       .describe('Positive row count, rounded down; invalid values use the operation default'),
   }),
   normalize: normalizeLaunchAgentInMountPayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeLaunchAgentInMountPayload,
-  errors: ['worker.unavailable', 'agent.launch_failed', 'terminal.runtime_not_ready'],
+  errors: [
+    'worker.unavailable',
+    'agent.launch_failed',
+    'terminal.runtime_not_ready',
+    'agent.managed_launch_rejected',
+    'agent.managed_launch_commit_failed',
+  ],
   id: 'session.launchAgentInMount',
   kind: 'command',
   scope: 'interact',
@@ -193,6 +208,7 @@ export const sessionLaunchAgentInMountOperation = defineOperation({
   summary: 'Launch or resume an agent process within a local or remote mount',
 })
 export const sessionListOperation = defineLegacyOperation({
+  compat: 'control-surface-legacy-validation',
   id: 'session.list',
   kind: 'query',
   scope: 'read',
@@ -208,8 +224,14 @@ export const sessionPrepareOrReviveOperation = defineOperation({
       .describe('Node ids to revive; non-string entries are ignored'),
   }),
   normalize: normalizeWorkspaceIdPayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeWorkspaceIdPayload,
-  errors: ['terminal.runtime_not_ready', 'persistence.unavailable'],
+  errors: [
+    'terminal.runtime_not_ready',
+    'persistence.unavailable',
+    'agent.managed_launch_rejected',
+    'agent.managed_launch_commit_failed',
+  ],
   id: 'session.prepareOrRevive',
   kind: 'command',
   scope: 'interact',
@@ -219,6 +241,7 @@ export const sessionPrepareOrReviveOperation = defineOperation({
 export const sessionPresentationSnapshotOperation = defineOperation({
   input: z.looseObject({ sessionId: z.string().describe('Terminal or agent session identifier') }),
   normalize: normalizePresentationSnapshotPayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizePresentationSnapshotPayload,
   errors: ['session.not_found'],
   id: 'session.presentationSnapshot',
@@ -230,6 +253,7 @@ export const sessionPresentationSnapshotOperation = defineOperation({
 export const sessionSnapshotOperation = defineOperation({
   input: z.looseObject({ sessionId: z.string().describe('Terminal or agent session identifier') }),
   normalize: normalizeSnapshotPayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeSnapshotPayload,
   errors: ['session.not_found'],
   id: 'session.snapshot',
@@ -263,6 +287,7 @@ export const sessionSpawnTerminalOperation = defineOperation({
       .describe('Positive row count, rounded down; invalid values use the operation default'),
   }),
   normalize: normalizeSpawnTerminalPayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeSpawnTerminalPayload,
   errors: [
     'space.not_found',
@@ -282,12 +307,25 @@ export const sessionStopNodeOperation = defineOperation({
     z.looseObject({
       nodeId: z.string().describe('Canvas node that owns the session'),
       sessionId: z.string().describe('Terminal or agent session identifier'),
+      agentOnly: z
+        .literal(true)
+        .optional()
+        .describe('Stop only if this session still hosts a live agent'),
     }),
     z.array(z.unknown()),
   ]),
   normalize: normalizeStopNode,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeStopNode,
-  errors: ['session.not_found', 'terminal.kill_failed'],
+  errors: [
+    'session.not_found',
+    'terminal.kill_failed',
+    'persistence.unavailable',
+    'agent.managed_launch_rejected',
+    'agent.not_running',
+    'agent.state_unknown',
+    'node.unsupported_operation',
+  ],
   id: 'session.stopNode',
   kind: 'command',
   scope: 'interact',
@@ -295,6 +333,7 @@ export const sessionStopNodeOperation = defineOperation({
   summary: 'Kill a node process only if its session binding still matches',
 })
 export const sessionTerminalAgentActivityListOperation = defineOperation({
+  // @compat control-surface-legacy-validation
   input: z
     .strictObject({})
     .nullish()
@@ -302,6 +341,7 @@ export const sessionTerminalAgentActivityListOperation = defineOperation({
       'Omit the payload or send null; object payloads are rejected for legacy compatibility',
     ),
   normalize: normalizeTerminalAgentActivityList,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeTerminalAgentActivityList,
   errors: [],
   id: 'session.terminalAgentActivity.list',
@@ -317,6 +357,7 @@ export const sessionWriteNodeOperation = defineOperation({
     data: z.string().describe('Terminal input, at most 32 KiB'),
   }),
   normalize: normalizeWriteNode,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeWriteNode,
   errors: ['session.not_found'],
   id: 'session.writeNode',
@@ -325,7 +366,19 @@ export const sessionWriteNodeOperation = defineOperation({
   availability: 'always',
   summary: 'Send terminal input only while the node session binding still matches',
 })
+export const sessionCleanupUnreferencedOperation = defineOperation({
+  id: 'session.cleanupUnreferenced',
+  input: z.strictObject({
+    sessionId: z.string().trim().min(1).describe('Session to close if it has no saved references'),
+  }),
+  errors: ['persistence.unavailable'],
+  kind: 'command',
+  scope: 'interact',
+  availability: 'always',
+  summary: 'Close a session only when no saved node or managed binding references it',
+})
 export const sessionOperations = [
+  sessionCleanupUnreferencedOperation,
   sessionAttachAgentStateWatcherOperation,
   sessionDetachAgentStateWatcherOperation,
   sessionFinalMessageOperation,

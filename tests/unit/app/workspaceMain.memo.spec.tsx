@@ -45,12 +45,9 @@ describe('WorkspaceMain memoization', () => {
   it('does not re-render the workspace canvas when props are referentially unchanged', () => {
     const activeWorkspace = createWorkspace('workspace-1')
     const onShowMessage = vi.fn()
-    const onRequestPersistFlush = vi.fn()
     const onAppendSpaceArchiveRecord = vi.fn()
-    const onNodesChange = vi.fn()
     const onViewportChange = vi.fn()
     const onMinimapVisibilityChange = vi.fn()
-    const onSpacesChange = vi.fn()
     const onActiveSpaceChange = vi.fn()
 
     const props = {
@@ -61,12 +58,9 @@ describe('WorkspaceMain memoization', () => {
       shortcutsEnabled: true,
       onAddWorkspace: vi.fn(),
       onShowMessage,
-      onRequestPersistFlush,
       onAppendSpaceArchiveRecord,
-      onNodesChange,
       onViewportChange,
       onMinimapVisibilityChange,
-      onSpacesChange,
       onActiveSpaceChange,
     }
 

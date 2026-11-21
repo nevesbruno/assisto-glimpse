@@ -24,7 +24,9 @@ for (const variant of ['always', 'desktop-managed-worker', 'managed-runtime', 'd
       ptyRuntime: variant === 'debug' ? { debugCrashHost() {} } : {},
       plugins: { configureHost() {} },
       ptyStreamHub: { agentRuns: { registry: { onDispose() {} } } },
-    } as Parameters<typeof registerControlSurfaceHandlers>[1])
+      // Registration only: the prompt service resolves a provider lazily.
+      agentProviderRegistry: { require: () => ({ prompting: { supported: false } }) },
+    } as unknown as Parameters<typeof registerControlSurfaceHandlers>[1])
     if (variant === 'desktop-managed-worker') {
       registerWorkerConfigurationHandlers(
         surface,

@@ -15,21 +15,20 @@ import {
 import { type SetNodes } from './useSpaceOwnership.helpers'
 import { useWorkspaceCanvasApplyOwnershipForDrop } from './useSpaceOwnership.applyDrop'
 import { useWorkspaceCanvasSpaceOwnershipWorktreeWarning } from './useSpaceOwnership.worktreeWarning'
-import { setSortedSelectedSpaceIds } from './useSelectionDraft.helpers'
+import type { WorkspaceCanvasNodeDragSession } from './useNodeDragSession.types'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
+import {
+  useCanvasSelectionCommands,
+  useReadCanvasDocument,
+} from '../../../store/canvasStoreContext'
 export function useWorkspaceCanvasSpaceOwnership({
   workspaceId,
   workspacePath,
   reactFlow,
-  spacesRef,
-  selectedNodeIdsRef,
-  setSelectedNodeIds,
-  selectedSpaceIdsRef,
-  setSelectedSpaceIds,
-  dragSelectedSpaceIdsRef,
+  nodeDragSession,
   exclusiveNodeDragAnchorIdRef,
   setNodes,
-  onSpacesChange,
-  onRequestPersistFlush,
+  updateCanvasDocument,
   onShowMessage,
   hideWorktreeMismatchDropWarning,
   nodeDragPointerAnchorRef,
@@ -37,16 +36,13 @@ export function useWorkspaceCanvasSpaceOwnership({
   workspaceId?: string
   workspacePath: string
   reactFlow: ReactFlowInstance<Node<TerminalNodeData>, Edge>
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  selectedNodeIdsRef: React.MutableRefObject<string[]>
-  setSelectedNodeIds: React.Dispatch<React.SetStateAction<string[]>>
-  selectedSpaceIdsRef: React.MutableRefObject<string[]>
-  setSelectedSpaceIds: React.Dispatch<React.SetStateAction<string[]>>
-  dragSelectedSpaceIdsRef: React.MutableRefObject<string[] | null>
+  nodeDragSession: Pick<
+    WorkspaceCanvasNodeDragSession,
+    'captureDragStartSpaceSelection' | 'getDragStartSpaceSelection' | 'clearDragStartSpaceSelection'
+  >
   exclusiveNodeDragAnchorIdRef: React.MutableRefObject<string | null>
   setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
   onShowMessage?: ShowWorkspaceCanvasMessage
   hideWorktreeMismatchDropWarning: boolean
   nodeDragPointerAnchorRef?: React.MutableRefObject<{
@@ -82,6 +78,13 @@ export function useWorkspaceCanvasSpaceOwnership({
 } {
   const { t } = useTranslation()
   const reactFlowStore = useStoreApi()
+  const selection = useCanvasSelectionCommands()
+  const readDocument = useReadCanvasDocument()
+  const {
+    captureDragStartSpaceSelection,
+    getDragStartSpaceSelection,
+    clearDragStartSpaceSelection,
+  } = nodeDragSession
   const dragStartNodeIdsRef = useRef<string[] | null>(null)
   const dragStartNodePositionByIdRef = useRef<Map<string, { x: number; y: number }> | null>(null)
   const dragStartAllNodePositionByIdRef = useRef<Map<string, { x: number; y: number }> | null>(null)
@@ -91,22 +94,20 @@ export function useWorkspaceCanvasSpaceOwnership({
       resolveSpaceAtPointFromHelpers(
         projectCanvasInteractionLayout(
           reactFlow.getNodes(),
-          spacesRef.current,
+          readDocument().spaces,
           readCanvasInteractionState(workspaceId),
         ).spaces,
         point,
       ),
-    [reactFlow, spacesRef, workspaceId],
+    [reactFlow, readDocument, workspaceId],
   )
 
   const applyOwnershipForDrop = useWorkspaceCanvasApplyOwnershipForDrop({
     workspaceId,
     workspacePath,
     reactFlow,
-    spacesRef,
     setNodes,
-    onSpacesChange,
-    onRequestPersistFlush,
+    updateCanvasDocument,
     onShowMessage,
     resolveSpaceAtPoint: resolveDropTargetSpaceAtPoint,
     t,
@@ -121,13 +122,13 @@ export function useWorkspaceCanvasSpaceOwnership({
       return resolveSnappedCanvasDropPositions({
         nodes: reactFlow.getNodes(),
         fallbackNodes,
-        spaces: spacesRef.current,
+        spaces: readDocument().spaces,
         workspaceId,
         draggedNodeIds,
         draggedNodePositionById,
       })
     },
-    [reactFlow, spacesRef, workspaceId],
+    [reactFlow, readDocument, workspaceId],
   )
 
   const {
@@ -139,7 +140,6 @@ export function useWorkspaceCanvasSpaceOwnership({
     applyOwnershipForDrop,
     reactFlow,
     resolveDropTargetSpaceAtPoint,
-    spacesRef,
     setNodes,
     hideWorktreeMismatchDropWarning,
     workspacePath,
@@ -156,13 +156,13 @@ export function useWorkspaceCanvasSpaceOwnership({
         reactFlow.getNodes().map(node => [node.id, { x: node.position.x, y: node.position.y }]),
       )
       dragStartSpaceRectByIdRef.current = new Map(
-        spacesRef.current
-          .filter(space => Boolean(space.rect))
+        readDocument()
+          .spaces.filter(space => Boolean(space.rect))
           .map(space => [space.id, { ...space.rect! }] as const),
       )
-      dragSelectedSpaceIdsRef.current = [...selectedSpaceIdsRef.current]
+      captureDragStartSpaceSelection()
     },
-    [dragSelectedSpaceIdsRef, reactFlow, selectedSpaceIdsRef, spacesRef],
+    [captureDragStartSpaceSelection, reactFlow, readDocument],
   )
 
   const handleNodeDragStart = useCallback(
@@ -185,8 +185,9 @@ export function useWorkspaceCanvasSpaceOwnership({
         }
       }
 
-      const shouldReplaceSelection =
-        !event.shiftKey && !selectedNodeIdsRef.current.includes(node.id)
+      // The flag React Flow hands us is the answer to "was it selected before this gesture". The
+      // store cannot say: the select batch of the same pointer down has already written it.
+      const shouldReplaceSelection = !event.shiftKey && node.selected !== true
       if (shouldReplaceSelection) {
         exclusiveNodeDragAnchorIdRef.current = node.id
 
@@ -208,9 +209,7 @@ export function useWorkspaceCanvasSpaceOwnership({
           { syncLayout: false },
         )
 
-        selectedNodeIdsRef.current = [node.id]
-        setSelectedNodeIds([node.id])
-        setSortedSelectedSpaceIds([], selectedSpaceIdsRef, setSelectedSpaceIds)
+        selection.select({ nodeIds: [node.id], spaceIds: [] })
         reactFlowStore.setState({
           nodesSelectionActive: true,
           coveDragSurfaceSelectionMode: false,
@@ -228,11 +227,8 @@ export function useWorkspaceCanvasSpaceOwnership({
       nodeDragPointerAnchorRef,
       reactFlow,
       reactFlowStore,
-      selectedNodeIdsRef,
-      selectedSpaceIdsRef,
+      selection,
       setNodes,
-      setSelectedNodeIds,
-      setSelectedSpaceIds,
     ],
   )
 
@@ -327,8 +323,9 @@ export function useWorkspaceCanvasSpaceOwnership({
         recorded && recorded.includes(node.id) && recorded.length > 0
           ? recorded
           : fallbackNodes.map(item => item.id)
-      if (dragSelectedSpaceIdsRef.current && dragSelectedSpaceIdsRef.current.length > 0) {
-        dragSelectedSpaceIdsRef.current = null
+      const dragStartSpaceIds = getDragStartSpaceSelection()
+      if (dragStartSpaceIds && dragStartSpaceIds.length > 0) {
+        clearDragStartSpaceSelection()
         return
       }
 
@@ -347,9 +344,15 @@ export function useWorkspaceCanvasSpaceOwnership({
         dropFlowPoint: dropPoint,
         fallbackNodes,
       })
-      dragSelectedSpaceIdsRef.current = null
+      clearDragStartSpaceSelection()
     },
-    [dragSelectedSpaceIdsRef, finalizeDraggedNodeDrop, nodeDragPointerAnchorRef, reactFlow],
+    [
+      clearDragStartSpaceSelection,
+      finalizeDraggedNodeDrop,
+      getDragStartSpaceSelection,
+      nodeDragPointerAnchorRef,
+      reactFlow,
+    ],
   )
 
   const handleSelectionDragStop = useCallback(
@@ -382,8 +385,9 @@ export function useWorkspaceCanvasSpaceOwnership({
           : fallbackNodes.length > 0
             ? fallbackNodes.map(item => item.id)
             : []
-      if (dragSelectedSpaceIdsRef.current && dragSelectedSpaceIdsRef.current.length > 0) {
-        dragSelectedSpaceIdsRef.current = null
+      const dragStartSpaceIds = getDragStartSpaceSelection()
+      if (dragStartSpaceIds && dragStartSpaceIds.length > 0) {
+        clearDragStartSpaceSelection()
         return
       }
 
@@ -402,9 +406,15 @@ export function useWorkspaceCanvasSpaceOwnership({
         dropFlowPoint: dropPoint,
         fallbackNodes,
       })
-      dragSelectedSpaceIdsRef.current = null
+      clearDragStartSpaceSelection()
     },
-    [dragSelectedSpaceIdsRef, finalizeDraggedNodeDrop, nodeDragPointerAnchorRef, reactFlow],
+    [
+      clearDragStartSpaceSelection,
+      finalizeDraggedNodeDrop,
+      getDragStartSpaceSelection,
+      nodeDragPointerAnchorRef,
+      reactFlow,
+    ],
   )
 
   return {

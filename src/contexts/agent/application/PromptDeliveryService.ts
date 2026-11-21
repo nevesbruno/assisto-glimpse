@@ -8,6 +8,7 @@ import { createAppError } from '../../../shared/errors/appError'
 import type { AgentPromptErrorDetails, AppErrorCode } from '../../../shared/contracts/dto/error'
 import type {
   PromptDeliveryPorts,
+  PromptDeliveryCaller,
   RunStateFence,
   RunStateReceipt,
 } from './ports/PromptDeliveryPorts'
@@ -43,13 +44,16 @@ export class PromptDeliveryService {
 
   deliver(
     request: PromptDeliveryRequest,
-    caller: { assertActive?: () => void; signal?: AbortSignal } = {},
+    caller: PromptDeliveryCaller = {},
   ): Promise<PromptDeliveryResult> {
     const text = canonicalizePromptText(request.text)
     const expectedDigest = claudePromptDigest(text)
     const deadline = this.ports.now() + request.timeoutMs
     const locator = request.nodeId ? { nodeId: request.nodeId } : { sessionId: request.sessionId! }
     const initial = this.ports.runs.readFence(locator)
+    if (initial) {
+      caller.authorizePrompt?.(initial.snapshot.provider, text)
+    }
     const id = request.deliveryId ?? this.ports.createDeliveryId()
     const error = (
       code: AppErrorCode,
@@ -62,7 +66,7 @@ export class PromptDeliveryService {
         reason,
         pasteDispatchAttempted: paste,
         submitDispatchAttempted: submit,
-        retryable: !paste,
+        retryable: !paste && reason !== 'history_saturated',
         deliveryId,
         ...(reason === 'expected_turn_mismatch'
           ? {
@@ -82,7 +86,7 @@ export class PromptDeliveryService {
     const expected = (f: RunStateFence | null) =>
       !request.expectTurnId ||
       (f?.snapshot.state === 'working' && f.snapshot.turn?.id === request.expectTurnId)
-    if (!expected(initial)) {
+    if (!initial?.claudeHistorySaturated && !expected(initial)) {
       return Promise.reject(error('agent.busy', 'expected_turn_mismatch'))
     }
     const refusal = promptAdmission(initial, this.ports.capability, request.whenBusy)
@@ -287,7 +291,13 @@ export class PromptDeliveryService {
           }
           // Do not resolve an overdue waiter, but continue evidence reconciliation.
         }
+        const conversationChanged =
+          r.fence !== null && r.fence.conversationGeneration !== admitted.conversationGeneration
         if (!samePromptEntry(admitted, r.fence)) {
+          record.retired = conversationChanged
+          if (record.retired) {
+            record.resolvedAt ??= this.ports.now()
+          }
           this.records.stopReconciliation(record)
           if (record.dto.status !== 'submitted') {
             record.dto.status = 'unknown'
@@ -373,7 +383,7 @@ export class PromptDeliveryService {
             fail('binding_changed')
             return
           }
-          if (!expected(current)) {
+          if (!current?.claudeHistorySaturated && !expected(current)) {
             fail('expected_turn_mismatch', 'agent.busy')
             return
           }
@@ -433,7 +443,10 @@ export class PromptDeliveryService {
           }
           receiptDeadline = Math.min(deadline, record.submitAt + 5000)
           try {
-            input.write('\r', id)
+            const target = this.ports.runs.inputTarget
+              ? this.ports.runs.inputTarget(fresh!)
+              : evidence.inputTarget
+            input.write('\r', id, target)
           } catch (cause) {
             fail(cause instanceof Error ? cause.message : 'write_failed', undefined, true)
             return

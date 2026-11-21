@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { useReadCanvasDocument } from '../../../store/canvasStoreContext'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
 import type { StandardWindowSizeBucket } from '@contexts/settings/domain/agentSettings'
 import type { BrowserMode } from '@shared/contracts/dto'
@@ -13,16 +14,13 @@ import { isEditableDomTarget } from '../domTargets'
 import { resolveWebsitePasteUrl } from '@shared/utils/websiteUrl'
 import { useWorkspaceCanvasImageImport } from './useCanvasImageImport'
 import { createWebsiteNodeAtFlowPosition } from './useInteractions.paneNodeCreation'
-import type { SetNodes } from './useInteractions.types'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
 
 export function useWorkspaceCanvasPasteHandlers({
   workspaceId,
   canvasRef,
   reactFlow,
-  spacesRef,
-  nodesRef,
-  setNodes,
-  onSpacesChange,
+  updateCanvasDocument,
   onShowMessage,
   createImageNode,
   createWebsiteNode,
@@ -34,10 +32,7 @@ export function useWorkspaceCanvasPasteHandlers({
   workspaceId?: string
   canvasRef: React.RefObject<HTMLDivElement | null>
   reactFlow: ReactFlowInstance<Node<TerminalNodeData>, Edge>
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  nodesRef: React.MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
   onShowMessage?: ShowWorkspaceCanvasMessage
   createImageNode: (
     anchor: { x: number; y: number },
@@ -58,14 +53,12 @@ export function useWorkspaceCanvasPasteHandlers({
   handleCanvasDragOver: React.DragEventHandler<HTMLDivElement>
   handleCanvasDrop: React.DragEventHandler<HTMLDivElement>
 } {
+  const readDocument = useReadCanvasDocument()
   const imageImport = useWorkspaceCanvasImageImport({
     workspaceId,
     canvasRef,
     reactFlow,
-    spacesRef,
-    nodesRef,
-    setNodes,
-    onSpacesChange,
+    updateCanvasDocument,
     onShowMessage,
     createImageNode,
     standardWindowSizeBucket,
@@ -107,23 +100,19 @@ export function useWorkspaceCanvasPasteHandlers({
         standardWindowSizeBucket,
         browserDefaultMode,
         createWebsiteNode,
-        spacesRef,
-        nodesRef,
-        setNodes,
-        onSpacesChange,
+        readDocument,
+        updateCanvasDocument,
       })
     },
     [
       workspaceId,
       createWebsiteNode,
       imageImport,
-      nodesRef,
-      onSpacesChange,
       reactFlow,
-      setNodes,
-      spacesRef,
+      readDocument,
       standardWindowSizeBucket,
       browserDefaultMode,
+      updateCanvasDocument,
       websiteWindowPasteEnabled,
       websiteWindowsEnabled,
     ],

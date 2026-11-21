@@ -110,6 +110,11 @@ export async function principalOf(
     return { kind: 'user' }
   }
   const { nodeId, projectId, spaceId, sessionId } = auth.grant
+  if (nodeId === null) {
+    throw createAppError('common.forbidden', {
+      details: { reason: 'operation_denied', operationId: 'orch' },
+    })
+  }
   return {
     kind: 'agent',
     nodeId,

@@ -12,6 +12,7 @@ type RuntimeBindings = Parameters<typeof useWorkspaceCanvasRuntimeBindings>[0]
 type NodeChanges = Parameters<typeof useWorkspaceCanvasApplyNodeChanges>[0]
 
 export function useWorkspaceCanvasRuntimeIntegrations({
+  workspaceId,
   actionRefs,
   nodeStore,
   taskUi,
@@ -19,13 +20,13 @@ export function useWorkspaceCanvasRuntimeIntegrations({
   agentSettings,
   reactFlow,
   clearNodeSelection,
-  onRequestPersistFlush,
   onShowMessage,
   canvasState,
   nodePublishers,
   nodeDragSession,
   exclusiveNodeDragAnchorIdRef,
 }: {
+  workspaceId: string
   actionRefs: ReturnType<typeof useWorkspaceCanvasActionRefs>
   nodeStore: ReturnType<typeof useWorkspaceCanvasNodesStore>
   taskUi: Pick<ReturnType<typeof useWorkspaceCanvasTaskUi>, 'requestNodeClose'>
@@ -33,7 +34,6 @@ export function useWorkspaceCanvasRuntimeIntegrations({
   agentSettings: AgentSettings
   reactFlow: RuntimeBindings['reactFlow']
   clearNodeSelection: RuntimeBindings['clearNodeSelection']
-  onRequestPersistFlush: RuntimeBindings['onRequestPersistFlush']
   onShowMessage: RuntimeBindings['onShowMessage']
   canvasState: ReturnType<typeof useWorkspaceCanvasState>
   nodePublishers: ReturnType<typeof useWorkspaceCanvasNodePublishers>
@@ -41,8 +41,9 @@ export function useWorkspaceCanvasRuntimeIntegrations({
   exclusiveNodeDragAnchorIdRef: NodeChanges['exclusiveNodeDragAnchorIdRef']
 }) {
   useWorkspaceCanvasRuntimeBindings({
+    workspaceId,
+    nodes: canvasState.flowNodes,
     setNodes: nodeStore.setNodes,
-    onRequestPersistFlush,
     actionRefs,
     clearNodeSelection,
     closeNode: taskUi.requestNodeClose,
@@ -62,20 +63,19 @@ export function useWorkspaceCanvasRuntimeIntegrations({
     switchAgentSession: agentSupport.switchAgentNodeSession,
     focusNodeOnClick: agentSettings.focusNodeOnClick,
     focusNodeTargetZoom: agentSettings.focusNodeTargetZoom,
-    nodesRef: nodeStore.nodesRef,
     reactFlow,
     onShowMessage,
   })
   const applyChanges = useWorkspaceCanvasApplyNodeChanges({
-    nodesRef: nodeStore.nodesRef,
     onNodesChange: nodePublishers.publishLiveNodesChange,
     onNodesCommit: nodePublishers.commitNodesChange,
+    onNodesRelease: nodePublishers.commitNodesRelease,
     onSelectedNodeIdsChange: canvasState.syncSelectedNodeIds,
     clearAgentLaunchToken: nodeStore.clearAgentLaunchToken,
     normalizePosition: nodeStore.normalizePosition,
     applyPendingScrollbacks: nodeStore.applyPendingScrollbacks,
+    nodes: canvasState.flowNodes,
     isNodeDraggingRef: nodeStore.isNodeDraggingRef,
-    dragSelectedSpaceIdsRef: canvasState.dragSelectedSpaceIdsRef,
     exclusiveNodeDragAnchorIdRef,
     nodeDragSession,
   })

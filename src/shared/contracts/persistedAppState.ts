@@ -1,3 +1,4 @@
+import type { ManagedClaudeResumeBindingOwnership } from './managedClaudeLaunch'
 import type {
   AgentLaunchMode,
   AgentProviderId,
@@ -91,6 +92,8 @@ export interface PersistedAgentNodeData {
   customDirectory?: string | null
   shouldCreateDirectory?: boolean
   taskId?: string | null
+  /** Launch-time override; absent means follow the current Settings value. */
+  agentFullAccess?: boolean
 }
 
 export interface PersistedTerminalAgentSessionBinding {
@@ -189,10 +192,12 @@ export type PersistedNodePayload =
   | PersistedPluginNodeData
 
 export interface PersistedNodeContract {
+  managedClaudeResumeBindingOwnership?: ManagedClaudeResumeBindingOwnership | null
   id: string
   sessionId?: string | null
   title: string
   titlePinnedByUser?: boolean
+  titleIsLiteral?: boolean
   position: PersistedPoint
   width: number
   height: number
@@ -377,6 +382,7 @@ export interface PersistedWorkspaceContract {
    * canonical frame.
    */
   collapsedNodeIds?: string[]
+  // @compat canvas-space-collapse-legacy
   /** Legacy Space disclosure IDs; migrated to collapsedNodeIds on load. */
   collapsedSpaceIds?: string[]
 }

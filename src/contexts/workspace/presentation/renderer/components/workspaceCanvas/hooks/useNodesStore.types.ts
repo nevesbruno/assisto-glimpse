@@ -34,13 +34,9 @@ export interface CreateNoteNodeOptions {
 }
 
 export interface UseWorkspaceCanvasNodesStoreParams {
-  workspaceId?: string
+  workspaceId: string
   workspacePath: string
   nodes: Node<TerminalNodeData>[]
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  onNodesChange: (nodes: Node<TerminalNodeData>[]) => void
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
   onShowMessage?: ShowWorkspaceCanvasMessage
   onNodeCreated?: (nodeId: string) => void
   standardWindowSizeBucket: StandardWindowSizeBucket
@@ -50,9 +46,6 @@ export interface UseWorkspaceCanvasNodesStoreParams {
 export interface UseWorkspaceCanvasNodeCreationParams {
   workspaceId?: string
   workspacePath?: string
-  nodesRef: React.MutableRefObject<Node<TerminalNodeData>[]>
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  onRequestPersistFlush?: () => void
   onShowMessage?: ShowWorkspaceCanvasMessage
   onNodeCreated?: (nodeId: string) => void
   setNodes: UseWorkspaceCanvasNodesStoreResult['setNodes']
@@ -60,13 +53,31 @@ export interface UseWorkspaceCanvasNodeCreationParams {
   browserDefaultMode: BrowserMode
 }
 
+export interface CanvasDocumentWriteOptions {
+  syncLayout?: boolean
+  /** Requests the persistence flush after the write, also when nothing changed. */
+  flush?: boolean
+}
+
+export interface CanvasDocumentRecipeInput {
+  nodes: Node<TerminalNodeData>[]
+  spaces: WorkspaceSpaceState[]
+}
+
 export interface UseWorkspaceCanvasNodesStoreResult {
-  nodesRef: React.MutableRefObject<Node<TerminalNodeData>[]>
   pendingScrollbackByNodeRef: React.MutableRefObject<Map<string, string>>
   isNodeDraggingRef: React.MutableRefObject<boolean>
   setNodes: (
     updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-    options?: { syncLayout?: boolean },
+    options?: CanvasDocumentWriteOptions,
+  ) => void
+  /**
+   * Writes nodes and Spaces in one store update, computed from the store's document as it is when
+   * this runs. The recipe must be pure: it runs under the document module's recipe guard.
+   */
+  updateCanvasDocument: (
+    recipe: (document: CanvasDocumentRecipeInput) => CanvasDocumentRecipeInput,
+    options?: CanvasDocumentWriteOptions,
   ) => void
   upsertNode: (nextNode: Node<TerminalNodeData>) => void
   bumpAgentLaunchToken: (nodeId: string) => number
@@ -80,7 +91,10 @@ export interface UseWorkspaceCanvasNodesStoreResult {
   updateTerminalTitle: (nodeId: string, title: string, startedAtMs?: number) => void
   clearTerminalAgentOverlay: (nodeId: string, expectedStartedAtMs?: number) => void
   renameTerminalTitle: (nodeId: string, title: string) => void
-  setNodeLabelColorOverride: (nodeIds: string[], labelColorOverride: NodeLabelColorOverride) => void
+  setNodeLabelColorOverride: (
+    nodeIds: readonly string[],
+    labelColorOverride: NodeLabelColorOverride,
+  ) => void
   updateNoteText: (nodeId: string, text: string) => void
   renameNoteTitle: (nodeId: string, title: string) => void
   updateWebsiteUrl: (nodeId: string, url: string) => void

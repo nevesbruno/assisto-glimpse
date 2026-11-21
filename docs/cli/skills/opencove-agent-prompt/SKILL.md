@@ -27,15 +27,25 @@ opencove agent read --node node-123 --turn turn-123
 ```
 
 Exact waiting returns the selected `turnId` and `outcome`, even if a newer turn has
-started; permission/question pauses keep it pending. All ended outcomes exit 0,
+started; matching waiting now stops with 10 by default. All ended outcomes exit 0,
 so check `outcome`. It requires one node and conflicts with `--until` and `--any`.
 Unknown/evicted turns or missing retained evidence exit 1: inspect `agent get`
 and its `lastEndedTurn`. Timeout exits 124 with `lastKnown` on stderr.
+Waiting observed (10): the agent may need the user — inspect before acting. Ask the user
+to resolve it in OpenCove (Desktop or this Worker's Web UI). Inspect with
+`opencove agent read --node <id> --screen` using the same connection options and matching
+session/turn IDs, then repeat the wait with the same --turn. --through-waiting continues
+when waiting is reported; it does not suppress exit 11 for an unfulfilled exited target.
+Success wins over attention; 11 wins over 10. Exact PTY exit normally returns 0/unknown.
+--any stops on the first success OR waiting/exited observation of an unfulfilled target;
+fulfilled bindings cannot stop --all later; a session change or unbinding resets progress.
+State turn-end results include completion with its own sessionId/turnId/outcome. Event waits (--until turn-end) cannot resume
+an already observed completion: prefer --turn.
 The exact read never falls back. Hook history is private/in-memory, limited to the
 up to 60 ended turns per node in the private Worker archive; exact --turn lookup survives restart. Remote exact waits use only mirrored
 snapshots/events. Older remote turns require the Worker that runs them;
 `details.reason: remote_history_unavailable` identifies this limit, not eviction. Currently
-correlated local Claude hooks supply messages. Unqualified read alone can fall
+correlated local Claude and Codex lifecycle hooks supply messages. Unqualified read alone can fall
 back to the transcript for `no_ended_turn` or `provider_sent_no_message`.
 Default stdout is message text only; `-o json` includes `source` and `truncated`.
 A cut hook prefix prints a stderr notice with transcript/screen inspection commands.
@@ -44,6 +54,7 @@ resend a prompt merely because a reply is unavailable.
 
 The command attempts one bracketed paste and Enter into the current editor; existing
 editor drafts may be submitted too. Resolve visible dialogs and inspect the editor.
+`history_saturated` means restart the agent window to send prompts again; the conversation itself is unaffected.
 `terminal_agent_unsupported` means the target must be an agent window OpenCove launched.
 Do not try raw PTY writes to work around that refusal. `agent.blocked` means resolve the
 pending dialog before trying delivery again.
@@ -79,18 +90,19 @@ busy refusal. The CLI checks `system.operation.describe` first; an older Worker
 without `whenBusy` receives no new fields, and busy refusal stays visible. No retry
 is made after an error. Waiting/dialogs and unknown/degraded states refuse.
 
-The CLI prints its generated deliveryId before sending; retain it even if the
-response is lost. Codex steering returns `dispatched`, exit 0, while awaiting
+The CLI prints `Sending prompt (delivery <id>).` before sending; retain the ID even if the
+response is lost. With --wait, `Waiting for turn <turnId> of node <nodeId>...` adds an
+interruption-only exact-wait continuation. The final JSON and exit status report the result.
+Codex steering returns `dispatched`, exit 0, while awaiting
 consumption. Check `opencove agent delivery <id> --wait --timeout 2m` before treating
 it as submitted. Confirmation is in order only while no other PTY input intervenes;
 other input makes it ambiguous, and interruption/end can leave it unknown.
 Claude same-ID receipts confirm submission independently of run-state acceptance.
-textComparison never decides submission. The submitted text differed from what you
-sent; an existing draft may have been included. Do not resend; inspect the screen.
+textComparison never decides submission. When textComparison is different, the submitted
+text differs from what you sent; an existing draft may have been included. Do not resend; inspect the screen.
 
 The orchestration loop is prompt → delivery status → `wait --turn` = **the containing
-turn ended** (check outcome) → `read --turn` (Claude correlated; Codex reply reads
-stay uncorrelated). Turn end does not prove a steer was handled. `agent delivery`
+turn ended** (check outcome) → `read --turn` (Claude and Codex lifecycle replies are correlated). Turn end does not prove a steer was handled. `agent delivery`
 exits 0 for submitted, 1 for not_sent/ambiguous/unknown/unavailable or an unconfirmed
 snapshot, 124 for a wait timeout. Self-wait returns immediately so consumption can
 proceed. Unresolved records are pinned; capacity refuses before bytes. A closed evidenceWindow is not a result. Worker restart/expiry makes lookup unavailable, never

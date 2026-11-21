@@ -2,11 +2,12 @@ import {
   setPromptSubmissionEvidence,
   type PromptSubmissionEvidence,
 } from '../../src/shared/runtime/agentHook/claudePromptEvidence'
-import type { TerminalSessionStateEvent } from '../../src/shared/contracts/dto'
+import type { AgentProviderId, TerminalSessionStateEvent } from '../../src/shared/contracts/dto'
 import { vi } from 'vitest'
 import { AgentRunStateRegistry } from '../../src/contexts/agent/application/AgentRunStateRegistry'
 import { AgentRunStateRuntime } from '../../src/contexts/agent/application/AgentRunStateRuntime'
 import { PromptDeliveryService } from '../../src/contexts/agent/application/PromptDeliveryService'
+import type { AgentTurnArchive } from '../../src/contexts/agent/application/AgentTurnArchive'
 import { PtyStreamHub } from '../../src/app/main/controlSurface/ptyStream/ptyStreamHub'
 
 export function promptDeliveryRuntimeFixture(
@@ -14,9 +15,10 @@ export function promptDeliveryRuntimeFixture(
     const timer = setTimeout(cb, delay)
     return () => clearTimeout(timer)
   },
-  provider: 'claude-code' | 'codex' = 'claude-code',
+  provider: AgentProviderId = 'claude-code',
   ready = true,
   createTurnId?: () => string,
+  archive?: AgentTurnArchive,
 ) {
   let nextTurn = 0
   const registry = new AgentRunStateRegistry({
@@ -24,6 +26,8 @@ export function promptDeliveryRuntimeFixture(
     now: Date.now,
     createTurnId: createTurnId ?? (() => (++nextTurn === 1 ? 'turn' : `turn-${nextTurn}`)),
     schedule,
+    archive,
+    membership: () => 'member',
   })
   const runtime = new AgentRunStateRuntime(registry, Date.now)
   runtime.setBindings([{ sessionId: 's', nodeId: 'n', projectId: 'p', remote: false }])

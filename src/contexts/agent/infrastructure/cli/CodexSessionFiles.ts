@@ -15,10 +15,12 @@ type CodexSessionMeta = Omit<CodexSessionFile, 'filePath'>
 const FIRST_LINE_READ_CHUNK_BYTES = 4096
 const FIRST_LINE_MAX_BYTES = 64 * 1024
 
-async function readFirstLine(filePath: string): Promise<string | null> {
+async function readFirstLine(filePath: string, signal?: AbortSignal): Promise<string | null> {
   let handle: Awaited<ReturnType<typeof fs.open>> | null = null
   try {
+    signal?.throwIfAborted()
     handle = await fs.open(filePath, 'r')
+    signal?.throwIfAborted()
     const decoder = new StringDecoder('utf8')
     const buffer = Buffer.allocUnsafe(FIRST_LINE_READ_CHUNK_BYTES)
     let bytesReadTotal = 0
@@ -26,8 +28,8 @@ async function readFirstLine(filePath: string): Promise<string | null> {
 
     while (bytesReadTotal < FIRST_LINE_MAX_BYTES) {
       const bytesToRead = Math.min(buffer.length, FIRST_LINE_MAX_BYTES - bytesReadTotal)
-      // eslint-disable-next-line no-await-in-loop
       const { bytesRead } = await handle.read(buffer, 0, bytesToRead, null)
+      signal?.throwIfAborted()
       if (bytesRead <= 0) {
         break
       }
@@ -56,6 +58,7 @@ async function readFirstLine(filePath: string): Promise<string | null> {
     const finalLine = `${remainder}${decoder.end()}`.trim()
     return finalLine.length > 0 ? finalLine : null
   } catch {
+    signal?.throwIfAborted()
     return null
   } finally {
     await handle?.close().catch(() => undefined)
@@ -139,17 +142,19 @@ export async function listCodexSessionFiles(input: {
   startedAtMs: number
   codexHomeDirectories?: readonly string[]
   sessionId?: string | null
+  signal?: AbortSignal
 }): Promise<CodexSessionFile[]> {
+  input.signal?.throwIfAborted()
   const homes = input.codexHomeDirectories ?? resolveCodexHomeDirectoryCandidates()
   const files = new Set<string>()
   for (const home of homes) {
     if (input.sessionId) {
       // Resume IDs can refer to years-old rollouts. Read only matching filenames, then
       // verify session_meta; neither recent mtime nor today's date is a resume authority.
-      // eslint-disable-next-line no-await-in-loop
       const entries = await fs
         .readdir(join(home, 'sessions'), { recursive: true, withFileTypes: true })
         .catch(() => [])
+      input.signal?.throwIfAborted()
       for (const entry of entries) {
         if (entry.isFile() && entry.name.endsWith(`-${input.sessionId}.jsonl`)) {
           files.add(join(entry.parentPath, entry.name))
@@ -176,8 +181,8 @@ export async function listCodexSessionFiles(input: {
       )
     }
     for (const directory of directories) {
-      // eslint-disable-next-line no-await-in-loop
       const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => [])
+      input.signal?.throwIfAborted()
       for (const entry of entries) {
         if (entry.isFile() && entry.name.startsWith('rollout-') && entry.name.endsWith('.jsonl')) {
           files.add(join(directory, entry.name))
@@ -188,8 +193,8 @@ export async function listCodexSessionFiles(input: {
   const candidates: CodexSessionFile[] = []
   for (const filePath of files) {
     // Keep reads bounded and sequential: a large history must not exhaust file handles.
-    // eslint-disable-next-line no-await-in-loop
-    const line = await readFirstLine(filePath)
+    const line = await readFirstLine(filePath, input.signal)
+    input.signal?.throwIfAborted()
     const meta = line ? parseCodexSessionMeta(line) : null
     if (
       !meta ||

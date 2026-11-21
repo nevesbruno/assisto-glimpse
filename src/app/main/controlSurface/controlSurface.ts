@@ -1,5 +1,10 @@
-import { sessionGrantAllowsOperation } from './http/sessionGrantAuthorization'
-import { createAppErrorDescriptor } from '../../../shared/errors/appError'
+import { normalizeClientFeatures } from '../../../shared/contracts/controlSurface/clientFeatures'
+import { assertGrantSpawnRoute } from './agentSpawnContext'
+import { sessionGrantRule } from './http/sessionGrantPolicy'
+import {
+  sessionGrantAllowsOperation,
+  sessionGrantDeniedError,
+} from './http/sessionGrantAuthorization'
 import { toAppErrorDescriptor } from '../../../shared/errors/appError'
 import type {
   ControlSurfaceInvokeRequest,
@@ -25,13 +30,14 @@ export function createControlSurface(
     run?: (
       ctx: ControlSurfaceContext,
       request: ControlSurfaceInvokeRequest,
-      execute: () => Promise<unknown>,
+      execute: (context?: ControlSurfaceContext) => Promise<unknown>,
+      payload: unknown,
     ) => Promise<unknown>
   } = {},
 ): ControlSurface {
   const handlers = new Map<string, ControlSurfaceHandler<unknown, unknown>>()
 
-  return {
+  const surface: ControlSurface = {
     hasOperation: id => handlers.has(id),
     register: (id, handler) => {
       if (handlers.has(id)) {
@@ -48,7 +54,7 @@ export function createControlSurface(
         return {
           __opencoveControlEnvelope: true,
           ok: false,
-          error: createAppErrorDescriptor('common.forbidden'),
+          error: sessionGrantDeniedError(request.id, ctx.requestAuth.grant.tier),
         }
       }
       const handler = handlers.get(request.id)
@@ -65,11 +71,28 @@ export function createControlSurface(
 
       let leave: (() => void) | undefined
       try {
+        ctx = {
+          ...ctx,
+          clientFeatures: normalizeClientFeatures(request.clientFeatures ?? ctx.clientFeatures),
+        }
         leave = options.enter?.(request.id)
         ctx.assertActive?.()
         const payload = handler.validate(request.payload)
-        const execute = async () => await handler.handle(ctx, payload)
-        const value = options.run ? await options.run(ctx, request, execute) : await execute()
+        if (ctx.requestAuth?.kind === 'session-grant') {
+          const rule = sessionGrantRule(request.id)
+          if (rule.access === 'constrained') {
+            rule.check(payload, {
+              grant: ctx.requestAuth.grant,
+              wirePayload: request.payload,
+              operationId: request.id,
+            })
+          }
+        }
+        assertGrantSpawnRoute(surface, ctx, request.id)
+        const execute = async (context = ctx) => await handler.handle(context, payload)
+        const value = options.run
+          ? await options.run(ctx, request, execute, payload)
+          : await execute()
 
         return {
           __opencoveControlEnvelope: true,
@@ -87,4 +110,5 @@ export function createControlSurface(
       }
     },
   }
+  return surface
 }

@@ -1,9 +1,22 @@
-import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { createIsolatedProcessEnv } from '../../scripts/lib/isolatedProcessEnvironment.mjs'
+import {
+  _electron as electron,
+  test,
+  type ElectronApplication,
+  type Page,
+  type TestInfo,
+} from '@playwright/test'
 import { once } from 'node:events'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'path'
+import {
+  captureElectronCrashDumps,
+  captureElectronProcessDiagnostics,
+} from './electron-process-diagnostics'
+import { resolveElectronCoreLimitLaunch } from './electron-core-limit'
 import { createTestUserDataDir } from './workspace-canvas.testUtils'
 
+type ProcessDiagnostics = ReturnType<typeof captureElectronProcessDiagnostics>
 const electronAppPath = path.resolve(__dirname, '../../')
 const testAgentStubScriptPath = path.resolve(__dirname, '../../scripts/test-agent-session-stub.mjs')
 const testWorkspacePath = path.resolve(__dirname, '../../')
@@ -31,7 +44,7 @@ function copyDefinedEnv(
 }
 
 const INITIAL_E2E_PROCESS_ENV = (() => {
-  const env = copyDefinedEnv(process.env)
+  const env = copyDefinedEnv(createIsolatedProcessEnv())
   // When running Playwright from inside Electron/GUI environments, macOS can inherit a
   // `__CFBundleIdentifier` override that breaks launching the Electron binary (SIGABRT in
   // `_RegisterApplication`). Ensure the child Electron uses its own bundle id.
@@ -199,17 +212,25 @@ async function waitForChildProcessExit(
 
 async function closeElectronAppAndCleanup(
   electronApp: ElectronApplication,
+  appProcess: ReturnType<ElectronApplication['process']>,
   originalClose: () => Promise<void>,
   userDataDir: string,
   cleanupUserDataDir: boolean,
+  diagnostics: ProcessDiagnostics,
+  testInfo: TestInfo,
+  attachCrashDumps: Awaited<ReturnType<typeof captureElectronCrashDumps>>,
 ): Promise<void> {
-  const appProcess = electronApp.process()
   const appPid = typeof appProcess.pid === 'number' && appProcess.pid > 0 ? appProcess.pid : null
-  const closeEventPromise = electronApp
-    .waitForEvent('close', { timeout: E2E_APP_CLOSE_TIMEOUT_MS })
-    .then(() => undefined)
-    .catch(() => undefined)
-  const closeAttemptPromise = originalClose()
+  const childHasExited = (): boolean =>
+    appProcess.exitCode !== null || appProcess.signalCode !== null
+  const closeEventPromise = childHasExited()
+    ? Promise.resolve()
+    : Promise.resolve()
+        .then(() => electronApp.waitForEvent('close', { timeout: E2E_APP_CLOSE_TIMEOUT_MS }))
+        .then(() => undefined)
+        .catch(() => undefined)
+  const closeAttemptPromise = Promise.resolve()
+    .then(originalClose)
     .then(() => undefined)
     .catch(() => undefined)
 
@@ -219,7 +240,7 @@ async function closeElectronAppAndCleanup(
       delay(E2E_APP_CLOSE_TIMEOUT_MS),
     ])
   } finally {
-    if (appPid !== null && isProcessAlive(appPid)) {
+    if (appPid !== null && !childHasExited() && isProcessAlive(appPid)) {
       try {
         appProcess.kill('SIGKILL')
       } catch {
@@ -228,7 +249,7 @@ async function closeElectronAppAndCleanup(
 
       await waitForChildProcessExit(appProcess, E2E_APP_FORCE_KILL_TIMEOUT_MS)
 
-      if (isProcessAlive(appPid)) {
+      if (!childHasExited() && isProcessAlive(appPid)) {
         try {
           process.kill(appPid, 'SIGKILL')
         } catch {
@@ -243,8 +264,27 @@ async function closeElectronAppAndCleanup(
     await Promise.race([closeAttemptPromise, delay(500)]).catch(() => undefined)
     await Promise.race([closeEventPromise, delay(500)]).catch(() => undefined)
 
-    if (cleanupUserDataDir) {
-      await cleanupUserDataDirWithRetry(userDataDir)
+    try {
+      await diagnostics.finish()
+      // Save before deleting userData, even when a failing test is still inside its finally block.
+      // A module-level afterEach only belongs to the first spec importing this cached helper.
+      const outputPath = testInfo.outputPath(`electron-process-diagnostics-${appPid}.log`)
+      await mkdir(path.dirname(outputPath), { recursive: true })
+      await writeFile(outputPath, diagnostics.text())
+      await testInfo.attach('electron-process-diagnostics', {
+        path: outputPath,
+        contentType: 'text/plain',
+      })
+    } finally {
+      try {
+        // close() often runs in finally before Playwright marks the test failed.
+        // Retain every new dump, including intentional recovery-test crashes.
+        await attachCrashDumps(testInfo, appPid)
+      } finally {
+        if (cleanupUserDataDir) {
+          await cleanupUserDataDirWithRetry(userDataDir)
+        }
+      }
     }
   }
 }
@@ -253,6 +293,7 @@ async function launchAppInMode(
   launchMode: E2EWindowMode,
   options: {
     env?: Record<string, string | undefined>
+    disableLinuxCoreDumps?: boolean
     userDataDir?: string
     cleanupUserDataDir?: boolean
     deviceScaleFactor?: number
@@ -261,7 +302,9 @@ async function launchAppInMode(
   attempt = 0,
 ): Promise<{ electronApp: ElectronApplication; window: Page }> {
   const userDataDir = options.userDataDir ?? (await createTestUserDataDir())
-  const cleanupUserDataDir = options.cleanupUserDataDir ?? true
+  // The complete launch owns the profile until an app is ready. Failed attempts
+  // must close their processes without deleting state needed by the next attempt.
+  let cleanupUserDataDir = false
   const testHomeDir = path.join(userDataDir, 'home')
   const testConfigDir = path.join(userDataDir, 'config')
   const testCacheDir = path.join(userDataDir, 'cache')
@@ -271,12 +314,15 @@ async function launchAppInMode(
   await mkdir(testCacheDir, { recursive: true })
   await mkdir(testRuntimeDir, { recursive: true, mode: 0o700 })
   let electronApp: ElectronApplication | null = null
+  const attachCrashDumps = await captureElectronCrashDumps(userDataDir)
 
   try {
     const envOverrides = copyDefinedEnv(options.env ?? {})
+    const coreLimitLaunch = resolveElectronCoreLimitLaunch(options.disableLinuxCoreDumps ?? false)
 
     electronApp = await electron.launch({
       timeout: E2E_APP_LAUNCH_TIMEOUT_MS,
+      executablePath: coreLimitLaunch?.executablePath,
       args: resolveElectronLaunchArgs(options.deviceScaleFactor),
       recordVideo: options.recordVideo,
       env: {
@@ -295,39 +341,56 @@ async function launchAppInMode(
         OPENCOVE_E2E_WINDOW_MODE: launchMode,
         ...(shouldDisableElectronSandboxForLinuxCi() ? { ELECTRON_DISABLE_SANDBOX: '1' } : {}),
         ...envOverrides,
+        ...coreLimitLaunch?.env,
       },
     })
 
-    if (shouldPipeElectronLogs()) {
-      const appProcess = electronApp.process()
-      appProcess?.stdout?.on('data', chunk => {
-        process.stdout.write(chunk)
-      })
-      appProcess?.stderr?.on('data', chunk => {
-        process.stderr.write(chunk)
-      })
-    }
+    // process() resolves through Playwright's connection and can throw once disconnected.
+    // Retain the owned child while the connection is live, just like the diagnostic collector.
+    const appProcess = electronApp.process()
+    const diagnostics = captureElectronProcessDiagnostics(
+      appProcess,
+      userDataDir,
+      shouldPipeElectronLogs(),
+    )
+    const testInfo = test.info()
 
     const originalClose = electronApp.close.bind(electronApp)
     let closePromise: Promise<void> | null = null
     ;(electronApp as unknown as { close: () => Promise<void> }).close = async () => {
       closePromise ??= closeElectronAppAndCleanup(
         electronApp,
+        appProcess,
         originalClose,
         userDataDir,
         cleanupUserDataDir,
-      )
+        diagnostics,
+        testInfo,
+        attachCrashDumps,
+      ).catch(error => {
+        // Tests usually close in finally, before Playwright records their primary error.
+        // Keep that error intact even if retaining the attachment or deleting the profile fails.
+        process.stderr.write(
+          `[e2e] Electron cleanup failed: ${String(error)}\n${diagnostics.text()}\n`,
+        )
+      })
       return await closePromise
     }
 
     const window = await electronApp.firstWindow()
     await window.waitForLoadState('domcontentloaded')
+    await window.waitForFunction(
+      () => typeof globalThis.window.opencoveApi?.controlSurface?.invoke === 'function',
+    )
+    cleanupUserDataDir = options.cleanupUserDataDir ?? true
     return { electronApp, window }
   } catch (error) {
     if (electronApp) {
       await electronApp.close().catch(() => undefined)
-    } else if (cleanupUserDataDir) {
-      await cleanupUserDataDirWithRetry(userDataDir)
+    } else {
+      await attachCrashDumps(test.info(), null).catch(attachmentError => {
+        process.stderr.write(`[e2e] Crash dump attachment failed: ${String(attachmentError)}\n`)
+      })
     }
 
     const shouldRetryCurrentMode = isRetryableLaunchError(error) && attempt < 1
@@ -344,6 +407,7 @@ async function launchAppWithModes(
   launchModes: E2EWindowMode[],
   options: {
     env?: Record<string, string | undefined>
+    disableLinuxCoreDumps?: boolean
     userDataDir?: string
     cleanupUserDataDir?: boolean
     deviceScaleFactor?: number
@@ -369,6 +433,7 @@ async function launchAppWithModes(
 
 export async function launchApp(options?: {
   windowMode?: E2EWindowMode
+  disableLinuxCoreDumps?: boolean
   env?: Record<string, string | undefined>
   userDataDir?: string
   cleanupUserDataDir?: boolean
@@ -376,5 +441,13 @@ export async function launchApp(options?: {
   recordVideo?: E2EVideoOptions
 }): Promise<{ electronApp: ElectronApplication; window: Page }> {
   const launchModes = resolveLaunchModes(options?.windowMode)
-  return await launchAppWithModes(launchModes, options)
+  const userDataDir = options?.userDataDir ?? (await createTestUserDataDir())
+  try {
+    return await launchAppWithModes(launchModes, { ...options, userDataDir })
+  } catch (error) {
+    if (options?.cleanupUserDataDir ?? true) {
+      await cleanupUserDataDirWithRetry(userDataDir)
+    }
+    throw error
+  }
 }

@@ -1,3 +1,5 @@
+import type { NodeLineageRecord } from '../../domain/nodeLineage'
+import { projectNodeLineages } from '../nodeLineage/NodeLineageOwner'
 import type { CreateNodeInput, CreateNodeResult } from '../../../../shared/contracts/dto'
 import { createAppError, toAppErrorDescriptor } from '../../../../shared/errors/appError'
 import { normalizeAgentSettings } from '../../../settings/domain/agentSettings'
@@ -5,6 +7,7 @@ import { resolveNodeCreationTarget, type ResolvedNodeCreationTarget } from './no
 import type { SpaceLocatorResolverDeps } from './spaceLocator'
 import type { NodeControlRuntimeDeps } from './nodeControlUseCases'
 import {
+  isNodeControlRevisionConflict,
   replaceNodeControlWorkspace,
   requireNodeControlState,
   type NodeControlAppStateStore,
@@ -13,6 +16,7 @@ import {
 import { resolvePlacement, workspaceWithNode } from './nodeCreatePlacement'
 import { resolveCreateFrame } from './nodeDataFactory'
 import { toCanvasNodeDetail } from './nodeDtos'
+import { assertTaskCanTakeAgent, linkAgentToTask } from './nodeTaskLink'
 
 function targetIdentity(target: ResolvedNodeCreationTarget) {
   return JSON.stringify([
@@ -22,6 +26,7 @@ function targetIdentity(target: ResolvedNodeCreationTarget) {
     target.endpoint.endpointId,
     target.mount?.rootUri ?? null,
     target.workingDirectory,
+    target.referenceSpaceId,
   ])
 }
 
@@ -33,8 +38,11 @@ export async function commitCreatedNode(options: {
   input: CreateNodeInput
   node: NodeControlNode
   initialTarget: ResolvedNodeCreationTarget
+  taskNodeId?: string
+  now: Date
+  lineage?: NodeLineageRecord | null
+  callerNodeId?: string | null
 }): Promise<CreateNodeResult> {
-  /* eslint-disable no-await-in-loop -- Each bounded CAS attempt must use a fresh snapshot. */
   for (let attempt = 0; attempt < 3; attempt++) {
     options.runtime.assertActive?.()
     const expectedRevision = await options.store.readAppStateRevision()
@@ -60,6 +68,8 @@ export async function commitCreatedNode(options: {
       kind: options.input.kind,
       bucket: normalizeAgentSettings(state.settings).standardWindowSizeBucket,
       frame: options.input.frame,
+      callerNodeId: options.callerNodeId,
+      reference: current.reference,
     })
     const frame = resolveCreateFrame({
       kind: options.input.kind,
@@ -74,28 +84,51 @@ export async function commitCreatedNode(options: {
       height: frame.height,
     }
     const spaceId = current.space?.id ?? null
-    const workspace = workspaceWithNode(current.workspace, node, spaceId)
-    options.runtime.assertActive?.()
-    const result = await options.store.writeAppState(
-      replaceNodeControlWorkspace(state, workspace),
-      { expectedRevision },
+    if (options.taskNodeId !== undefined) {
+      assertTaskCanTakeAgent({
+        workspace: current.workspace,
+        spaceId,
+        taskNodeId: options.taskNodeId,
+      })
+    }
+    const inserted = workspaceWithNode(
+      current.workspace,
+      node,
+      spaceId,
+      Boolean(options.input.near),
     )
+    const workspace =
+      options.taskNodeId === undefined
+        ? inserted
+        : linkAgentToTask(inserted, {
+            taskNodeId: options.taskNodeId,
+            agentNodeId: node.id,
+            now: options.now.toISOString(),
+          })
+    options.runtime.assertActive?.()
+    const nextState = replaceNodeControlWorkspace(state, workspace)
+    const result = options.lineage
+      ? await options.store.commitCreatedNodeState!(nextState, {
+          expectedRevision,
+          lineage: options.lineage,
+        })
+      : await options.store.writeAppState(nextState, { expectedRevision })
     if (result.ok) {
       return {
         revision: result.revision ?? (await options.store.readAppStateRevision()),
         projectId: workspace.id,
         spaceId,
-        node: toCanvasNodeDetail({ node, workspace, spaceId }),
+        node: (
+          await projectNodeLineages(options.store, [
+            toCanvasNodeDetail({ node, workspace, spaceId }),
+          ])
+        )[0],
       }
     }
-    const isConflict =
-      result.error.code === 'persistence.invalid_state' &&
-      /^App state revision conflict(?:\s|\(|$)/.test(result.error.debugMessage ?? '')
-    if (!isConflict || attempt === 2) {
+    if (!isNodeControlRevisionConflict(result.error) || attempt === 2) {
       throw createAppError(result.error)
     }
   }
-  /* eslint-enable no-await-in-loop */
   throw new Error('Node creation persistence attempts exhausted.')
 }
 
@@ -121,6 +154,13 @@ export async function cleanupFailedNodeCreation(
     }
   } catch {
     /* An unavailable read cannot prove that the write did not commit. */
+  }
+  if (persisted === false && node.sessionId && store.isRuntimeReferenced) {
+    try {
+      persisted = store.isRuntimeReferenced(node.sessionId)
+    } catch {
+      persisted = null
+    }
   }
   if (persisted === false) {
     if (node.sessionId) {

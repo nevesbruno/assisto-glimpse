@@ -51,6 +51,7 @@ export interface SidebarAgentItemModel {
   effectiveLabelColor: LabelColor | null
   owningSpace: WorkspaceSpaceState | null
   status: SidebarAgentStatus
+  blockedReason?: import('@shared/contracts/dto/agentRunState').AgentRunSnapshot['blockedReason']
   /** Set when a standby Agent waits because you have not answered its turn: since when. */
   needsYouSinceMs?: number
   sidebarHidden?: boolean
@@ -137,6 +138,7 @@ export function buildSidebarAgentItems(
               linkedTaskTitle,
               fallbackTitle: node.data.title,
               preferFallbackTitle: node.data.titlePinnedByUser === true,
+              titleIsLiteral: node.data.titleIsLiteral === true,
             })
           : provider
             ? resolveAgentDisplayLabel({
@@ -144,8 +146,12 @@ export function buildSidebarAgentItems(
                 linkedTaskTitle: null,
                 fallbackTitle: node.data.title,
                 preferFallbackTitle: node.data.titlePinnedByUser === true,
+                titleIsLiteral: node.data.titleIsLiteral === true,
               })
             : node.data.title,
+      ...(resolveAgentPresentation(node.data).observation?.blockedReason
+        ? { blockedReason: resolveAgentPresentation(node.data).observation?.blockedReason }
+        : {}),
       effectiveLabelColor: resolveEffectiveLabelColor(node),
       owningSpace: spaceByNodeId.get(node.id) ?? null,
       ...(needsYouSinceMs === undefined

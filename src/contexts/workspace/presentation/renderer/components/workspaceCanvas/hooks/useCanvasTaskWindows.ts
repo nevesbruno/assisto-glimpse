@@ -1,27 +1,18 @@
 import type { Node } from '@xyflow/react'
 import type { StandardWindowSizeBucket } from '@contexts/settings/domain/agentSettings'
-import type { Point, TaskPriority, TerminalNodeData, WorkspaceSpaceState } from '../../../types'
-import type { ContextMenuState, NodePlacementOptions } from '../types'
+import type { Point, TaskPriority, TerminalNodeData } from '../../../types'
+import type { NodePlacementOptions } from '../types'
 import type { WorkspaceCanvasActionRefs } from './useActionRefs'
 import { useWorkspaceCanvasNodeDeleteConfirmation } from './useNodeDeleteConfirmation'
-import { useWorkspaceCanvasTaskCreator } from './useTaskCreator'
+import { useWorkspaceCanvasTaskNodeCreation } from './useTaskNodeCreation'
 import { useWorkspaceCanvasTaskEditor } from './useTaskEditor'
-
-type SetNodes = (
-  updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-  options?: { syncLayout?: boolean },
-) => void
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
 
 export function useWorkspaceCanvasTaskWindows({
   workspaceId,
   taskTagOptions,
-  contextMenu,
-  setContextMenu,
-  nodesRef,
   setNodes,
-  spacesRef,
-  onSpacesChange,
-  onRequestPersistFlush,
+  updateCanvasDocument,
   suggestTaskTitle,
   standardWindowSizeBucket,
   createTaskNode,
@@ -30,13 +21,8 @@ export function useWorkspaceCanvasTaskWindows({
 }: {
   workspaceId?: string
   taskTagOptions: string[]
-  contextMenu: ContextMenuState | null
-  setContextMenu: React.Dispatch<React.SetStateAction<ContextMenuState | null>>
-  nodesRef: React.MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: SetNodes
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  setNodes: UseWorkspaceCanvasNodesStoreResult['setNodes']
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
   suggestTaskTitle: (
     requirement: string,
   ) => Promise<{ title: string; priority: TaskPriority; tags: string[] }>
@@ -53,63 +39,31 @@ export function useWorkspaceCanvasTaskWindows({
   closeNode: (nodeId: string) => Promise<void>
   actionRefs: WorkspaceCanvasActionRefs
 }) {
-  const {
-    taskCreator,
-    setTaskCreator,
-    createTaskAtPoint,
-    openTaskCreator,
-    closeTaskCreator,
-    generateTaskTitle,
-    createTask,
-  } = useWorkspaceCanvasTaskCreator({
+  const { createTaskAtPoint, createTaskFromContextMenu } = useWorkspaceCanvasTaskNodeCreation({
     workspaceId,
-    contextMenu,
-    setContextMenu,
-    taskTagOptions,
-    nodesRef,
-    setNodes,
-    spacesRef,
-    onSpacesChange,
-    onRequestPersistFlush,
-    suggestTaskTitle,
+    updateCanvasDocument,
     standardWindowSizeBucket,
     createTaskNode,
   })
 
-  const { taskEditor, setTaskEditor, closeTaskEditor, generateTaskEditorTitle, saveTaskEdits } =
-    useWorkspaceCanvasTaskEditor({
-      nodesRef,
-      setNodes,
-      onRequestPersistFlush,
-      setContextMenu,
-      suggestTaskTitle,
-      taskTagOptions,
-      openTaskEditorRef: actionRefs.openTaskEditorRef,
-    })
+  const { closeTaskEditor, generateTaskEditorTitle, saveTaskEdits } = useWorkspaceCanvasTaskEditor({
+    setNodes,
+    suggestTaskTitle,
+    taskTagOptions,
+    openTaskEditorRef: actionRefs.openTaskEditorRef,
+  })
 
-  const { nodeDeleteConfirmation, setNodeDeleteConfirmation, confirmNodeDelete, requestNodeClose } =
-    useWorkspaceCanvasNodeDeleteConfirmation({
-      nodesRef,
-      spacesRef,
-      closeNode,
-      requestNodeDeleteRef: actionRefs.requestNodeDeleteRef,
-    })
+  const { confirmNodeDelete, requestNodeClose } = useWorkspaceCanvasNodeDeleteConfirmation({
+    closeNode,
+    requestNodeDeleteRef: actionRefs.requestNodeDeleteRef,
+  })
 
   return {
-    taskCreator,
-    setTaskCreator,
     createTaskAtPoint,
-    openTaskCreator,
-    closeTaskCreator,
-    generateTaskTitle,
-    createTask,
-    taskEditor,
-    setTaskEditor,
+    createTaskFromContextMenu,
     closeTaskEditor,
     generateTaskEditorTitle,
     saveTaskEdits,
-    nodeDeleteConfirmation,
-    setNodeDeleteConfirmation,
     confirmNodeDelete,
     requestNodeClose,
   }

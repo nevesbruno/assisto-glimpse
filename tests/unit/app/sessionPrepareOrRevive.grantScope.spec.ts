@@ -50,24 +50,16 @@ async function setup() {
 }
 
 describe('session.prepareOrRevive under a grant', () => {
-  it('answers a workspace of another project exactly like an unknown one, touching nothing', async () => {
+  it('refuses every grant caller without reading state or restoring a session', async () => {
+    // Upstream schema S1d: session recovery stays managed by OpenCove.
     const { invoke, readAppState, restoreTerminalSession } = await setup()
-    const foreign = await invoke('project-b')
-    expect(foreign.ok).toBe(false)
+    for (const workspaceId of ['project-b', 'project-ghost', 'project-a']) {
+      expect(await invoke(workspaceId)).toMatchObject({
+        ok: false,
+        error: { code: 'common.forbidden', details: { reason: 'operation_denied' } },
+      })
+    }
     expect(readAppState).not.toHaveBeenCalled()
     expect(restoreTerminalSession).not.toHaveBeenCalled()
-    const unknown = await invoke('project-ghost')
-    const normalize = (result: unknown, id: string) =>
-      JSON.parse(JSON.stringify(result).replaceAll(id, '<id>'))
-    expect(normalize(foreign, 'project-b')).toEqual(normalize(unknown, 'project-ghost'))
-    expect(foreign).toMatchObject({ ok: false, error: { code: 'common.invalid_input' } })
-  })
-
-  it('still serves the grant own workspace', async () => {
-    const { invoke } = await setup()
-    expect(await invoke('project-a')).toMatchObject({
-      ok: true,
-      value: { workspaceId: 'project-a' },
-    })
   })
 })

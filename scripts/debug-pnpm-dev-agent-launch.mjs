@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* eslint-disable no-await-in-loop -- debug smoke intentionally launches cases sequentially */
+import './lib/isolateHostEnvironment.mjs'
 
 import { chromium } from '@playwright/test'
 import { execFile, spawn } from 'node:child_process'

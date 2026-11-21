@@ -9,6 +9,20 @@ export const QUICK_E2E_GROUPS = {
       e2e('recovery.worker-client-input-after-restart'),
     ],
   },
+  workerCli: {
+    reason:
+      'Desktop still projects real granted terminals; backend matrices run in worker-cli contracts.',
+    tests: [
+      e2e('cli.output-boundary'),
+      e2e('cli.node-create-agent-wait'),
+      e2e('cli.session-grant'),
+      e2e('cli.bounded-agent-spawning'),
+    ],
+    matches: path =>
+      /app\/(?:cli|worker)\/|app\/main\/controlsurface\/handlers\/(?:node|session|pty)|tests\/contract\/worker-cli\/|tests\/e2e\/cli\.|tests\/support\/(?:clisessiongrant|sessiongrantcases|boundedspawning|clilineageagent)\.ts$/.test(
+        path,
+      ),
+  },
   plugins: {
     reason: 'Independent install/reload/restart, Web views, contribution preferences and details.',
     tests: [
@@ -26,6 +40,38 @@ export const QUICK_E2E_GROUPS = {
     reason: 'Shared plugin pointer changes also cover previews below the viewport and host APIs.',
     tests: [e2e('plugins.canvas'), e2e('plugins.filesystem'), e2e('plugins.targets')],
     matches: path => path === 'tests/e2e/plugins.local.helpers.ts',
+  },
+  liveViews: {
+    reason:
+      'Canonical refresh and node composition retain live views and skip window commits on viewport updates.',
+    tests: [
+      e2e('plugins'),
+      e2e('plugins.canvas'),
+      e2e('plugins.commands'),
+      e2e('plugins.contributions'),
+      e2e('plugins.details'),
+      e2e('plugins.filesystem'),
+      e2e('plugins.host-extensions'),
+      e2e('plugins.install'),
+      e2e('plugins.library'),
+      e2e('plugins.local'),
+      e2e('plugins.maintenance'),
+      e2e('plugins.repository-details'),
+      e2e('plugins.sidebar'),
+      e2e('plugins.targets'),
+      e2e('plugins.themes'),
+      e2e('plugins.titles'),
+      e2e('workspace-canvas.website-window'),
+      e2e('workspace-canvas.website-window.device-pixel-ratio'),
+      e2e('workspace-canvas.website-window.freeze'),
+      e2e('workspace-canvas.website-window.iframe'),
+      e2e('workspace-canvas.far-view'),
+      e2e('recovery.managed-claude-convergence'),
+    ],
+    matches: path =>
+      /workersync|workspacecanvasinner|workspacecanvasproviders|workspacecanvas\/nodetypes|usecanvasnodetypes/.test(
+        path,
+      ),
   },
   windows: {
     reason: 'Shared window movement, resize and collapse preserve live content.',
@@ -46,6 +92,20 @@ export const QUICK_E2E_GROUPS = {
         path,
       ),
   },
+  managedClaude: {
+    reason:
+      'Default Claude adoption, qualified clear recovery, convergence and restart-based freeze.',
+    tests: [
+      e2e('recovery.managed-claude-launch-lifecycle'),
+      e2e('recovery.managed-claude-convergence'),
+      e2e('recovery.claude-clear-ordering'),
+      e2e('recovery.managed-claude-defaults'),
+    ],
+    matches: path =>
+      /managedclaude|managed-claude|claudeclear|claude-clear|clauderesumetranscript|systemhandlers|clientfeatures|contracts\/(?:dto\/controlsurface|controlsurface|managedclaude)/.test(
+        path,
+      ),
+  },
   connections: {
     reason: 'Desktop and Web remain interactive on the same Worker and canonical terminal grid.',
     tests: [e2e('workspace-canvas.desktop-web-terminal-consistency')],
@@ -56,7 +116,10 @@ export const QUICK_E2E_GROUPS = {
   },
   persistence: {
     reason: 'Control Surface writes survive concurrent renderer publications and merges.',
-    tests: [e2e('persistence.concurrent-control-surface-writes')],
+    tests: [
+      e2e('persistence.concurrent-control-surface-writes'),
+      e2e('recovery.managed-claude-convergence'),
+    ],
     matches: path =>
       /\/persistence\/|\/sync\/|workersync|syncnodeguards|remotepersistencestore|browseropencoveapi\.persistence/.test(
         path,
@@ -90,7 +153,7 @@ const isConfiguration = path =>
     path,
   ) ||
   /(?:^|\/)(?:electron\.vite|vite|vitest|playwright)[^/]*\.config\./.test(path) ||
-  /^(?:scripts\/|\.github\/|\.husky\/)/.test(path)
+  /^(?:scripts\/|\.github\/)/.test(path)
 const isSource = path =>
   /^(?:src\/|tests\/|harness\/)/.test(path) && /\.(?:[cm]?[jt]sx?|css|json)$/.test(path)
 
@@ -186,4 +249,16 @@ export function selectPrecommitE2E({ changes, full = false }) {
     tests: [...new Set(groups.flatMap(group => group.tests))],
     unmatchedPaths,
   }
+}
+
+/** The headless lane retains the CLI/Worker guarantees removed from Desktop E2E. */
+export function shouldRunWorkerCliContracts(changes, full = false) {
+  return (
+    full ||
+    changes.some(({ path }) =>
+      /^(?:src\/(?:app\/(?:cli|worker|main\/controlSurface)\/|contexts\/(?:worker|agent|terminal|plugins)\/|shared\/contracts\/|platform\/process\/)|tests\/contract\/worker-cli\/|tests\/e2e\/(?:cli\.|worker-|plugins\.commands)|tests\/support\/(?:cliSessionGrant|sessionGrantCases|boundedSpawning|cliLineageAgent)\.ts$|scripts\/(?:build-cli|run-precommit-e2e|precommit-e2e-selection)|(?:package\.json|pnpm-lock\.yaml|electron\.vite\.config\.ts)$)/.test(
+        path.replaceAll('\\', '/'),
+      ),
+    )
+  )
 }

@@ -1,4 +1,9 @@
 import { registerOperation } from '../registerOperation'
+import {
+  guardLegacyManagedClaudeContext,
+  managedClaudeWritesEnabled,
+} from '../managedClaudeCompatibility'
+import { assertManagedClaudeLaunchCurrent } from '../managedClaudeLaunchRuntime'
 import { sessionPrepareOrReviveOperation } from '@shared/contracts/controlSurface/operations/domains/session'
 import type { PersistenceStore } from '../../../../platform/persistence/sqlite/PersistenceStore'
 import type {
@@ -40,23 +45,27 @@ export function registerSessionPrepareOrReviveHandler(
     reviveExecutorTui?: (nodeId: string) => Promise<string | null>
   },
 ): void {
-  const inFlightNodes = new Map<string, Promise<PreparedRuntimeNodeResult | null>>()
+  const inFlightNodes = new Map<
+    string,
+    { operation: Promise<PreparedRuntimeNodeResult | null>; attempt: unknown }
+  >()
   const prepareOnce = (
     workspaceId: string,
     nodeId: string,
     prepare: () => Promise<PreparedRuntimeNodeResult | null>,
+    attempt: unknown,
   ): Promise<PreparedRuntimeNodeResult | null> => {
     const key = JSON.stringify([workspaceId, nodeId])
     const existing = inFlightNodes.get(key)
-    if (existing) {
-      return existing
+    if (existing && existing.attempt === attempt) {
+      return existing.operation
     }
     const operation = prepare().finally(() => {
-      if (inFlightNodes.get(key) === operation) {
+      if (inFlightNodes.get(key)?.operation === operation) {
         inFlightNodes.delete(key)
       }
     })
-    inFlightNodes.set(key, operation)
+    inFlightNodes.set(key, { operation, attempt })
     return operation
   }
   registerOperation(controlSurface, sessionPrepareOrReviveOperation, {
@@ -102,7 +111,15 @@ export function registerSessionPrepareOrReviveHandler(
                 workspace.id,
                 node.id,
                 async (): Promise<PreparedRuntimeNodeResult | null> => {
-                  const existingSessionId = normalizeOptionalString(node.sessionId)
+                  await ctx.managedClaudePreparation?.awaitPending(node.id)
+                  ctx.assertActive?.()
+                  const observed = store.observeManagedClaudeNode?.(node.id)
+                  if (observed?.retired) {
+                    return null
+                  }
+                  const existingSessionId = normalizeOptionalString(
+                    observed?.binding ? observed.nodeRuntimeSessionId : node.sessionId,
+                  )
                   if (
                     existingSessionId &&
                     node.kind === 'terminal' &&
@@ -122,7 +139,16 @@ export function registerSessionPrepareOrReviveHandler(
                             store,
                             node,
                           })
+                    const final = store.observeManagedClaudeNode?.(node.id)
+                    if (
+                      final?.retired ||
+                      (final?.binding && final.nodeRuntimeSessionId !== existingSessionId)
+                    ) {
+                      return null
+                    }
+                    const binding = final?.binding
                     return toPreparedNodeResult(node, {
+                      ...(binding ? { managedClaudeBinding: binding } : {}),
                       recoveryState: 'live',
                       sessionId: existingSessionId,
                       isLiveSessionReattach: true,
@@ -136,7 +162,9 @@ export function registerSessionPrepareOrReviveHandler(
                       scrollback,
                       executionDirectory: normalizeOptionalString(node.executionDirectory),
                       expectedDirectory: normalizeOptionalString(node.expectedDirectory),
-                      agent: normalizePersistedAgent(node.agent),
+                      agent: binding
+                        ? { ...normalizePersistedAgent(node.agent)!, ...binding.tuple }
+                        : normalizePersistedAgent(node.agent),
                     })
                   }
 
@@ -148,17 +176,38 @@ export function registerSessionPrepareOrReviveHandler(
                       return null
                     }
 
-                    return await prepareAgentNode({
-                      controlSurface,
-                      ctx: recoveryContext,
-                      store,
-                      workspace,
-                      node,
-                      space,
-                      agent,
-                      settings,
-                      ptyRuntime: deps.ptyRuntime,
-                    })
+                    const attempt =
+                      ctx.managedClaudePreparation?.attempts.get(node.id) ??
+                      (observed?.binding
+                        ? await ctx.managedClaudePreparation?.reserve(node.id)
+                        : undefined)
+                    const preparationContext = attempt
+                      ? {
+                          ...recoveryContext,
+                          assertActive: () => {
+                            recoveryContext.assertActive?.()
+                            assertManagedClaudeLaunchCurrent()
+                          },
+                        }
+                      : /* @compat managed-claude-worker-support */ guardLegacyManagedClaudeContext(
+                          recoveryContext,
+                          store,
+                          node.id,
+                          managedClaudeWritesEnabled,
+                        )
+                    const prepare = async () =>
+                      await prepareAgentNode({
+                        controlSurface,
+                        ctx: preparationContext,
+                        store,
+                        workspace,
+                        node,
+                        space,
+                        agent,
+                        settings,
+                        ptyRuntime: deps.ptyRuntime,
+                      })
+                    return attempt ? ctx.managedClaudePreparation!.run(attempt, prepare) : prepare()
                   }
 
                   return await prepareTerminalNode({
@@ -172,6 +221,7 @@ export function registerSessionPrepareOrReviveHandler(
                     reviveExecutorTui: deps.reviveExecutorTui,
                   })
                 },
+                ctx.managedClaudePreparation?.attempts.get(node.id),
               ),
           )
           const nodes = preparedNodes.filter(

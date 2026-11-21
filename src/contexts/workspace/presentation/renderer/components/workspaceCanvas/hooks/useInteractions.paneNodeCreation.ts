@@ -1,4 +1,3 @@
-import type { MutableRefObject } from 'react'
 import { resolvePaneNodeCreationAnchor } from './useInteractions.creationAnchor'
 import type { Node } from '@xyflow/react'
 import {
@@ -10,7 +9,7 @@ import {
   resolveTerminalPtyGeometryForNodeFrame,
   type TerminalPtyGeometryDisplayMetrics,
 } from '@contexts/workspace/domain/terminalPtyGeometry'
-import { toFileUri } from '@contexts/filesystem/domain/fileUri'
+import { toFileUri } from '@contexts/filesystem/domain'
 import type { Point, TerminalNodeData, WebsiteNodeData, WorkspaceSpaceState } from '../../../types'
 import type { BrowserMode, SpawnTerminalResult } from '@shared/contracts/dto'
 import type { ContextMenuState, CreateNodeInput, NodePlacementOptions } from '../types'
@@ -34,11 +33,13 @@ import {
 import { translate } from '@app/renderer/i18n'
 import { createWebsiteNodeData } from '../../../utils/websiteNodeData'
 import { nodeWorkerBindingForMount } from '@shared/types/nodeWorkerBinding'
+import type { CanvasUiCommands } from '../../../store/canvasStore.ui'
+import type { CanvasDocumentCommands } from '../../../store/canvasStoreContext'
+import type { WorkspaceDocument } from '../../../store/workspaceDocument'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
 
-type SetNodes = (
-  updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-  options?: { syncLayout?: boolean },
-) => void
+type UpdateCanvasDocument = UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
+
 export async function createTerminalNodeAtFlowPosition({
   anchor,
   workspaceId,
@@ -48,11 +49,9 @@ export async function createTerminalNodeAtFlowPosition({
   terminalDisplayMetrics,
   workspacePath,
   environmentVariables,
-  spacesRef,
-  nodesRef,
-  setNodes,
-  onSpacesChange,
-  onRequestPersistFlush,
+  readDocument,
+  updateCanvasDocument,
+  updateSpaces,
   createNodeForSession,
   onShowMessage,
   title,
@@ -65,11 +64,9 @@ export async function createTerminalNodeAtFlowPosition({
   terminalDisplayMetrics?: TerminalPtyGeometryDisplayMetrics | null
   workspacePath: string
   environmentVariables?: Record<string, string>
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  readDocument: () => WorkspaceDocument
+  updateCanvasDocument: UpdateCanvasDocument
+  updateSpaces: CanvasDocumentCommands['updateSpaces']
   createNodeForSession: (input: CreateNodeInput) => Promise<Node<TerminalNodeData> | null>
   onShowMessage?: (message: string, level: 'info' | 'warning' | 'error') => void
   title?: string | null
@@ -88,7 +85,7 @@ export async function createTerminalNodeAtFlowPosition({
     displayMetrics: terminalDisplayMetrics,
   })
 
-  let targetSpace = findContainingSpaceByAnchor(spacesRef.current, cursorAnchor)
+  let targetSpace = findContainingSpaceByAnchor(readDocument().spaces, cursorAnchor)
   const targetSpaceBaseline = targetSpace
   const launchWorkspaceContext = await resolveTerminalLaunchWorkspaceContext({
     anchor: cursorAnchor,
@@ -101,9 +98,10 @@ export async function createTerminalNodeAtFlowPosition({
   const resolvedWorkspacePath = launchWorkspaceContext.workspacePath
   const shouldFallbackToFirstMount =
     !targetSpace && isAllocateProjectPlaceholderPath(resolvedWorkspacePath, workspaceId)
-  const launchSpaces = targetSpace
-    ? mergeMissingWorkspaceSpaces(spacesRef.current, workspaceSpacesSnapshot, targetSpace.id)
-    : spacesRef.current
+  // The repair writes after `mount.list` answers, onto the Spaces the store holds then. A target
+  // that only the persisted snapshot holds is added by the same write. It does not flush: the node
+  // add after the spawn does.
+  const repairSpaceId = targetSpace?.id
   let mountId: string | null = null
   let workerBinding = nodeWorkerBindingForMount(null)
   let resolvedCwd = resolvedWorkspacePath
@@ -113,9 +111,13 @@ export async function createTerminalNodeAtFlowPosition({
       workspaceId,
       workspacePath: resolvedWorkspacePath,
       space: targetSpace,
-      spaces: launchSpaces,
-      onSpacesChange,
-      onRequestPersistFlush,
+      commitSpaceRepair:
+        repairSpaceId === undefined
+          ? undefined
+          : recipe =>
+              updateSpaces(spaces =>
+                recipe(mergeMissingWorkspaceSpaces(spaces, workspaceSpacesSnapshot, repairSpaceId)),
+              ),
       fallbackToFirstMount: shouldFallbackToFirstMount,
     })
     targetSpace = mountContext.space
@@ -205,7 +207,7 @@ export async function createTerminalNodeAtFlowPosition({
   const resolvedTitle =
     typeof title === 'string' && title.trim().length > 0
       ? title.trim()
-      : `terminal-${nodesRef.current.length + 1}`
+      : `terminal-${readDocument().nodes.length + 1}`
 
   const created = await createNodeForSession({
     nodeId: canvasNodeId,
@@ -237,10 +239,7 @@ export async function createTerminalNodeAtFlowPosition({
       targetSpaceSnapshot: targetSpace,
       targetSpaceBaseline,
       workspaceSpacesSnapshot,
-      spacesRef,
-      nodesRef,
-      setNodes,
-      onSpacesChange,
+      updateCanvasDocument,
     })
   }
 
@@ -269,10 +268,8 @@ export function createNoteNodeAtFlowPosition({
   anchor,
   standardWindowSizeBucket,
   createNoteNode,
-  spacesRef,
-  nodesRef,
-  setNodes,
-  onSpacesChange,
+  readDocument,
+  updateCanvasDocument,
 }: {
   workspaceId?: string
   anchor: Point
@@ -285,10 +282,8 @@ export function createNoteNodeAtFlowPosition({
       }
     },
   ) => Node<TerminalNodeData> | null
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
+  readDocument: () => WorkspaceDocument
+  updateCanvasDocument: UpdateCanvasDocument
 }): void {
   const cursorAnchor = {
     x: anchor.x,
@@ -304,10 +299,8 @@ export function createNoteNodeAtFlowPosition({
     anchor: nodeAnchor,
     spaceAnchor: cursorAnchor,
     createNoteNode,
-    spacesRef,
-    nodesRef,
-    setNodes,
-    onSpacesChange,
+    readDocument,
+    updateCanvasDocument,
   })
 }
 
@@ -318,10 +311,8 @@ export function createWebsiteNodeAtFlowPosition({
   browserDefaultMode,
   url,
   createWebsiteNode,
-  spacesRef,
-  nodesRef,
-  setNodes,
-  onSpacesChange,
+  readDocument,
+  updateCanvasDocument,
 }: {
   workspaceId?: string
   anchor: Point
@@ -333,10 +324,8 @@ export function createWebsiteNodeAtFlowPosition({
     website: WebsiteNodeData,
     placement?: NodePlacementOptions,
   ) => Node<TerminalNodeData> | null
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
+  readDocument: () => WorkspaceDocument
+  updateCanvasDocument: UpdateCanvasDocument
 }): void {
   const cursorAnchor = {
     x: anchor.x,
@@ -347,7 +336,7 @@ export function createWebsiteNodeAtFlowPosition({
     resolveDefaultWebsiteWindowSize(standardWindowSizeBucket),
   )
 
-  const targetSpace = findContainingSpaceByAnchor(spacesRef.current, cursorAnchor)
+  const targetSpace = findContainingSpaceByAnchor(readDocument().spaces, cursorAnchor)
 
   const created = createWebsiteNode(
     nodeAnchor,
@@ -372,48 +361,24 @@ export function createWebsiteNodeAtFlowPosition({
     createdNodeId: created.id,
     createdNode: created,
     targetSpaceId: targetSpace.id,
-    spacesRef,
-    nodesRef,
-    setNodes,
-    onSpacesChange,
+    updateCanvasDocument,
   })
 }
 
 type PaneCreationOptions<T> = Omit<T, 'anchor'> & {
   contextMenu: ContextMenuState | null
-  setContextMenu: (next: ContextMenuState | null) => void
-}
-
-export async function createTerminalNodeFromPaneContextMenu({
-  contextMenu,
-  setContextMenu,
-  workspaceId = '',
-  ...options
-}: PaneCreationOptions<
-  Omit<Parameters<typeof createTerminalNodeAtFlowPosition>[0], 'workspaceId'> & {
-    workspaceId?: string
-  }
->): Promise<void> {
-  if (!contextMenu || contextMenu.kind !== 'pane') {
-    return
-  }
-  setContextMenu(null)
-  await createTerminalNodeAtFlowPosition({
-    ...options,
-    workspaceId,
-    anchor: resolvePaneNodeCreationAnchor(contextMenu),
-  })
+  ui: CanvasUiCommands
 }
 
 export function createWebsiteNodeFromPaneContextMenu({
   contextMenu,
-  setContextMenu,
+  ui,
   ...options
 }: PaneCreationOptions<Parameters<typeof createWebsiteNodeAtFlowPosition>[0]>): void {
   if (!contextMenu || contextMenu.kind !== 'pane') {
     return
   }
-  setContextMenu(null)
+  ui.closeContextMenu()
   createWebsiteNodeAtFlowPosition({
     ...options,
     anchor: resolvePaneNodeCreationAnchor(contextMenu),
@@ -422,12 +387,12 @@ export function createWebsiteNodeFromPaneContextMenu({
 
 export function createNoteNodeFromPaneContextMenu({
   contextMenu,
-  setContextMenu,
+  ui,
   ...options
 }: PaneCreationOptions<Parameters<typeof createNoteNodeAtFlowPosition>[0]>): void {
   if (!contextMenu || contextMenu.kind !== 'pane') {
     return
   }
-  setContextMenu(null)
+  ui.closeContextMenu()
   createNoteNodeAtFlowPosition({ ...options, anchor: resolvePaneNodeCreationAnchor(contextMenu) })
 }

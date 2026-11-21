@@ -3,9 +3,7 @@ import { useWorkspaceCanvasTaskWindows } from './useCanvasTaskWindows'
 
 export function useWorkspaceCanvasTaskUi({
   agentTaskTagOptions,
-  nodesRef,
-  spacesRef,
-  onSpacesChange,
+  updateCanvasDocument,
   setNodes,
   createNodeForSession,
   buildAgentNodeTitle,
@@ -14,19 +12,14 @@ export function useWorkspaceCanvasTaskUi({
   workspaceId,
   workspacePath,
   environmentVariables,
-  onRequestPersistFlush,
   actionRefs,
   terminalDisplayMetrics,
-  contextMenu,
-  setContextMenu,
   standardWindowSizeBucket,
   createTaskNode,
   closeNode,
 }: {
   agentTaskTagOptions: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['agentTaskTagOptions']
-  nodesRef: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['nodesRef']
-  spacesRef: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['spacesRef']
-  onSpacesChange: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['onSpacesChange']
+  updateCanvasDocument: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['updateCanvasDocument']
   setNodes: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['setNodes']
   createNodeForSession: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['createNodeForSession']
   buildAgentNodeTitle: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['buildAgentNodeTitle']
@@ -35,16 +28,11 @@ export function useWorkspaceCanvasTaskUi({
   workspaceId: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['workspaceId']
   workspacePath: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['workspacePath']
   environmentVariables?: Record<string, string>
-  onRequestPersistFlush?: Parameters<
-    typeof useWorkspaceCanvasTaskSupport
-  >[0]['onRequestPersistFlush']
   terminalDisplayMetrics: Parameters<
     typeof useWorkspaceCanvasTaskSupport
   >[0]['terminalDisplayMetrics']
   actionRefs: Parameters<typeof useWorkspaceCanvasTaskSupport>[0]['actionRefs'] &
     Parameters<typeof useWorkspaceCanvasTaskWindows>[0]['actionRefs']
-  contextMenu: Parameters<typeof useWorkspaceCanvasTaskWindows>[0]['contextMenu']
-  setContextMenu: Parameters<typeof useWorkspaceCanvasTaskWindows>[0]['setContextMenu']
   standardWindowSizeBucket: Parameters<
     typeof useWorkspaceCanvasTaskWindows
   >[0]['standardWindowSizeBucket']
@@ -54,9 +42,7 @@ export function useWorkspaceCanvasTaskUi({
   ReturnType<typeof useWorkspaceCanvasTaskWindows> {
   const { taskTagOptions, suggestTaskTitle } = useWorkspaceCanvasTaskSupport({
     agentTaskTagOptions,
-    nodesRef,
-    spacesRef,
-    onSpacesChange,
+    updateCanvasDocument,
     setNodes,
     createNodeForSession,
     buildAgentNodeTitle,
@@ -65,7 +51,6 @@ export function useWorkspaceCanvasTaskUi({
     workspaceId,
     workspacePath,
     environmentVariables,
-    onRequestPersistFlush,
     actionRefs,
     terminalDisplayMetrics,
   })
@@ -73,13 +58,8 @@ export function useWorkspaceCanvasTaskUi({
   const taskWindows = useWorkspaceCanvasTaskWindows({
     workspaceId,
     taskTagOptions,
-    contextMenu,
-    setContextMenu,
-    nodesRef,
     setNodes,
-    spacesRef,
-    onSpacesChange,
-    onRequestPersistFlush,
+    updateCanvasDocument,
     suggestTaskTitle,
     standardWindowSizeBucket,
     createTaskNode,

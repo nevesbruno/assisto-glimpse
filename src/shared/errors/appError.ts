@@ -1,5 +1,11 @@
+import { taskMutationAccessErrorPresentation } from './taskMutationAccessError'
+import { taskClaimErrorPresentation } from './taskClaimError'
 import { agentPromptErrorPresentation } from './agentPromptError'
+import { agentSpawnErrorPresentation } from './agentSpawnError'
+import { nodeParentErrorPresentation } from './nodeParentError'
 import { fileSystemErrorReasonMessage } from './filesystemError'
+import { publicTerminalSpawnApplicationError } from './terminalSpawnErrorReasons'
+import { initialPromptErrorPresentation } from './initialPromptFeedback'
 import type { AppErrorCode, AppErrorDescriptor, AppErrorParams } from '../contracts/dto'
 import type { IpcInvokeResult } from '../contracts/ipc'
 
@@ -20,6 +26,11 @@ function createMessageMap(): Record<AppErrorCode, string> {
     'endpoint.operation_in_progress': 'Another endpoint operation is already in progress.',
     'space.not_found': 'Space not found.',
     'space.ambiguous': 'Space locator matched multiple spaces.',
+    'agent.spawn_depth_limit': 'This runtime would exceed the maximum agent lineage depth of 3.',
+    'agent.spawn_concurrency_limit':
+      'This agent tree has reached its limit of 6 active or starting agent-created runtimes.',
+    'node.parent_unavailable': 'The parent node could not be resolved.',
+    'task.already_claimed': 'This task is already claimed.',
     'node.not_found': 'Node not found.',
     'node.unsupported_operation': 'This node operation is not supported.',
     'session.transcript_not_ready': 'Session transcript is not available yet.',
@@ -92,6 +103,10 @@ function createMessageMap(): Record<AppErrorCode, string> {
     'agent.prompt_timeout': 'Prompt delivery deadline expired before any write.',
     'agent.list_models_failed': 'Unable to load models for this provider.',
     'agent.install_failed': 'Unable to install this agent provider.',
+    'agent.managed_launch_rejected':
+      'This agent session has changed or cannot be resumed. Refresh the workspace and try again.',
+    'agent.managed_launch_commit_failed':
+      'The agent launch could not be confirmed. Check the session before trying again.',
     'agent.launch_failed': 'Unable to start the agent.',
     'agent.final_message_unavailable': 'No retained hook message is available for this turn.',
     'agent.read_last_message_failed': 'Unable to read the last agent message.',
@@ -101,6 +116,8 @@ function createMessageMap(): Record<AppErrorCode, string> {
     'persistence.quota_exceeded': 'Storage quota was exceeded.',
     'persistence.payload_too_large': 'Workspace state is too large to save.',
     'persistence.io_failed': 'Unable to save data to storage.',
+    'persistence.owned_node_identity_conflict':
+      'This agent has changed. Refresh the workspace and try again.',
     'persistence.invalid_state': 'The workspace state could not be saved.',
     'persistence.invalid_node_id': 'The terminal history could not be saved.',
     'update.get_state_failed': 'Unable to read the update status.',
@@ -167,7 +184,7 @@ export function isAppErrorDescriptor(value: unknown): value is AppErrorDescripto
   }
 
   const record = value as Record<string, unknown>
-  return typeof record.code === 'string' && record.code in APP_ERROR_MESSAGES
+  return typeof record.code === 'string' && Object.hasOwn(APP_ERROR_MESSAGES, record.code)
 }
 
 export class OpenCoveAppError extends Error {
@@ -229,20 +246,38 @@ export function toAppErrorDescriptor(
 
 export function formatAppErrorMessage(error: AppErrorDescriptor | OpenCoveAppError): string {
   const descriptor = error instanceof OpenCoveAppError ? error.toDescriptor() : error
+  const initialPrompt = initialPromptErrorPresentation(descriptor)
+  if (initialPrompt) {
+    return `${initialPrompt.message} ${initialPrompt.hint}`
+  }
+  const spawnApplication = publicTerminalSpawnApplicationError(descriptor)
+  if (spawnApplication) {
+    return spawnApplication.debugMessage
+  }
   const prompt = agentPromptErrorPresentation(descriptor)
   if (prompt) {
     return prompt.message
+  }
+  const spawn = agentSpawnErrorPresentation(descriptor)
+  if (spawn) {
+    return `${spawn.message} ${spawn.hint}`
+  }
+  const taskAccess = taskMutationAccessErrorPresentation(descriptor)
+  if (taskAccess) {
+    return taskAccess.message
+  }
+  const claim = taskClaimErrorPresentation(descriptor)
+  if (claim) {
+    return claim.message
+  }
+  const parent = nodeParentErrorPresentation(descriptor)
+  if (parent) {
+    return parent.message
   }
   const message = APP_ERROR_MESSAGES[descriptor.code] ?? APP_ERROR_MESSAGES['common.unexpected']
   if (descriptor.code.startsWith('filesystem.')) {
     const reason = fileSystemErrorReasonMessage(descriptor.params?.reason)
     return reason ? `${message} ${reason}` : message
-  }
-  if (
-    descriptor.code === 'plugin.operation_failed' &&
-    typeof descriptor.params?.reason === 'string'
-  ) {
-    return `${message} ${descriptor.params.reason.slice(0, 2000)}`
   }
   return message
 }

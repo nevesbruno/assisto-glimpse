@@ -1,16 +1,19 @@
-import { useCallback, useEffect, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, type MutableRefObject } from 'react'
 import type { Node } from '@xyflow/react'
 import type { TerminalNodeData, WorkspaceSpaceState } from '../../../types'
 import type { NodeDeleteConfirmationState } from '../types'
+import {
+  useCanvasUiCommands,
+  useReadCanvasDocument,
+  useReadCanvasUi,
+} from '../../../store/canvasStoreContext'
 
 interface UseNodeDeleteConfirmationParams {
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
   closeNode: (nodeId: string) => Promise<void>
-  requestNodeDeleteRef: MutableRefObject<(nodeIds: string[]) => void>
+  requestNodeDeleteRef: MutableRefObject<(nodeIds: readonly string[]) => void>
 }
 
-function uniqNodeIds(nodeIds: string[]): string[] {
+function uniqNodeIds(nodeIds: readonly string[]): string[] {
   return [...new Set(nodeIds)]
 }
 
@@ -19,7 +22,7 @@ function resolveNodeDeleteConfirmationState({
   nodes,
   spaces,
 }: {
-  nodeIds: string[]
+  nodeIds: readonly string[]
   nodes: Node<TerminalNodeData>[]
   spaces: WorkspaceSpaceState[]
 }): NodeDeleteConfirmationState | null {
@@ -60,38 +63,33 @@ function resolveNodeDeleteConfirmationState({
 }
 
 export function useWorkspaceCanvasNodeDeleteConfirmation({
-  nodesRef,
-  spacesRef,
   closeNode,
   requestNodeDeleteRef,
 }: UseNodeDeleteConfirmationParams): {
-  nodeDeleteConfirmation: NodeDeleteConfirmationState | null
-  setNodeDeleteConfirmation: React.Dispatch<
-    React.SetStateAction<NodeDeleteConfirmationState | null>
-  >
   confirmNodeDelete: () => Promise<void>
   requestNodeClose: (nodeId: string) => Promise<void>
 } {
-  const [nodeDeleteConfirmation, setNodeDeleteConfirmation] =
-    useState<NodeDeleteConfirmationState | null>(null)
+  const ui = useCanvasUiCommands()
+  const readUi = useReadCanvasUi()
+  const readDocument = useReadCanvasDocument()
 
+  // The nodes and the Spaces are read when a request is made, not subscribed to: the list is the
+  // one the user sees at the moment they ask.
   const requestNodeDelete = useCallback(
-    (nodeIds: string[]) => {
-      const nextConfirmation = resolveNodeDeleteConfirmationState({
-        nodeIds,
-        nodes: nodesRef.current,
-        spaces: spacesRef.current,
-      })
+    (nodeIds: readonly string[]) => {
+      const { nodes, spaces } = readDocument()
+      const nextConfirmation = resolveNodeDeleteConfirmationState({ nodeIds, nodes, spaces })
       if (!nextConfirmation) {
         return
       }
 
-      setNodeDeleteConfirmation(nextConfirmation)
+      ui.openDialog('nodeDeleteConfirmation', nextConfirmation)
     },
-    [nodesRef, spacesRef],
+    [readDocument, ui],
   )
 
   const confirmNodeDelete = useCallback(async () => {
+    const nodeDeleteConfirmation = readUi().nodeDeleteConfirmation
     if (!nodeDeleteConfirmation) {
       return
     }
@@ -101,15 +99,16 @@ export function useWorkspaceCanvasNodeDeleteConfirmation({
       Promise.resolve(),
     )
 
-    setNodeDeleteConfirmation(null)
-  }, [closeNode, nodeDeleteConfirmation])
+    ui.closeDialog('nodeDeleteConfirmation')
+  }, [closeNode, readUi, ui])
 
   const requestNodeClose = useCallback(
     async (nodeId: string) => {
+      const { nodes, spaces } = readDocument()
       const nextConfirmation = resolveNodeDeleteConfirmationState({
         nodeIds: [nodeId],
-        nodes: nodesRef.current,
-        spaces: spacesRef.current,
+        nodes,
+        spaces,
       })
       if (!nextConfirmation) {
         return
@@ -117,7 +116,7 @@ export function useWorkspaceCanvasNodeDeleteConfirmation({
 
       await closeNode(nodeId)
     },
-    [closeNode, nodesRef, spacesRef],
+    [closeNode, readDocument],
   )
 
   useEffect(() => {
@@ -127,8 +126,6 @@ export function useWorkspaceCanvasNodeDeleteConfirmation({
   }, [requestNodeDelete, requestNodeDeleteRef])
 
   return {
-    nodeDeleteConfirmation,
-    setNodeDeleteConfirmation,
     confirmNodeDelete,
     requestNodeClose,
   }

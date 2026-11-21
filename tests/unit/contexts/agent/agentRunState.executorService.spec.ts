@@ -118,12 +118,27 @@ describe('executor_service run state source', () => {
       f.send({ type: 'approval.requested', requestId, kind: 'exec', summary, turnRef: 't1' })
 
     ask('a1', 'run rm -rf build')
-    expect(f.get()).toMatchObject({ state: 'waiting', blockedSummary: 'run rm -rf build' })
+    expect(f.get()).toMatchObject({
+      state: 'waiting',
+      blockedSummary: {
+        kind: 'question',
+        questions: [{ question: 'run rm -rf build', options: [] }],
+      },
+    })
     ask('a2', 'write src/x.ts')
-    expect(f.get().blockedSummary).toBe('write src/x.ts')
+    expect(f.get().blockedSummary).toEqual({
+      kind: 'question',
+      questions: [{ question: 'write src/x.ts', options: [] }],
+    })
 
     f.send({ type: 'approval.resolved', requestId: 'a2', resolvedBy: 'glimpse' })
-    expect(f.get()).toMatchObject({ state: 'waiting', blockedSummary: 'run rm -rf build' })
+    expect(f.get()).toMatchObject({
+      state: 'waiting',
+      blockedSummary: {
+        kind: 'question',
+        questions: [{ question: 'run rm -rf build', options: [] }],
+      },
+    })
     f.send({ type: 'approval.resolved', requestId: 'a1', resolvedBy: 'glimpse' })
     expect(f.get()).toMatchObject({ state: 'working', blockedReason: null })
     expect(f.get().blockedSummary ?? null).toBeNull()

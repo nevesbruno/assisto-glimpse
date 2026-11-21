@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApprovedWorkspaceStore } from '../../../src/contexts/workspace/infrastructure/approval/ApprovedWorkspaceStore'
 import type { PtyRuntime } from '../../../src/contexts/terminal/presentation/main-ipc/runtime'
 import type { PersistenceStore } from '../../../src/platform/persistence/sqlite/PersistenceStore'
-import { IPC_CHANNELS } from '../../../src/shared/constants/ipc'
+import { IPC_CHANNELS } from '../../../src/shared/contracts/ipc'
 import { invokeHandledIpc } from './ipcTestUtils'
 
 const originalNodeEnv = process.env.NODE_ENV
@@ -37,7 +37,7 @@ describe('local IPC agent provider contribution launch', () => {
       }),
       removeHandler: vi.fn(),
     }
-    vi.doMock('electron', () => ({ ipcMain }))
+    vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
     vi.doMock('../../../src/contexts/agent/infrastructure/cli/AgentLaunchSpawnResolver', () => ({
       resolveAgentLaunchSpawn: vi.fn(async ({ cwd, command, args, env }) => ({
         command,
@@ -60,7 +60,11 @@ describe('local IPC agent provider contribution launch', () => {
     } as unknown as PersistenceStore
     const { registerAgentIpcHandlers } =
       await import('../../../src/contexts/agent/presentation/main-ipc/register')
-    registerAgentIpcHandlers(runtime, approvedWorkspaces, async () => persistenceStore)
+    const registration = registerAgentIpcHandlers(
+      runtime,
+      approvedWorkspaces,
+      async () => persistenceStore,
+    )
 
     const result = await invokeHandledIpc(handlers.get(IPC_CHANNELS.agentLaunch), null, {
       provider,
@@ -69,9 +73,13 @@ describe('local IPC agent provider contribution launch', () => {
       model: `${provider}-model`,
     })
 
-    expect(result).toEqual(expect.objectContaining({ sessionId: 'session-1', provider }))
-    expect(runtime.spawnSession).toHaveBeenCalledWith(
-      expect.objectContaining({ command: provider, args: expectedArgs }),
-    )
+    try {
+      expect(result).toEqual(expect.objectContaining({ sessionId: 'session-1', provider }))
+      expect(runtime.spawnSession).toHaveBeenCalledWith(
+        expect.objectContaining({ command: provider, args: expectedArgs }),
+      )
+    } finally {
+      await registration.dispose()
+    }
   })
 })

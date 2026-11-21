@@ -54,12 +54,13 @@ describe('agent state watcher under a grant', () => {
     vi.unstubAllEnvs()
   })
 
-  it('accepts attach to the own session and for a user without grant', async () => {
+  it('refuses every grant attach and still accepts a user without grant', async () => {
+    // Upstream schema S1d: OpenCove owns observation; only user and bearer callers attach.
     const { invoke } = await setup()
     expect(
       (await invoke(grantContext('project-a'), 'session.attachAgentStateWatcher', attach('sess-a')))
         .ok,
-    ).toBe(true)
+    ).toBe(false)
     expect(
       (await invoke({ now: () => new Date() }, 'session.attachAgentStateWatcher', attach('sess-b')))
         .ok,
@@ -74,12 +75,16 @@ describe('agent state watcher under a grant', () => {
     const ghost = await invoke(grantContext('project-a'), 'session.detachAgentStateWatcher', {
       sessionId: 'ghost',
     })
-    expect(denied).toEqual(ghost)
+    expect(denied).toMatchObject({
+      ok: false,
+      error: { code: 'common.forbidden', details: { reason: 'operation_denied' } },
+    })
+    expect(ghost).toMatchObject({ ok: false, error: { code: 'common.forbidden' } })
     expect(ptyRuntime.disposeSessionStateWatcher).not.toHaveBeenCalled()
     await invoke(grantContext('project-a'), 'session.detachAgentStateWatcher', {
       sessionId: 'sess-a',
     })
-    expect(ptyRuntime.disposeSessionStateWatcher).toHaveBeenCalledWith('sess-a')
+    expect(ptyRuntime.disposeSessionStateWatcher).not.toHaveBeenCalled()
   })
 
   it('denies a grant when no store is wired', async () => {

@@ -1,24 +1,21 @@
-import { useEffect, useRef, type MutableRefObject, type RefObject } from 'react'
-import type { Node } from '@xyflow/react'
-import type { TerminalNodeData } from '../../../types'
+import { useEffect, useRef, type RefObject } from 'react'
 import { useTranslation } from '@app/renderer/i18n'
+import { useReadCanvasDocument, useReadCanvasSelection } from '../../../store/canvasStoreContext'
 
 export function useCloseSelectedNodeShortcut({
   enabled,
   canvasRef,
-  nodesRef,
-  selectedNodeIdsRef,
   closeNode,
   onShowMessage,
 }: {
   enabled: boolean
   canvasRef: RefObject<HTMLDivElement | null>
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  selectedNodeIdsRef: MutableRefObject<string[]>
   closeNode: (nodeId: string) => Promise<void>
   onShowMessage?: (message: string, level: 'info' | 'warning' | 'error') => void
 }): void {
   const { t } = useTranslation()
+  const readDocument = useReadCanvasDocument()
+  const readSelection = useReadCanvasSelection()
   const closing = useRef(new Set<string>())
   useEffect(() => {
     if (!enabled) {
@@ -29,7 +26,7 @@ export function useCloseSelectedNodeShortcut({
       if (event !== 'close-selected-node') {
         return
       }
-      const selected = selectedNodeIdsRef.current
+      const selected = readSelection().nodeIds
       const focusedElement = document.activeElement?.closest('.react-flow__node')
       const focusedId = canvasRef.current?.contains(focusedElement ?? null)
         ? focusedElement?.getAttribute('data-id')
@@ -42,7 +39,7 @@ export function useCloseSelectedNodeShortcut({
         }
         return
       }
-      const node = nodesRef.current.find(item => item.id === nodeId && !item.hidden)
+      const node = readDocument().nodes.find(item => item.id === nodeId && !item.hidden)
       if (!node || closing.current.has(nodeId)) {
         return
       }
@@ -68,5 +65,5 @@ export function useCloseSelectedNodeShortcut({
       active = false
       unsubscribe?.()
     }
-  }, [enabled, canvasRef, nodesRef, selectedNodeIdsRef, closeNode, onShowMessage, t])
+  }, [enabled, canvasRef, readDocument, readSelection, closeNode, onShowMessage, t])
 }

@@ -1,4 +1,6 @@
+import './scripts/lib/isolateHostEnvironment.mjs'
 import { defineConfig } from '@playwright/test'
+import { resolveE2ERetries } from './scripts/lib/e2e-retries.mjs'
 
 const baseURL = process.env['OPENCOVE_WEB_SHELL_BASE_URL']
 
@@ -9,7 +11,9 @@ export default defineConfig({
   expect: {
     timeout: 15_000,
   },
-  retries: process.env.CI ? 1 : 0,
+  // A stray test.only would silently shrink a CI run to one test.
+  forbidOnly: !!process.env.CI,
+  retries: resolveE2ERetries(process.env.OPENCOVE_E2E_RETRIES),
   workers: 1,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report-web-shell' }]],
   outputDir: './test-results-web-shell',

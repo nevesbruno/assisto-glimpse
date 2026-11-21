@@ -1,4 +1,5 @@
 import { toCompactNodeData } from '../../../../contexts/workspace/application/nodeControl/nodeDtos'
+import { updateSpace } from '../../../../contexts/workspace/application/nodeControl/spaceUpdate'
 import { randomUUID } from 'node:crypto'
 import { createChildSpace } from '../../../../contexts/space/application/createChildSpace'
 import type { PersistenceStore } from '../../../../platform/persistence/sqlite/PersistenceStore'
@@ -11,6 +12,7 @@ import {
   spaceCreateChildOperation,
   spaceGetOperation,
   spaceListOperation,
+  spaceUpdateOperation,
 } from '../../../../shared/contracts/controlSurface/operations/domains/space'
 import type {
   CanvasNodeKind,
@@ -20,15 +22,20 @@ import type {
   ListSpacesResult,
 } from '../../../../shared/contracts/dto'
 import { createAppError } from '../../../../shared/errors/appError'
+import { isWorkspaceNodeKind } from '../../../../shared/sync/persistedStateValidationPrimitives'
+import { assertNever } from '../../../../shared/utils/assertNever'
 import type { ControlSurface } from '../controlSurface'
-import { grantProjectOf } from './grantProjectScope'
+import { assertProjectInGrant, grantLineageNodeIds, grantProjectOf } from './grantProjectScope'
 import { registerOperation } from '../registerOperation'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object'
 }
 
-function normalizeCanvasNodeKind(kind: unknown): CanvasNodeKind {
+export function normalizeCanvasNodeKind(kind: unknown): CanvasNodeKind {
+  if (!isWorkspaceNodeKind(kind)) {
+    return 'unknown'
+  }
   switch (kind) {
     case 'terminal':
     case 'agent':
@@ -39,8 +46,11 @@ function normalizeCanvasNodeKind(kind: unknown): CanvasNodeKind {
     case 'folder':
     case 'website':
       return kind
-    default:
+    case 'role':
+    case 'plugin':
       return 'unknown'
+    default:
+      return assertNever(kind)
   }
 }
 
@@ -70,6 +80,7 @@ function toSpaceDto(space: NormalizedPersistedSpace, nodeById: Map<string, NodeS
     targetMountId: space.targetMountId,
     parentSpaceId: space.parentSpaceId,
     boundary: space.boundary,
+    rect: space.rect,
     sortOrder: space.sortOrder,
     nodeIds: space.nodeIds,
     nodes: space.nodeIds.map(nodeId => {
@@ -132,6 +143,30 @@ export function registerSpaceHandlers(
   controlSurface: ControlSurface,
   getPersistenceStore: () => Promise<PersistenceStore>,
 ): void {
+  registerOperation(controlSurface, spaceUpdateOperation, {
+    handle: async (ctx, input) => {
+      const store = await getPersistenceStore()
+      if (grantProjectOf(ctx) !== undefined) {
+        // The carve-out is read and resolution only; a foreign space is never mutated.
+        const normalized = normalizePersistedAppState(await store.readAppState())
+        const owner = normalized?.workspaces.find(workspace =>
+          workspace.spaces.some(space => space.id === input.spaceId),
+        )?.id
+        assertProjectInGrant(ctx, owner, 'space.not_found')
+      }
+      return updateSpace({
+        store: {
+          readAppState: async () => normalizePersistedAppState(await store.readAppState()),
+          readAppStateRevision: () => store.readAppStateRevision(),
+          writeAppState: (state, options) => store.writeAppState(state, options),
+        },
+        input,
+        assertActive: ctx.assertActive,
+      })
+    },
+    defaultErrorCode: 'common.unexpected',
+  })
+
   registerOperation(controlSurface, spaceListOperation, {
     handle: async (ctx, payload): Promise<ListSpacesResult> => {
       const store = await getPersistenceStore()
@@ -141,6 +176,34 @@ export function registerSpaceHandlers(
       const activeProjectId = grantProjectId ?? normalized?.activeWorkspaceId ?? null
       const requestedProjectId = payload.projectId ?? null
       const effectiveProjectId = requestedProjectId ?? activeProjectId
+      const foreign =
+        grantProjectId !== undefined &&
+        requestedProjectId !== null &&
+        requestedProjectId !== grantProjectId
+
+      if (foreign) {
+        // Only the resolution of the grant's own subtree; the project itself stays closed.
+        const candidate =
+          normalized?.workspaces.find(item => item.id === requestedProjectId) ?? null
+        const lineageIds = await grantLineageNodeIds(ctx, getPersistenceStore)
+        const visibleNodes = (candidate?.nodes ?? []).filter(node => lineageIds.has(node.id))
+        if (!candidate || visibleNodes.length === 0) {
+          return { projectId: requestedProjectId, activeSpaceId: null, spaces: [] }
+        }
+        const visibleIds = new Set(visibleNodes.map(node => node.id))
+        const nodeById = new Map(visibleNodes.map(node => [node.id, node]))
+        return {
+          projectId: candidate.id,
+          activeSpaceId: null,
+          spaces: candidate.spaces
+            .map(space => ({
+              ...space,
+              nodeIds: space.nodeIds.filter(nodeId => visibleIds.has(nodeId)),
+            }))
+            .filter(space => space.nodeIds.length > 0)
+            .map(space => toSpaceDto(space, nodeById)),
+        }
+      }
 
       const workspace =
         effectiveProjectId &&
@@ -166,21 +229,31 @@ export function registerSpaceHandlers(
       const store = await getPersistenceStore()
       const normalized = normalizePersistedAppState(await store.readAppState())
       const workspaces = normalized?.workspaces ?? []
+      const lineageIds =
+        grantProjectId !== undefined ? await grantLineageNodeIds(ctx, getPersistenceStore) : null
 
       for (const workspace of workspaces) {
-        if (grantProjectId !== undefined && workspace.id !== grantProjectId) {
-          continue
-        }
         const space = workspace.spaces.find(candidate => candidate.id === payload.spaceId) ?? null
         if (!space) {
           continue
         }
-
-        const nodeById = new Map(workspace.nodes.map(node => [node.id, node]))
+        const lineageOnly = lineageIds !== null && workspace.id !== grantProjectId
+        const visibleNodeIds = lineageOnly
+          ? space.nodeIds.filter(nodeId => lineageIds.has(nodeId))
+          : space.nodeIds
+        if (lineageOnly && visibleNodeIds.length === 0) {
+          continue
+        }
+        const visible = new Set(visibleNodeIds)
+        const nodeById = new Map(
+          workspace.nodes
+            .filter(node => !lineageOnly || visible.has(node.id))
+            .map(node => [node.id, node]),
+        )
         return {
           projectId: workspace.id,
-          activeSpaceId: workspace.activeSpaceId,
-          space: toSpaceDto(space, nodeById),
+          activeSpaceId: lineageOnly ? null : workspace.activeSpaceId,
+          space: toSpaceDto({ ...space, nodeIds: visibleNodeIds }, nodeById),
         }
       }
 

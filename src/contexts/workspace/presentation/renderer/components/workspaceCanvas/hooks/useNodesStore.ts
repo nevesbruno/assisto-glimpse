@@ -1,3 +1,4 @@
+import { killUnownedNodeRuntime } from '../../../utils/managedClaudeLifecycle'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useReactFlow, type Edge, type Node } from '@xyflow/react'
 import type { NodeLabelColorOverride } from '@shared/types/labelColor'
@@ -6,14 +7,14 @@ import { useScrollbackStore } from '../../../store/useScrollbackStore'
 import { useWebsiteWindowStore } from '../../../store/useWebsiteWindowStore'
 import { findNearestFreePosition } from '../../../utils/collision'
 import { cleanupNodeRuntimeArtifacts } from '../../../utils/nodeRuntimeCleanup'
-import { TERMINAL_LAYOUT_SYNC_EVENT } from '../../terminalNode/constants'
 import { focusNodeInViewport } from '../helpers'
 import { syncWorkspaceCanvasTestState } from '../testHarness'
 import {
   resolveAgentNodeMinSize,
   resolveCanonicalNodeMinSize,
 } from '../../../utils/workspaceNodeSizing'
-import { ensureNodesHaveInitialDimensions } from '../../../utils/reactFlowNodeDimensions'
+import { useCanvasDocumentCommands, useReadCanvasDocument } from '../../../store/canvasStoreContext'
+import { useCanvasNodeWriter } from './useCanvasNodeWriter'
 import { removeNodeWithRelations } from './useNodesStore.closeNode'
 import { resolveWorkspaceLayoutAfterNodeResize } from './useNodesStore.resolveResizeLayout'
 import { useWorkspaceCanvasNodeCreation } from './useNodesStore.createNodes'
@@ -35,17 +36,18 @@ export function useWorkspaceCanvasNodesStore({
   workspaceId,
   workspacePath,
   nodes,
-  spacesRef,
-  onNodesChange,
-  onSpacesChange,
-  onRequestPersistFlush,
   onShowMessage,
   onNodeCreated,
   standardWindowSizeBucket,
   browserDefaultMode,
 }: UseWorkspaceCanvasNodesStoreParams): UseWorkspaceCanvasNodesStoreResult {
   const reactFlow = useReactFlow<Node<TerminalNodeData>, Edge>()
-  const nodesRef = useRef(nodes)
+  // What this store reads to act on a node, and its creators to place a new one, is the committed
+  // document as it is when the call runs, for the workspace of this render. It writes through the
+  // canvas's node writer under the name its callers know, `setNodes`.
+  const readDocument = useReadCanvasDocument()
+  const { requestPersistFlush } = useCanvasDocumentCommands()
+  const { updateNodes: setNodes, updateCanvasDocument } = useCanvasNodeWriter()
   const agentLaunchTokenByNodeIdRef = useRef<Map<string, number>>(new Map())
   const pendingScrollbackByNodeRef = useRef<Map<string, string>>(new Map())
   const isNodeDraggingRef = useRef(false)
@@ -73,7 +75,7 @@ export function useWorkspaceCanvasNodesStore({
     }
 
     const targetNode =
-      nodesRef.current.find(node => node.id === fallbackCreatedNodeId) ??
+      readDocument().nodes.find(node => node.id === fallbackCreatedNodeId) ??
       reactFlow.getNode?.(fallbackCreatedNodeId) ??
       null
 
@@ -104,36 +106,13 @@ export function useWorkspaceCanvasNodesStore({
         createdNodeViewportSettleTimerRef.current = null
       }
     }
-  }, [fallbackCreatedNodeId, nodes, onNodeCreated, reactFlow])
+  }, [fallbackCreatedNodeId, nodes, onNodeCreated, reactFlow, readDocument])
 
   useLayoutEffect(() => {
-    nodesRef.current = nodes
     if (window.opencoveApi?.meta?.isTest === true) {
       syncWorkspaceCanvasTestState(nodes)
     }
   }, [nodes])
-  const setNodes = useCallback(
-    (
-      updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-      options: { syncLayout?: boolean } = {},
-    ) => {
-      const previousNodes = nodesRef.current
-      const nextNodes = ensureNodesHaveInitialDimensions(updater(previousNodes))
-      if (nextNodes === previousNodes) {
-        return
-      }
-      nodesRef.current = nextNodes
-      if (window.opencoveApi?.meta?.isTest === true) {
-        syncWorkspaceCanvasTestState(nextNodes)
-      }
-      onNodesChange(nextNodes)
-
-      if (options.syncLayout ?? true) {
-        window.dispatchEvent(new Event(TERMINAL_LAYOUT_SYNC_EVENT))
-      }
-    },
-    [onNodesChange],
-  )
   const { updateTerminalTitle, clearTerminalAgentOverlay } =
     useTerminalAgentOverlayMutations(setNodes)
   const upsertNode = useCallback(
@@ -158,16 +137,14 @@ export function useWorkspaceCanvasNodesStore({
     async (nodeId: string) => {
       clearAgentLaunchToken(nodeId)
 
-      const target = nodesRef.current.find(node => node.id === nodeId)
+      const target = readDocument().nodes.find(node => node.id === nodeId)
       if (
         target &&
         (target.data.kind === 'terminal' || target.data.kind === 'agent') &&
         target.data.sessionId.length > 0
       ) {
         cleanupNodeRuntimeArtifacts(nodeId, target.data.sessionId)
-        void window.opencoveApi.pty
-          .kill({ sessionId: target.data.sessionId })
-          .catch(() => undefined)
+        void killUnownedNodeRuntime(target).catch(() => undefined)
       }
       if (target?.data.kind === 'image' && target.data.image) {
         const deleteCanvasImage = window.opencoveApi?.workspace?.deleteCanvasImage
@@ -204,70 +181,80 @@ export function useWorkspaceCanvasNodesStore({
       })
       publishWorkspaceNodesClosed(closedNodeIds)
 
-      onRequestPersistFlush?.()
+      // After the closure is announced, as before: the flush follows the write and its publication.
+      requestPersistFlush()
     },
-    [clearAgentLaunchToken, onRequestPersistFlush, setNodes],
+    [clearAgentLaunchToken, readDocument, requestPersistFlush, setNodes],
   )
 
-  const normalizePosition = useCallback((nodeId: string, desired: Point, size: Size): Point => {
-    return findNearestFreePosition(desired, size, nodesRef.current, nodeId)
-  }, [])
+  // The committed nodes as the document holds them now, never a gesture's live positions: its
+  // one caller is the change path's settled move without a drag, when the two agree.
+  const normalizePosition = useCallback(
+    (nodeId: string, desired: Point, size: Size): Point => {
+      return findNearestFreePosition(desired, size, readDocument().nodes, nodeId)
+    },
+    [readDocument],
+  )
 
   const resizeNode = useCallback(
     (nodeId: string, desiredFrame: NodeFrame) => {
-      const node = nodesRef.current.find(item => item.id === nodeId)
-      if (!node) {
-        return
-      }
+      let didResolve = false
+      updateCanvasDocument(({ nodes: documentNodes, spaces: documentSpaces }) => {
+        const node = documentNodes.find(item => item.id === nodeId)
+        if (!node) {
+          return { nodes: documentNodes, spaces: documentSpaces }
+        }
 
-      const pluginView =
-        node.data.kind === 'plugin' && node.data.plugin
-          ? getPluginManifest(node.data.plugin.pluginId)?.view
-          : undefined
-      const minSize = pluginView
-        ? { width: pluginView.minWidth, height: pluginView.minHeight }
-        : node.data.kind === 'agent'
-          ? resolveAgentNodeMinSize(node.data.agent?.provider)
-          : resolveCanonicalNodeMinSize(node.data.kind)
-      const resolveDimension = (value: number, fallback: number): number =>
-        typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback
-      const normalizedFrame: NodeFrame = {
-        position: {
-          x: resolveDimension(desiredFrame.position.x, node.position.x),
-          y: resolveDimension(desiredFrame.position.y, node.position.y),
-        },
-        size: {
-          width: Math.max(
-            minSize.width,
-            resolveDimension(desiredFrame.size.width, node.data.width),
-          ),
-          height: Math.max(
-            minSize.height,
-            resolveDimension(desiredFrame.size.height, node.data.height),
-          ),
-        },
-      }
+        const pluginView =
+          node.data.kind === 'plugin' && node.data.plugin
+            ? getPluginManifest(node.data.plugin.pluginId)?.view
+            : undefined
+        const minSize = pluginView
+          ? { width: pluginView.minWidth, height: pluginView.minHeight }
+          : node.data.kind === 'agent'
+            ? resolveAgentNodeMinSize(node.data.agent?.provider)
+            : resolveCanonicalNodeMinSize(node.data.kind)
+        const resolveDimension = (value: number, fallback: number): number =>
+          typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback
+        const normalizedFrame: NodeFrame = {
+          position: {
+            x: resolveDimension(desiredFrame.position.x, node.position.x),
+            y: resolveDimension(desiredFrame.position.y, node.position.y),
+          },
+          size: {
+            width: Math.max(
+              minSize.width,
+              resolveDimension(desiredFrame.size.width, node.data.width),
+            ),
+            height: Math.max(
+              minSize.height,
+              resolveDimension(desiredFrame.size.height, node.data.height),
+            ),
+          },
+        }
 
-      const resolved = resolveWorkspaceLayoutAfterNodeResize({
-        nodeId,
-        desiredFrame: normalizedFrame,
-        nodes: nodesRef.current,
-        spaces: spacesRef.current,
-        gap: 0,
+        const resolved = resolveWorkspaceLayoutAfterNodeResize({
+          nodeId,
+          desiredFrame: normalizedFrame,
+          nodes: documentNodes,
+          spaces: documentSpaces,
+          gap: 0,
+        })
+
+        if (!resolved) {
+          return { nodes: documentNodes, spaces: documentSpaces }
+        }
+
+        didResolve = true
+        return { nodes: resolved.nodes, spaces: resolved.spaces }
       })
 
-      if (!resolved) {
-        return
+      // The write decides whether there is anything to persist.
+      if (didResolve) {
+        requestPersistFlush()
       }
-
-      setNodes(() => resolved.nodes)
-
-      if (resolved.spaces !== spacesRef.current) {
-        onSpacesChange(resolved.spaces)
-      }
-      onRequestPersistFlush?.()
     },
-    [onRequestPersistFlush, onSpacesChange, setNodes, spacesRef],
+    [requestPersistFlush, updateCanvasDocument],
   )
 
   const applyPendingScrollbacks = useCallback(
@@ -295,7 +282,7 @@ export function useWorkspaceCanvasNodesStore({
 
   const updateNodeScrollback = useCallback(
     (nodeId: string, scrollback: string) => {
-      const node = nodesRef.current.find(candidate => candidate.id === nodeId)
+      const node = readDocument().nodes.find(candidate => candidate.id === nodeId)
       if (!node || node.data.kind === 'task') {
         return
       }
@@ -308,7 +295,7 @@ export function useWorkspaceCanvasNodesStore({
       setNodeScrollback(nodeId, scrollback)
       persistNodeScrollback(node, scrollback)
     },
-    [setNodeScrollback],
+    [readDocument, setNodeScrollback],
   )
 
   const renameTerminalTitle = useCallback(
@@ -343,33 +330,25 @@ export function useWorkspaceCanvasNodesStore({
 
           return hasChanged ? nextNodes : prevNodes
         },
-        { syncLayout: false },
+        { syncLayout: false, flush: true },
       )
-
-      onRequestPersistFlush?.()
     },
-    [onRequestPersistFlush, setNodes],
+    [setNodes],
   )
 
-  const { updateNoteText, renameNoteTitle } = useWorkspaceCanvasNoteNodeMutations({
-    setNodes,
-    onRequestPersistFlush,
-  })
+  const { updateNoteText, renameNoteTitle } = useWorkspaceCanvasNoteNodeMutations({ setNodes })
   const { updateRoleProvider, updateRoleInput, appendRoleRunRecord } =
-    useWorkspaceCanvasRoleNodeMutations({
-      setNodes,
-      onRequestPersistFlush,
-    })
+    useWorkspaceCanvasRoleNodeMutations({ setNodes })
   const {
     updateWebsiteUrl,
     setWebsitePinned,
     setWebsiteSession,
     setWebsiteMode,
     setWebsiteFullscreen,
-  } = useWorkspaceCanvasWebsiteNodeMutations({ setNodes, onRequestPersistFlush })
+  } = useWorkspaceCanvasWebsiteNodeMutations({ setNodes })
 
   const setNodeLabelColorOverride = useCallback(
-    (nodeIds: string[], labelColorOverride: NodeLabelColorOverride) => {
+    (nodeIds: readonly string[], labelColorOverride: NodeLabelColorOverride) => {
       const normalizedIds = nodeIds.map(id => id.trim()).filter(id => id.length > 0)
       if (normalizedIds.length === 0) {
         return
@@ -402,12 +381,10 @@ export function useWorkspaceCanvasNodesStore({
 
           return hasChanged ? nextNodes : prevNodes
         },
-        { syncLayout: false },
+        { syncLayout: false, flush: true },
       )
-
-      onRequestPersistFlush?.()
     },
-    [onRequestPersistFlush, setNodes],
+    [setNodes],
   )
 
   const publishCreatedNodes = useCreatedNodePublisher(setNodes)
@@ -424,9 +401,6 @@ export function useWorkspaceCanvasNodesStore({
   } = useWorkspaceCanvasNodeCreation({
     workspaceId,
     workspacePath,
-    nodesRef,
-    spacesRef,
-    onRequestPersistFlush,
     onShowMessage,
     onNodeCreated: onNodeCreated ?? fallbackOnNodeCreated,
     setNodes: publishCreatedNodes,
@@ -435,10 +409,10 @@ export function useWorkspaceCanvasNodesStore({
   })
 
   return {
-    nodesRef,
     pendingScrollbackByNodeRef,
     isNodeDraggingRef,
     setNodes,
+    updateCanvasDocument,
     upsertNode,
     bumpAgentLaunchToken,
     clearAgentLaunchToken,

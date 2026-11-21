@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { APIRequestContext, Locator, Page } from '@playwright/test'
 
 export function requireEnv(name: string): string {
   const value = process.env[name]
@@ -19,7 +19,21 @@ export const webCanvasWorkspaceRoot = requireEnv('OPENCOVE_WEB_CANVAS_WORKSPACE_
 
 type ControlSurfaceEnvelope<TValue> =
   | { ok: true; value: TValue }
-  | { ok: false; error?: { code?: string; message?: string } }
+  | { ok: false; error?: { code?: string; message?: string; debugMessage?: string } }
+
+class ControlSurfaceInvokeError extends Error {
+  constructor(
+    kind: string,
+    id: string,
+    status: number,
+    readonly error?: Extract<ControlSurfaceEnvelope<never>, { ok: false }>['error'],
+  ) {
+    const detail = error?.debugMessage ?? error?.message
+    super(
+      `[web-canvas-e2e] ${kind} ${id} failed: ${status} ${error?.code ?? 'unknown_error'}${detail ? `: ${detail}` : ''}`,
+    )
+  }
+}
 
 export async function invokeValue<TValue>(
   request: APIRequestContext,
@@ -37,10 +51,11 @@ export async function invokeValue<TValue>(
 
   const envelope = (await response.json()) as ControlSurfaceEnvelope<TValue>
   if (!response.ok() || !envelope.ok) {
-    throw new Error(
-      `[web-canvas-e2e] ${kind} ${id} failed: ${response.status()} ${
-        !envelope.ok ? (envelope.error?.code ?? envelope.error?.message ?? 'unknown_error') : ''
-      }`,
+    throw new ControlSurfaceInvokeError(
+      kind,
+      id,
+      response.status(),
+      !envelope.ok ? envelope.error : undefined,
     )
   }
 
@@ -108,6 +123,7 @@ export function buildAppState(options: {
     directoryPath: string
     nodeIds: string[]
     rect: { x: number; y: number; width: number; height: number } | null
+    pinned?: boolean
   }>
   nodes?: SeedNode[]
   settings?: Record<string, unknown>
@@ -159,6 +175,8 @@ export function buildAppState(options: {
         spaceArchiveRecords: [],
         spaces: options.spaces.map(space => ({
           ...space,
+          // Existing canvas E2E cases predate opt-in space pills.
+          pinned: space.pinned ?? true,
           labelColor: null,
         })),
         activeSpaceId: options.spaces[0]?.id ?? null,
@@ -169,12 +187,33 @@ export function buildAppState(options: {
   }
 }
 
-export async function writeAppState(request: APIRequestContext, state: unknown): Promise<void> {
-  const current = await invokeValue<{ revision: number }>(request, 'query', 'sync.state', null)
-  await invokeValue(request, 'command', 'sync.writeState', {
-    state,
-    baseRevision: current.revision,
-  })
+/** Reapply only the test's intent to a fresh snapshot after a confirmed CAS rejection.
+ * Updaters must be synchronous and repeatable; seed fixtures explicitly return a replacement.
+ */
+export async function writeAppState(
+  request: APIRequestContext,
+  update: (current: Awaited<ReturnType<typeof readSharedState>>['state']) => unknown,
+): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await readSharedState(request)
+    const state = update(current.state)
+    try {
+      await invokeValue(request, 'command', 'sync.writeState', {
+        state,
+        baseRevision: current.revision,
+      })
+      return
+    } catch (error) {
+      if (
+        attempt === 2 ||
+        !(error instanceof ControlSurfaceInvokeError) ||
+        error.error?.code !== 'persistence.invalid_state' ||
+        !error.error.debugMessage?.includes('revision conflict')
+      ) {
+        throw error
+      }
+    }
+  }
 }
 
 export async function readSharedState(request: APIRequestContext): Promise<{
@@ -205,4 +244,9 @@ export async function readTextFile(filePath: string): Promise<string> {
 
 export async function writeTextFile(filePath: string, content: string): Promise<void> {
   await writeFile(filePath, content, 'utf8')
+}
+
+/** Agent and terminal output, read from the test transcript mirror (renderer-independent). */
+export function terminalTranscript(node: Locator): Locator {
+  return node.locator('.terminal-node__transcript')
 }

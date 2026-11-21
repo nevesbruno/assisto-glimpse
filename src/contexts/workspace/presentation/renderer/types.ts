@@ -1,3 +1,4 @@
+import type { ManagedClaudeResumeBindingOwnership } from '@shared/contracts/managedClaudeLaunch'
 import type { Node } from '@xyflow/react'
 import type { AgentRuntimeStatus } from '@contexts/agent/domain/types'
 import type { AgentSettings, AgentProvider } from '@contexts/settings/domain/agentSettings'
@@ -7,6 +8,7 @@ import type { NodeWorkerBinding } from '@shared/types/nodeWorkerBinding'
 import type {
   PersistedFolderNodeData,
   PersistedSpaceRect,
+  PersistedWorkspaceNodeKind,
 } from '@shared/contracts/persistedAppState'
 import type {
   NormalizedPersistedAppStateContract,
@@ -37,17 +39,7 @@ import type { PluginNodePayload } from '@contexts/plugins/domain/pluginTypes'
 
 export type { AgentRuntimeStatus } from '@contexts/agent/domain/types'
 
-export type WorkspaceNodeKind =
-  | 'terminal'
-  | 'agent'
-  | 'task'
-  | 'note'
-  | 'role'
-  | 'image'
-  | 'document'
-  | 'folder'
-  | 'website'
-  | 'plugin'
+export type WorkspaceNodeKind = PersistedWorkspaceNodeKind
 
 export type TaskRuntimeStatus = 'todo' | 'doing' | 'ai_done' | 'done'
 
@@ -88,6 +80,8 @@ export interface AgentNodeData {
   customDirectory: string | null
   shouldCreateDirectory: boolean
   taskId: string | null
+  /** Launch-time override; absent means follow the current Settings value. */
+  agentFullAccess?: boolean
 }
 
 export interface TerminalAgentSessionBinding {
@@ -103,7 +97,13 @@ export interface TerminalAgentOverlay {
   activity?:
     | (Pick<
         TerminalAgentActivitySnapshot,
-        'invocationId' | 'generation' | 'phase' | 'observedAtMs' | 'sourceRevision' | 'revision'
+        | 'invocationId'
+        | 'generation'
+        | 'phase'
+        | 'observedAtMs'
+        | 'sourceRevision'
+        | 'revision'
+        | 'launchMode'
       > & {
         verifiedProviderSessionId?: string | null
       })
@@ -111,6 +111,7 @@ export interface TerminalAgentOverlay {
 }
 
 export interface AgentRuntimeObservation {
+  blockedReason?: import('@shared/contracts/dto/agentRunState').AgentRunSnapshot['blockedReason']
   status: 'running' | 'waiting' | 'standby' | 'exited'
   source: TerminalSessionStateSource
   hookInstallState: AgentHookInstallState | null
@@ -188,6 +189,8 @@ export interface WebsiteNodeData {
 }
 
 export interface TerminalNodeData {
+  managedClaudeBindingObservation?: import('@shared/contracts/managedClaudeLaunch').ManagedClaudeBindingObservation
+  managedClaudeResumeBindingOwnership?: ManagedClaudeResumeBindingOwnership | null
   [key: string]: unknown
   /** Derived canvas presentation only. Runtime dimensions remain width/height. */
   collapsePresentation?: { collapsed: boolean; spaceHidden: boolean }
@@ -210,6 +213,7 @@ export interface TerminalNodeData {
   sidebarSortOrder?: number
   title: string
   titlePinnedByUser?: boolean
+  titleIsLiteral?: boolean
   width: number
   height: number
   kind: WorkspaceNodeKind

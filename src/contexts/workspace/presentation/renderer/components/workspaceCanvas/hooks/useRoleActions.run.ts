@@ -1,4 +1,4 @@
-import type { MutableRefObject } from 'react'
+import { assertProviderInitialPrompt } from '@contexts/agent/domain/providerInitialPromptPolicy'
 import type { Node } from '@xyflow/react'
 import type { TranslateFn } from '@app/renderer/i18n'
 import { resolveSpaceWorkingDirectory } from '@contexts/space/application/resolveSpaceWorkingDirectory'
@@ -9,13 +9,16 @@ import {
   type AgentSettings,
   type ProjectRoleDefinition,
 } from '@contexts/settings/domain/agentSettings'
-import type { RoleNodeData, TerminalNodeData, WorkspaceSpaceState } from '../../../types'
+import type { RoleNodeData, TerminalNodeData } from '../../../types'
 import { resolveLaunchedAgentResumeBinding } from '../../../utils/agentResumeBinding'
 import { toErrorMessage } from '../helpers'
 import type { CreateNodeInput, ShowWorkspaceCanvasMessage } from '../types'
 import { resolveDefaultAgentLaunchGeometry } from './agentLaunchGeometry'
 import { assignNodeToSpaceAndExpand } from './useInteractions.spaceAssignment'
 import { composeProjectRolePrompt } from './useRolePrompt'
+import type { CanvasDocumentCommands } from '../../../store/canvasStoreContext'
+import type { WorkspaceDocument } from '../../../store/workspaceDocument'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
 import {
   buildMergedAgentLaunchEnv,
   launchWorkspaceAgentSession,
@@ -23,10 +26,7 @@ import {
   resolveWorkspaceAgentLaunchBinding,
 } from './useWorkspaceAgentLaunch.shared'
 
-type SetNodes = (
-  updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-  options?: { syncLayout?: boolean },
-) => void
+type SetNodes = UseWorkspaceCanvasNodesStoreResult['setNodes']
 
 export interface RoleRunActionContext {
   workspaceId: string
@@ -34,11 +34,14 @@ export interface RoleRunActionContext {
   environmentVariables?: Record<string, string>
   agentSettings: AgentSettings
   projectRoles: ProjectRoleDefinition[]
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
+  /**
+   * The document reader of the render that started the run: it keeps reading the workspace that
+   * started it, whichever workspace is shown by the time the run awaits.
+   */
+  readDocument: () => WorkspaceDocument
   setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
+  updateSpaces: CanvasDocumentCommands['updateSpaces']
   onShowMessage?: ShowWorkspaceCanvasMessage
   createNodeForSession: (input: CreateNodeInput) => Promise<Node<TerminalNodeData> | null>
   updateRoleInput: (nodeId: string, input: string) => void
@@ -66,14 +69,17 @@ export function resolveNodeRoleDefinition(
   return fromProject ? { ...fromProject } : null
 }
 
+/** `flush` requests the persistence flush on the write itself, for a caller that persists it. */
 function setRoleNodeLastError({
   nodeId,
   message,
   setNodes,
+  flush,
 }: {
   nodeId: string
   message: string
   setNodes: SetNodes
+  flush?: boolean
 }): void {
   setNodes(
     prevNodes =>
@@ -88,7 +94,7 @@ function setRoleNodeLastError({
             }
           : node,
       ),
-    { syncLayout: false },
+    { syncLayout: false, flush },
   )
 }
 
@@ -97,7 +103,7 @@ export async function runRoleNodeAction(
   inputOverride: string | undefined,
   context: RoleRunActionContext,
 ): Promise<void> {
-  const roleNode = context.nodesRef.current.find(node => node.id === nodeId)
+  const roleNode = context.readDocument().nodes.find(node => node.id === nodeId)
   if (!roleNode || roleNode.data.kind !== 'role' || !roleNode.data.role) {
     return
   }
@@ -113,8 +119,8 @@ export async function runRoleNodeAction(
       nodeId,
       message: context.t('roleNode.missingRoleDefinition'),
       setNodes: context.setNodes,
+      flush: true,
     })
-    context.onRequestPersistFlush?.()
     return
   }
 
@@ -129,17 +135,21 @@ export async function runRoleNodeAction(
     context.environmentVariables,
   )
   const prompt = composeProjectRolePrompt({ role, input })
+  try {
+    assertProviderInitialPrompt(provider, prompt)
+  } catch (error) {
+    setRoleNodeLastError({ nodeId, message: toErrorMessage(error), setNodes: context.setNodes })
+    return
+  }
   const owningSpace =
-    context.spacesRef.current.find(space => space.nodeIds.includes(nodeId)) ?? null
+    context.readDocument().spaces.find(space => space.nodeIds.includes(nodeId)) ?? null
   const initialBinding = await resolveWorkspaceAgentLaunchBinding({
     workspaceId: context.workspaceId,
     workspacePath: context.workspacePath,
     currentMountId: owningSpace?.targetMountId ?? null,
     executionDirectory: resolveSpaceWorkingDirectory(owningSpace, context.workspacePath),
     targetSpace: owningSpace,
-    spacesRef: context.spacesRef,
-    onSpacesChange: context.onSpacesChange,
-    onRequestPersistFlush: context.onRequestPersistFlush,
+    updateSpaces: context.updateSpaces,
   })
   const launchGeometry = resolveDefaultAgentLaunchGeometry({
     bucket: context.agentSettings.standardWindowSizeBucket,
@@ -147,9 +157,10 @@ export async function runRoleNodeAction(
     terminalFontSize: context.agentSettings.terminalFontSize,
   })
 
+  const agentNodeId = crypto.randomUUID()
   try {
     const launched = await launchWorkspaceAgentSession({
-      canvasNodeId: nodeId,
+      canvasNodeId: agentNodeId,
       workspaceId: context.workspaceId,
       spaceId: owningSpace?.id,
       mountId: initialBinding.mountId,
@@ -170,16 +181,18 @@ export async function runRoleNodeAction(
           currentMountId: null,
           executionDirectory: initialBinding.executionDirectory,
           targetSpace: owningSpace,
-          spacesRef: context.spacesRef,
-          onSpacesChange: context.onSpacesChange,
-          onRequestPersistFlush: context.onRequestPersistFlush,
+          updateSpaces: context.updateSpaces,
         })
         return nextBinding.mountId && nextBinding.mountId !== failedMountId ? nextBinding : null
       },
     })
 
     const createdAgentNode = await context.createNodeForSession({
+      nodeId: agentNodeId,
       sessionId: launched.sessionId,
+      ...(launched.managedClaudeLifecycle
+        ? { managedClaudeLifecycle: launched.managedClaudeLifecycle }
+        : {}),
       profileId: launched.profileId,
       runtimeKind: launched.runtimeKind,
       terminalGeometry: launchGeometry.terminalGeometry,
@@ -224,10 +237,7 @@ export async function runRoleNodeAction(
         createdNodeId: createdAgentNode.id,
         createdNode: createdAgentNode,
         targetSpaceId: owningSpace.id,
-        spacesRef: context.spacesRef,
-        nodesRef: context.nodesRef,
-        setNodes: context.setNodes,
-        onSpacesChange: context.onSpacesChange,
+        updateCanvasDocument: context.updateCanvasDocument,
       })
     }
 
@@ -273,15 +283,13 @@ export async function runRoleNodeAction(
               }
             : node,
         ),
-      { syncLayout: false },
+      { syncLayout: false, flush: true },
     )
-    context.onRequestPersistFlush?.()
   } catch (error) {
     const message = context.t('messages.agentLaunchFailed', {
       message: toErrorMessage(error),
     })
-    setRoleNodeLastError({ nodeId, message, setNodes: context.setNodes })
-    context.onRequestPersistFlush?.()
+    setRoleNodeLastError({ nodeId, message, setNodes: context.setNodes, flush: true })
     context.onShowMessage?.(message, 'error')
   }
 }

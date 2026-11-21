@@ -8,24 +8,18 @@ import {
   type AgentSettings,
 } from '@contexts/settings/domain/agentSettings'
 import { useOrchestrationLinks } from '@contexts/orchestration/presentation/renderer/useOrchestrationLinks'
-import type { TerminalNodeData, WorkspaceSpaceState } from '../../../types'
+import type { TerminalNodeData } from '../../../types'
 import { useWorkspaceCanvasTaskAgentEdges } from './useTaskAgentEdges'
 import { useWorkspaceCanvasViewportMoveEnd } from './useViewportMoveEnd'
 import { useWorkspaceCanvasSpaceUi } from './useSpaceUi'
 import { resolveWorkspaceMinimapNodeColor } from '../minimap'
-import type { ContextMenuState, EmptySelectionPromptState } from '../types'
 
 export function useWorkspaceCanvasViewModel({
   agentSettings,
   viewportRef,
   onViewportChange,
   flowNodes,
-  contextMenu,
-  setContextMenu,
-  setEmptySelectionPrompt,
-  cancelSpaceRename,
   workspacePath,
-  spacesRef,
   handlePaneClick,
   handlePaneContextMenu,
   handleNodeContextMenu,
@@ -35,12 +29,7 @@ export function useWorkspaceCanvasViewModel({
   viewportRef: MutableRefObject<Viewport>
   onViewportChange: (viewport: Viewport) => void
   flowNodes: Node<TerminalNodeData>[]
-  contextMenu: ContextMenuState | null
-  setContextMenu: React.Dispatch<React.SetStateAction<ContextMenuState | null>>
-  setEmptySelectionPrompt: React.Dispatch<React.SetStateAction<EmptySelectionPromptState | null>>
-  cancelSpaceRename: () => void
   workspacePath: string
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
   handlePaneClick: (event: React.MouseEvent | MouseEvent) => void
   handlePaneContextMenu: (event: React.MouseEvent | MouseEvent) => void
   handleNodeContextMenu: (event: React.MouseEvent, node: Node<TerminalNodeData>) => void
@@ -69,12 +58,7 @@ export function useWorkspaceCanvasViewModel({
   const taskAgentEdges = useWorkspaceCanvasTaskAgentEdges(flowNodes, orchestrationLinks)
 
   const spaceUi = useWorkspaceCanvasSpaceUi({
-    contextMenu,
-    setContextMenu,
-    setEmptySelectionPrompt,
-    cancelSpaceRename,
     workspacePath,
-    spacesRef,
     handlePaneClick,
     handlePaneContextMenu,
     handleNodeContextMenu,

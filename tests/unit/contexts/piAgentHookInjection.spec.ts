@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 import { readFile, stat } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import { createPiHookChannel } from '../../../src/app/main/controlSurface/agentHook/piHookChannel'
@@ -7,35 +8,44 @@ import { AgentLaunchArtifactScope } from '../../../src/contexts/agent/applicatio
 import { piAgentStatusExtensionSource } from '../../../src/contexts/agent/infrastructure/providers/pi/PiAgentStatusExtension'
 
 describe('Pi launch-scoped hook injection', () => {
-  it('does not inject host credentials or extension paths into a WSL profile', async () => {
-    const channel = createPiHookChannel()
-    const provider = new PiAgentProviderContribution({ channel })
-    const artifacts = new AgentLaunchArtifactScope()
-    try {
-      const plan = await provider.launcher.createLaunchPlan({
-        artifacts,
-        mode: 'new',
-        model: null,
-        resumeSessionId: null,
-        agentFullAccess: false,
-        workspaceDirectory: 'C:\\project',
-        profileId: 'wsl:Ubuntu',
-        prompt: 'hello',
+  it.each(['wsl:Ubuntu', ' WSL:Ubuntu '])(
+    'does not inject host credentials or extension paths into a WSL profile %s',
+    async profileId => {
+      const channel = createPiHookChannel()
+      const provider = new PiAgentProviderContribution({
+        artifactRoot: createTestAgentLaunchArtifactRoot(),
+        channel,
       })
-      expect(plan.args).toEqual(['hello'])
-      expect(plan.env).toEqual({})
-      expect(plan.hookInstallState).toBe('skipped')
-      expect(channel.getEndpoint()).toBeNull()
-    } finally {
-      artifacts.seal()
-      await artifacts.dispose()
-      await channel.dispose()
-    }
-  })
+      const artifacts = new AgentLaunchArtifactScope()
+      try {
+        const plan = await provider.launcher.createLaunchPlan({
+          artifacts,
+          mode: 'new',
+          model: null,
+          resumeSessionId: null,
+          agentFullAccess: false,
+          workspaceDirectory: 'C:\\project',
+          profileId,
+          prompt: 'hello',
+        })
+        expect(plan.args).toEqual(['hello'])
+        expect(plan.env).toEqual({})
+        expect(plan.hookInstallState).toBe('skipped')
+        expect(channel.getEndpoint()).toBeNull()
+      } finally {
+        artifacts.seal()
+        await artifacts.dispose()
+        await channel.dispose()
+      }
+    },
+  )
 
   it('shares injection across managed launch and shell invocation and owns artifact cleanup', async () => {
     const channel = createPiHookChannel()
-    const provider = new PiAgentProviderContribution({ channel })
+    const provider = new PiAgentProviderContribution({
+      artifactRoot: createTestAgentLaunchArtifactRoot(),
+      channel,
+    })
     const artifacts = new AgentLaunchArtifactScope()
     try {
       const plan = await provider.launcher.createLaunchPlan({

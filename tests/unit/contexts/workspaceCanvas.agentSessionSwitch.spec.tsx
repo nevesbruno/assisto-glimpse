@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { Node } from '@xyflow/react'
 import { DEFAULT_AGENT_SETTINGS } from '../../../src/contexts/settings/domain/agentSettings'
 import type { AgentSessionSummary } from '../../../src/shared/contracts/dto'
@@ -9,7 +9,12 @@ import type {
   WorkspaceSpaceState,
   WorkspaceViewport,
 } from '../../../src/contexts/workspace/presentation/renderer/types'
+import { registerWorkspaceDocumentPersistFlush } from '../../../src/contexts/workspace/presentation/renderer/store/workspaceDocumentCommands'
 import { WorkspaceCanvas } from '../../../src/contexts/workspace/presentation/renderer/components/WorkspaceCanvas'
+import {
+  seedWorkspaceCanvasStore,
+  useWorkspaceCanvasStoreNodes,
+} from '../../support/workspaceCanvasStoreHarness'
 
 const SWITCH_SUMMARY: AgentSessionSummary = {
   sessionId: 'resume-target',
@@ -208,7 +213,9 @@ describe('WorkspaceCanvas agent session switch', () => {
   it('switches the current agent node in place and archives the previous task binding', async () => {
     const kill = vi.fn(async () => undefined)
     const launch = vi.fn(async () => createLaunchResult('session-switched', 'resume-target'))
+    // The shell's persist flush, as the document module calls it for the session switch.
     const requestPersistFlush = vi.fn()
+    onTestFinished(registerWorkspaceDocumentPersistFlush(requestPersistFlush))
 
     Object.defineProperty(window, 'opencoveApi', {
       configurable: true,
@@ -240,8 +247,10 @@ describe('WorkspaceCanvas agent session switch', () => {
     const spaces: WorkspaceSpaceState[] = []
     let latestNodes = createInitialNodes()
 
+    seedWorkspaceCanvasStore({ nodes: createInitialNodes() })
+
     function Harness() {
-      const [nodes, setNodes] = useState(createInitialNodes())
+      const nodes = useWorkspaceCanvasStoreNodes()
       latestNodes = nodes
 
       return (
@@ -250,11 +259,8 @@ describe('WorkspaceCanvas agent session switch', () => {
           workspacePath="/tmp/repo"
           worktreesRoot=""
           nodes={nodes}
-          onNodesChange={setNodes}
-          onRequestPersistFlush={requestPersistFlush}
           spaces={spaces}
           activeSpaceId={null}
-          onSpacesChange={() => undefined}
           onActiveSpaceChange={() => undefined}
           viewport={viewport}
           isMinimapVisible={false}
@@ -338,8 +344,10 @@ describe('WorkspaceCanvas agent session switch', () => {
     const spaces: WorkspaceSpaceState[] = []
     let latestNodes = createInitialNodes()
 
+    seedWorkspaceCanvasStore({ nodes: createInitialNodes() })
+
     function Harness() {
-      const [nodes, setNodes] = useState(createInitialNodes())
+      const nodes = useWorkspaceCanvasStoreNodes()
       latestNodes = nodes
 
       return (
@@ -348,10 +356,8 @@ describe('WorkspaceCanvas agent session switch', () => {
           workspacePath="/tmp/repo"
           worktreesRoot=""
           nodes={nodes}
-          onNodesChange={setNodes}
           spaces={spaces}
           activeSpaceId={null}
-          onSpacesChange={() => undefined}
           onActiveSpaceChange={() => undefined}
           viewport={viewport}
           isMinimapVisible={false}

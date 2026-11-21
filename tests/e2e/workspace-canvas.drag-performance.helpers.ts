@@ -139,7 +139,6 @@ export async function sampleContinuousDrag(page: Page, frameCount = 240) {
         let previous = performance.now()
         try {
           for (let index = 0; index < frames; index++) {
-            // eslint-disable-next-line no-await-in-loop -- one input per display frame.
             await new Promise<void>(resolve =>
               requestAnimationFrame(() => {
                 const now = performance.now()
@@ -176,6 +175,15 @@ export async function sampleContinuousDrag(page: Page, frameCount = 240) {
         const persisted = JSON.parse(
           (await window.opencoveApi.persistence.readWorkspaceStateRaw()) ?? '{}',
         )
+        // Records with no changed input are commits from internal state.
+        const canvasCommitCauses: Record<string, number> = {}
+        for (const record of api.getCanvasCommitRecords?.() ?? []) {
+          const causes = record.changed.length === 0 ? ['internal'] : record.changed
+          for (const cause of causes) {
+            const key = `${record.component}:${cause}`
+            canvasCommitCauses[key] = (canvasCommitCauses[key] ?? 0) + 1
+          }
+        }
         return {
           frames,
           fps: (1000 * frames) / intervals.reduce((sum, ms) => sum + ms, 0),
@@ -189,6 +197,8 @@ export async function sampleContinuousDrag(page: Page, frameCount = 240) {
           windowCommits: api.getWindowCommitCounts(),
           windowCommitsByNode: api.getWindowCommitCountsByNode?.(),
           presentationCommits: api.getWindowPresentationCommitCounts?.(),
+          canvasCommits: api.getCanvasCommitCounts?.(),
+          canvasCommitCauses,
           persistedPositionDuringDrag: persisted.workspaces?.[0]?.nodes?.find(
             (item: { id: string }) => item.id === nodeId,
           )?.position,

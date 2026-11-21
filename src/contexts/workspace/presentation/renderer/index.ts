@@ -1,0 +1,15 @@
+export {
+  appendWorkspaceSpaceArchiveRecord,
+  applyRuntimeObservation,
+  bindWorkspaceDocumentStore,
+  commitCanvasDocument,
+  hydrateWorkspaceList,
+  mergeHydratedNodes,
+  registerWorkspaceDocumentPersistFlush,
+  replaceFromSync,
+  removeWorkspaceSpaceArchiveRecord,
+  repairWorkspaceSpaces,
+  setWorkspaceActiveSpace,
+  setWorkspaceMinimapVisible,
+  setWorkspaceViewport,
+} from './store/workspaceDocumentCommands'

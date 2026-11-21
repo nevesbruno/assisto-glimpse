@@ -1,10 +1,12 @@
-import React, { useRef, useState } from 'react'
-import { render, waitFor } from '@testing-library/react'
+import React from 'react'
+import { act, render, waitFor } from '@testing-library/react'
 import { ReactFlowProvider, type Node, type ReactFlowInstance } from '@xyflow/react'
-import { describe, expect, it, vi } from 'vitest'
-import type { TerminalNodeData, WorkspaceSpaceState } from '../../../types'
-import type { ContextMenuState, EmptySelectionPromptState } from '../types'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useAppStore } from '@app/renderer/shell/store/useAppStore'
+import type { TerminalNodeData, WorkspaceSpaceState, WorkspaceState } from '../../../types'
+import { commitCanvasDocument } from '../../../store/workspaceDocumentCommands'
 import { useWorkspaceCanvasSpaces } from './useSpaces'
+import { CanvasStoreTestProvider } from '../../../../../../../../tests/support/canvasStoreTestHarness'
 
 const NODE: Node<TerminalNodeData> = {
   id: 'node-1',
@@ -46,7 +48,7 @@ const ACTIVE_SPACE: WorkspaceSpaceState = {
   },
 }
 
-function TestHarness({
+function TestHarnessBody({
   activeSpaceId,
   spaces,
   reactFlow,
@@ -55,12 +57,6 @@ function TestHarness({
   spaces: WorkspaceSpaceState[]
   reactFlow: ReactFlowInstance<Node<TerminalNodeData>>
 }): React.JSX.Element {
-  const nodesRef = useRef([NODE])
-  const spacesRef = useRef(spaces)
-  const selectedNodeIdsRef = useRef<string[]>([])
-  const [, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [, setEmptySelectionPrompt] = useState<EmptySelectionPromptState | null>(null)
-
   useWorkspaceCanvasSpaces({
     workspaceId: 'workspace-1',
     activeSpaceId,
@@ -70,21 +66,47 @@ function TestHarness({
     standardWindowSizeBucket: 'regular',
     reactFlow,
     nodes: [NODE],
-    nodesRef,
-    setNodes: vi.fn(),
+    updateCanvasDocument: vi.fn(),
     spaces,
-    spacesRef,
-    selectedNodeIds: [],
-    selectedNodeIdsRef,
-    onSpacesChange: vi.fn(),
-    setContextMenu,
-    setEmptySelectionPrompt,
   })
 
   return <div />
 }
 
+function TestHarness(props: React.ComponentProps<typeof TestHarnessBody>): React.JSX.Element {
+  return (
+    <CanvasStoreTestProvider workspaceId="workspace-1">
+      <TestHarnessBody {...props} />
+    </CanvasStoreTestProvider>
+  )
+}
+
 describe('useWorkspaceCanvasSpaces', () => {
+  // The hook reads the committed document, so the store holds the Space the canvas shows.
+  beforeEach(() => {
+    useAppStore.setState({
+      workspaces: [
+        {
+          id: 'workspace-1',
+          name: 'Workspace',
+          path: '/tmp/workspace',
+          worktreesRoot: '',
+          nodes: [NODE],
+          spaces: [ACTIVE_SPACE],
+          activeSpaceId: 'space-1',
+          spaceArchiveRecords: [],
+          viewport: { x: 0, y: 0, zoom: 1 },
+          isMinimapVisible: false,
+        } as WorkspaceState,
+      ],
+      activeWorkspaceId: 'workspace-1',
+    })
+  })
+
+  afterEach(() => {
+    useAppStore.setState({ workspaces: [], activeWorkspaceId: null })
+  })
+
   it('fits all spaces when active space is cleared but still exists', async () => {
     const reactFlow = {
       fitView: vi.fn(),
@@ -120,6 +142,10 @@ describe('useWorkspaceCanvasSpaces', () => {
       </ReactFlowProvider>,
     )
 
+    // Archiving removes the Space from the store, then the canvas renders without it.
+    act(() => {
+      commitCanvasDocument('workspace-1', document => ({ ...document, spaces: [] }))
+    })
     rendered.rerender(
       <ReactFlowProvider>
         <TestHarness activeSpaceId={null} spaces={[]} reactFlow={reactFlow} />

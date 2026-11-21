@@ -12,7 +12,7 @@ import {
   MAX_CANVAS_IMAGE_BYTES,
   type CanvasImageMimeType,
 } from '@shared/contracts/dto'
-import type { ImageNodeData, Point, TerminalNodeData, WorkspaceSpaceState } from '../../../types'
+import type { ImageNodeData, Point, TerminalNodeData } from '../../../types'
 import { resolveDefaultImageWindowSize } from '../constants'
 import type { NodeCreationPlacementOptions } from '../types'
 import { resolveNodePlacementAnchorFromViewportCenter, toErrorMessage } from '../helpers'
@@ -20,6 +20,8 @@ import {
   assignNodeToSpaceAndExpand,
   findContainingSpaceByAnchor,
 } from './useInteractions.spaceAssignment'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
+import { useReadCanvasDocument } from '../../../store/canvasStoreContext'
 
 const DEFAULT_IMPORT_STACK_OFFSET_PX = 22
 
@@ -105,10 +107,7 @@ export function useWorkspaceCanvasImageImport({
   workspaceId,
   canvasRef,
   reactFlow,
-  spacesRef,
-  nodesRef,
-  setNodes,
-  onSpacesChange,
+  updateCanvasDocument,
   onShowMessage,
   createImageNode,
   standardWindowSizeBucket,
@@ -116,13 +115,7 @@ export function useWorkspaceCanvasImageImport({
   workspaceId?: string
   canvasRef: React.RefObject<HTMLDivElement | null>
   reactFlow: ReactFlowInstance<Node<TerminalNodeData>, Edge>
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  nodesRef: React.MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: (
-    updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-    options?: { syncLayout?: boolean },
-  ) => void
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
   onShowMessage?: (message: string, tone?: 'info' | 'warning' | 'error') => void
   standardWindowSizeBucket: StandardWindowSizeBucket
   createImageNode: (
@@ -136,6 +129,7 @@ export function useWorkspaceCanvasImageImport({
   handleCanvasDrop: DragEventHandler<HTMLDivElement>
 } {
   const { t } = useTranslation()
+  const readDocument = useReadCanvasDocument()
 
   const importFiles = useCallback(
     async (files: File[], baseFlowCenter: Point) => {
@@ -203,7 +197,7 @@ export function useWorkspaceCanvasImageImport({
         }
 
         const anchor = resolveNodePlacementAnchorFromViewportCenter(flowCenter, defaultSize)
-        const targetSpace = findContainingSpaceByAnchor(spacesRef.current, flowCenter)
+        const targetSpace = findContainingSpaceByAnchor(readDocument().spaces, flowCenter)
 
         const node = createImageNode(
           anchor,
@@ -232,10 +226,7 @@ export function useWorkspaceCanvasImageImport({
             createdNodeId: node.id,
             createdNode: node,
             targetSpaceId: targetSpace.id,
-            spacesRef,
-            nodesRef,
-            setNodes,
-            onSpacesChange,
+            updateCanvasDocument,
           })
         }
       }
@@ -243,13 +234,11 @@ export function useWorkspaceCanvasImageImport({
     [
       workspaceId,
       createImageNode,
-      nodesRef,
       onShowMessage,
-      onSpacesChange,
-      setNodes,
-      spacesRef,
+      readDocument,
       standardWindowSizeBucket,
       t,
+      updateCanvasDocument,
     ],
   )
 

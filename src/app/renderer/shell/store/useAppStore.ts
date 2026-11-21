@@ -3,6 +3,7 @@ import { DEFAULT_AGENT_SETTINGS, type AgentSettings } from '@contexts/settings/d
 import type { ProjectIconId } from '@shared/types/projectIcon'
 import type { SettingsPageId } from '@contexts/settings/presentation/renderer/SettingsPanel.shared'
 import { setRootSpacePinned } from '@contexts/workspace/domain/workspaceSpacePinning'
+import { bindWorkspaceDocumentStore } from '@contexts/workspace/presentation/renderer'
 import type { WorkspaceState } from '@contexts/workspace/presentation/renderer/types'
 import type {
   FocusRequest,
@@ -35,9 +36,11 @@ export interface AppStoreState {
   isProjectCreatorOpen: boolean
   settingsOpenPageId: SettingsPageId | null
   focusRequest: FocusRequest | null
+  workerConnectionError: import('@shared/contracts/dto').AppErrorDescriptor | null
   persistNotice: PersistNotice | null
+  // @compat managed-claude-worker-support
+  managedClaudeCompatibilityNotice: { scope: number; notice: PersistNotice } | null
 
-  setWorkspaces: (action: SetStateAction<WorkspaceState[]>) => void
   setActiveWorkspaceId: (action: SetStateAction<string | null>) => void
   setProjectContextMenu: (action: SetStateAction<ProjectContextMenuState | null>) => void
   setProjectMountManager: (action: SetStateAction<ProjectMountManagerState | null>) => void
@@ -62,7 +65,16 @@ export interface AppStoreState {
     activeNodeId: string,
     overNodeId: string,
   ) => boolean
+  addWorkspace: (workspace: WorkspaceState) => void
+  // Returns the list that remains, so callers can pick the next active workspace from it.
+  removeWorkspaceFromList: (workspaceId: string) => WorkspaceState[]
+  setWorkspaceName: (workspaceId: string, name: string) => boolean
   setProjectIconId: (workspaceId: string, iconId: ProjectIconId | null) => boolean
+  setWorkspaceWorktreesRoot: (workspaceId: string, worktreesRoot: string) => boolean
+  setWorkspaceEnvironmentVariables: (
+    workspaceId: string,
+    environmentVariables: Record<string, string>,
+  ) => boolean
   setWorkspaceSpacePinned: (workspaceId: string, spaceId: string, pinned: boolean) => boolean
 }
 
@@ -79,9 +91,10 @@ export const useAppStore = create<AppStoreState>(set => ({
   settingsOpenPageId: null,
   focusRequest: null,
   persistNotice: null,
+  // @compat managed-claude-worker-support
+  managedClaudeCompatibilityNotice: null,
+  workerConnectionError: null,
 
-  setWorkspaces: action =>
-    set(state => ({ workspaces: applySetStateAction(state.workspaces, action) })),
   setActiveWorkspaceId: action =>
     set(state => ({ activeWorkspaceId: applySetStateAction(state.activeWorkspaceId, action) })),
   setProjectContextMenu: action =>
@@ -147,6 +160,31 @@ export const useAppStore = create<AppStoreState>(set => ({
     })
     return changed
   },
+  addWorkspace: workspace => set(state => ({ workspaces: [...state.workspaces, workspace] })),
+  removeWorkspaceFromList: workspaceId => {
+    let remaining: WorkspaceState[] = []
+    set(state => {
+      remaining = state.workspaces.filter(workspace => workspace.id !== workspaceId)
+      return { workspaces: remaining }
+    })
+    return remaining
+  },
+  setWorkspaceName: (workspaceId, name) => {
+    let changed = false
+    set(state => {
+      const workspaces = state.workspaces.map(workspace => {
+        if (workspace.id !== workspaceId || workspace.name === name) {
+          return workspace
+        }
+
+        changed = true
+        return { ...workspace, name }
+      })
+
+      return changed ? { workspaces } : state
+    })
+    return changed
+  },
   setProjectIconId: (workspaceId, iconId) => {
     let changed = false
     set(state => {
@@ -160,6 +198,38 @@ export const useAppStore = create<AppStoreState>(set => ({
           ...workspace,
           iconId,
         }
+      })
+
+      return changed ? { workspaces } : state
+    })
+    return changed
+  },
+  setWorkspaceWorktreesRoot: (workspaceId, worktreesRoot) => {
+    let changed = false
+    set(state => {
+      const workspaces = state.workspaces.map(workspace => {
+        if (workspace.id !== workspaceId || workspace.worktreesRoot === worktreesRoot) {
+          return workspace
+        }
+
+        changed = true
+        return { ...workspace, worktreesRoot }
+      })
+
+      return changed ? { workspaces } : state
+    })
+    return changed
+  },
+  setWorkspaceEnvironmentVariables: (workspaceId, environmentVariables) => {
+    let changed = false
+    set(state => {
+      const workspaces = state.workspaces.map(workspace => {
+        if (workspace.id !== workspaceId) {
+          return workspace
+        }
+
+        changed = true
+        return { ...workspace, environmentVariables }
       })
 
       return changed ? { workspaces } : state
@@ -188,3 +258,5 @@ export const useAppStore = create<AppStoreState>(set => ({
     return changed
   },
 }))
+
+bindWorkspaceDocumentStore(useAppStore)

@@ -3,6 +3,9 @@ import { CONTROL_SURFACE_OPERATIONS } from '../../../src/shared/contracts/contro
 import { describe, it, expect, vi } from 'vitest'
 import { runWithTargetFixtures as run } from './cliTargetFixtures.helpers'
 import type { CliIo } from '../../../src/app/cli/core/io'
+import { commands } from '../../../src/app/cli/commands'
+import { CliError } from '../../../src/app/cli/core/errors'
+import { createControlToken } from '../../../src/app/main/controlSurface/http/createControlToken'
 function fixture(value: unknown = { pong: true }) {
   let stdout = '',
     stderr = ''
@@ -40,21 +43,26 @@ const file = JSON.stringify({
   startedBy: 'cli',
 })
 describe('TypeScript CLI core', () => {
-  it.each([[], ['--help'], ['node', '--help'], ['node', 'create', 'note', '--help']])(
-    'help snapshot %j',
-    async (...items) => {
-      const args = items as string[]
-      const f = fixture()
-      expect(await run(args, f.io)).toBe(args.length ? 0 : 2)
-      expect(f.out()).toMatchSnapshot()
-      expect(f.fetch).not.toHaveBeenCalled()
-    },
-  )
+  it.each([
+    [],
+    ['--help'],
+    ['node', '--help'],
+    ['node', 'create', 'note', '--help'],
+    ['task', 'claim', '--help'],
+    ['task', 'release', '--help'],
+    ['note', 'append', '--help'],
+  ])('help snapshot %j', async (...items) => {
+    const args = items as string[]
+    const f = fixture()
+    expect(await run(args, f.io)).toBe(args.length ? 0 : 2)
+    expect(f.out()).toMatchSnapshot()
+    expect(f.fetch).not.toHaveBeenCalled()
+  })
   it.each([
     ['nodes', 'list'],
     ['ping', '--unknown'],
     ['node', 'get'],
-    ['node', 'create', 'note', '--space', 's', '--text', '-value'],
+    ['node', 'create', 'note', '--space', 's', '--text'],
     ['node', 'create', 'note', '--space', 's', '--text=x', '--text-file', '-'],
     ['ping', '--timeout', '0'],
   ])('usage has no IO %j', async (...items) => {
@@ -77,6 +85,22 @@ describe('TypeScript CLI core', () => {
     )
     expect(f.fetch.mock.calls[0][0]).toBe('http://localhost:2/invoke')
     expect(f.io.readTextFile).not.toHaveBeenCalled()
+    expect(f.out()).toBe('{"pong":true}\n')
+    expect(f.err()).toBe('')
+  })
+  it('accepts a generated token in the documented --token <value> form', async () => {
+    const token = createControlToken(() => Buffer.alloc(32, 0xf8))
+    const f = fixture()
+
+    const code = await run(['ping', '--endpoint', 'http://localhost:2', '--token', token], f.io)
+
+    expect(code, f.err()).toBe(0)
+    expect(f.fetch).toHaveBeenCalledWith(
+      'http://localhost:2/invoke',
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: `Bearer ${token}` }),
+      }),
+    )
     expect(f.out()).toBe('{"pong":true}\n')
     expect(f.err()).toBe('')
   })
@@ -366,9 +390,97 @@ it('returns exit 6 for an ambiguous space locator and preserves server error', a
   expect(JSON.parse(f.err())).toEqual({
     error: {
       code: 'space.ambiguous',
+      retryable: false,
+      candidates: ['space-a', 'space-b'],
       message: 'Multiple spaces match this name',
       details: { ...details, space: { kind: 'spaceName', name: 'same-name' } },
       hint: 'Run "opencove space list" to find available targets.',
     },
   })
+})
+
+it('validates parsed command arguments once before connection discovery', async () => {
+  const f = fixture()
+  f.io.env = { OPENCOVE_PROJECT_ID: 'untrusted-project' }
+  f.io.profileCandidates = vi.fn(() => ['/isolated/profile'])
+  const validateBeforeConnect = vi.fn(() => {
+    throw new CliError('cli.usage', 2, 'Choose --project before connecting.')
+  })
+  commands.push({
+    path: ['preflight-fixture'],
+    summary: 'Validate command arguments',
+    connect: true,
+    options: { count: { type: 'number', description: 'Count' } },
+    validateBeforeConnect,
+  })
+  try {
+    expect(await run(['preflight-fixture', '--count', '2'], f.io)).toBe(2)
+    expect(validateBeforeConnect).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ options: { count: 2 }, positionals: [] }),
+      f.io.env,
+    )
+    expect(JSON.parse(f.err()).error).toMatchObject({
+      code: 'cli.usage',
+      message: 'Choose --project before connecting.',
+    })
+    expect(f.io.profileCandidates).not.toHaveBeenCalled()
+    expect(f.io.readTextFile).not.toHaveBeenCalled()
+    expect(f.fetch).not.toHaveBeenCalled()
+    expect(f.out()).toBe('')
+  } finally {
+    commands.pop()
+  }
+})
+
+it.each([['--help'], ['--unknown']])(
+  'skips command preflight for help or invalid arguments: %j',
+  async (...flags) => {
+    const f = fixture()
+    f.io.env = {}
+    const validateBeforeConnect = vi.fn(() => {
+      throw new Error('Preflight must not run')
+    })
+    commands.push({
+      path: ['preflight-fixture'],
+      summary: 'Validate command arguments',
+      connect: true,
+      validateBeforeConnect,
+    })
+    try {
+      expect(await run(['preflight-fixture', ...flags], f.io)).toBe(flags[0] === '--help' ? 0 : 2)
+      expect(validateBeforeConnect).not.toHaveBeenCalled()
+      expect(f.fetch).not.toHaveBeenCalled()
+      expect(f.io.readTextFile).not.toHaveBeenCalled()
+    } finally {
+      commands.pop()
+    }
+  },
+)
+
+it('runs a successful command preflight once before invoking its operation', async () => {
+  const f = fixture()
+  const order: string[] = []
+  const validateBeforeConnect = vi.fn(() => {
+    order.push('validate')
+  })
+  f.fetch.mockImplementation(async () => {
+    order.push('invoke')
+    return new Response(JSON.stringify({ ok: true, value: { pong: true } }))
+  })
+  commands.push({
+    path: ['preflight-fixture'],
+    summary: 'Validate command arguments',
+    connect: true,
+    operation: 'system.ping',
+    buildInput: () => null,
+    validateBeforeConnect,
+  })
+  try {
+    expect(await run(['preflight-fixture'], f.io)).toBe(0)
+    expect(validateBeforeConnect).toHaveBeenCalledTimes(1)
+    expect(order).toEqual(['validate', 'invoke'])
+    expect(f.out()).toBe('{"pong":true}\n')
+  } finally {
+    commands.pop()
+  }
 })

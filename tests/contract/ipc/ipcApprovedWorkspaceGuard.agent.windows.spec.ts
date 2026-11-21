@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { IPC_CHANNELS } from '../../../src/shared/constants/ipc'
+import { IPC_CHANNELS } from '../../../src/shared/contracts/ipc'
 import type { ApprovedWorkspaceStore } from '../../../src/contexts/workspace/infrastructure/approval/ApprovedWorkspaceStore'
 import type { PersistenceStore } from '../../../src/platform/persistence/sqlite/PersistenceStore'
 import type { PtyRuntime } from '../../../src/contexts/terminal/presentation/main-ipc/runtime'
 import { invokeHandledIpc } from './ipcTestUtils'
+import { receivePowerShellSpawn } from '../../support/windowsPlatformReceiver'
 
 function createIpcHarness() {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -81,7 +82,7 @@ describe('IPC approved workspace guards on Windows', () => {
 
     try {
       const { handlers, ipcMain } = createIpcHarness()
-      vi.doMock('electron', () => ({ ipcMain }))
+      vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
       vi.doMock('node:child_process', () => {
         const execFile = vi.fn((file, args, options, callback) => {
           const cb = typeof options === 'function' ? options : callback
@@ -133,20 +134,29 @@ describe('IPC approved workspace guards on Windows', () => {
         expect.objectContaining({
           command: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
           cwd: 'C:\\approved',
-          args: expect.arrayContaining(['-NoLogo', '-Command']),
+          args: expect.arrayContaining(['-NoLogo', '-EncodedCommand']),
         }),
       )
       const spawnCall = vi.mocked(runtime.spawnSession).mock.calls[0]?.[0]
-      expect(spawnCall?.args[2]).toContain(
-        "& 'codex' '--dangerously-bypass-approvals-and-sandbox' 'hello'",
+      expect(spawnCall).toBeDefined()
+      const providerArgv = receivePowerShellSpawn(
+        spawnCall!.command,
+        spawnCall!.args,
+        spawnCall!.env ?? {},
       )
+      expect(providerArgv).toEqual([
+        'codex',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--',
+        'hello',
+      ])
 
       expect(result).toEqual(
         expect.objectContaining({
-          command: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+          command: 'codex',
           profileId: 'powershell',
           runtimeKind: 'windows',
-          args: expect.arrayContaining(['-NoLogo', '-Command']),
+          args: providerArgv.slice(1),
         }),
       )
     } finally {

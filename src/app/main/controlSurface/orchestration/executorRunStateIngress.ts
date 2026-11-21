@@ -114,7 +114,14 @@ export class ExecutorRunStateIngress {
     }
     // Map keeps insertion order: the last entry is the newest pending request.
     const summary = [...this.pendingApprovals.values()].at(-1) ?? null
-    return { state: 'waiting', blockedReason: 'permission', blockedSummary: summary }
+    return {
+      state: 'waiting',
+      blockedReason: 'permission',
+      // The executor service reports a plain request text; the contract carries dialog data.
+      blockedSummary: summary
+        ? { kind: 'question', questions: [{ question: summary, options: [] }] }
+        : null,
+    }
   }
 
   private armRenewal(): void {

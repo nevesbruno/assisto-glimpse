@@ -1,3 +1,5 @@
+import type { ManagedClaudeBindingObservation } from '../managedClaudeLaunch'
+import type { NodeLineageProjection } from './nodeLineage'
 import type { AgentProviderId } from './agent'
 import type { AppErrorDescriptor } from './error'
 import type { TerminalRuntimeKind } from './terminal'
@@ -13,7 +15,7 @@ export type ReadableCanvasNodeKind =
   | 'image'
   | 'role'
 
-export type UpdatableCanvasNodeKind = 'note' | 'task' | 'website'
+export type UpdatableCanvasNodeKind = ManagedCanvasNodeKind
 
 export type NodeTaskPriority = 'low' | 'medium' | 'high' | 'urgent'
 
@@ -55,7 +57,7 @@ export interface CompactNodeDataDto {
   url?: string
 }
 
-export interface CanvasNodeSummaryDto {
+export interface CanvasNodeSummaryDto extends NodeLineageProjection {
   data?: CompactNodeDataDto
   id: string
   kind: ReadableCanvasNodeKind
@@ -111,6 +113,7 @@ export interface CanvasNodeDetailDto extends CanvasNodeSummaryDto {
 }
 
 export interface ListNodesInput {
+  spawnedByNodeId?: string | null
   space?: SpaceLocator | null
   projectId?: string | null
   kind?: ReadableCanvasNodeKind | null
@@ -127,10 +130,12 @@ export interface GetNodeInput {
 }
 
 export interface GetNodeResult {
+  managedClaudeBinding?: ManagedClaudeBindingObservation
   node: CanvasNodeDetailDto
 }
 
 export interface CreateNodeInput {
+  near?: { nodeId: string; target: 'reference-container' | 'root-canvas' }
   kind: ManagedCanvasNodeKind
   space?: SpaceLocator | null
   projectId?: string | null

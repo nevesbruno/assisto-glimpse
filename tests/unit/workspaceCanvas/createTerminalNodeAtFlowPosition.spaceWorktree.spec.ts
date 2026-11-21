@@ -3,7 +3,14 @@ import { DEFAULT_AGENT_SETTINGS } from '../../../src/contexts/settings/domain/ag
 import { resolveTerminalPtyGeometryForNodeFrame } from '../../../src/contexts/workspace/domain/terminalPtyGeometry'
 import { resolveDefaultTerminalWindowSize } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/constants'
 import { createTerminalNodeAtFlowPosition } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useInteractions.paneNodeCreation'
+import {
+  createCanvasDocumentHarness,
+  renderCanvasDocumentCommands,
+  renderCanvasDocumentReader,
+  renderCanvasNodeStore,
+} from '../../support/canvasDocumentHarness'
 import type { WorkspaceSpaceState } from '../../../src/contexts/workspace/presentation/renderer/types'
+import { replaceSpacesInStore } from '../../support/workspaceCanvasStoreHarness'
 
 function regularTerminalLaunchGeometry() {
   return resolveTerminalPtyGeometryForNodeFrame({
@@ -21,6 +28,19 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
+
+  // The mount repair writes through the store. None of these launches needs a repair, so the only
+  // write the store sees is the push-away that assigns the node to its Space.
+  function seedStore(spaces: WorkspaceSpaceState[] = []) {
+    const harness = createCanvasDocumentHarness({ spaces })
+    return {
+      harness,
+      readDocument: renderCanvasDocumentReader(harness.workspaceId),
+      updateSpaces: renderCanvasDocumentCommands(harness.workspaceId).updateSpaces,
+      updateCanvasDocument:
+        renderCanvasNodeStore(harness).result.current.nodeStore.updateCanvasDocument,
+    }
+  }
 
   it('refreshes a matched space from persisted state before launching a terminal', async () => {
     const ptySpawn = vi.fn()
@@ -54,7 +74,6 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
     const createNodeForSession = vi.fn(
       async () => ({ id: '00000000-0000-4000-8000-000000000001' }) as never,
     )
-    const onSpacesChange = vi.fn()
     const staleSpace = {
       id: 'space-1',
       name: 'Feature',
@@ -64,6 +83,8 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
       nodeIds: [],
       rect: { x: 0, y: 0, width: 1200, height: 800 },
     }
+
+    const { harness, readDocument, updateSpaces, updateCanvasDocument } = seedStore([staleSpace])
 
     vi.stubGlobal('window', {
       opencoveApi: {
@@ -104,10 +125,9 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
       defaultTerminalProfileId: null,
       standardWindowSizeBucket: 'regular',
       workspacePath: '/repo',
-      spacesRef: { current: [staleSpace] },
-      nodesRef: { current: [] },
-      setNodes: vi.fn(),
-      onSpacesChange,
+      readDocument,
+      updateCanvasDocument,
+      updateSpaces,
       createNodeForSession,
     })
     const expectedGeometry = regularTerminalLaunchGeometry()
@@ -145,7 +165,7 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
       sessionId: 'session-worktree',
       nodeId: '00000000-0000-4000-8000-000000000001',
     })
-    expect(onSpacesChange).toHaveBeenCalledWith([
+    expect(harness.readStoreDocument().spaces).toEqual([
       expect.objectContaining({
         id: 'space-1',
         name: 'Feature',
@@ -154,6 +174,8 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
         nodeIds: ['00000000-0000-4000-8000-000000000001'],
       }),
     ])
+    expect(harness.notifications).toHaveBeenCalledTimes(1)
+    expect(harness.flush).not.toHaveBeenCalled()
   })
 
   it('does not overwrite local space metadata changed while a terminal launch is in flight', async () => {
@@ -166,7 +188,6 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
       projectId: 'workspace-1',
       mounts: [],
     }))
-    const onSpacesChange = vi.fn()
     const originalSpace: WorkspaceSpaceState = {
       id: 'space-1',
       name: 'Feature',
@@ -183,11 +204,9 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
       capabilities: null,
       trustLevel: null,
     }
-    const spacesRef: { current: WorkspaceSpaceState[] } = {
-      current: [originalSpace],
-    }
+    // The user edits the Space in the store while the node is being created.
     const createNodeForSession = vi.fn(async () => {
-      spacesRef.current = [
+      replaceSpacesInStore('workspace-1', [
         {
           ...originalSpace,
           name: 'Renamed Locally',
@@ -197,9 +216,11 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
           boundary: changedBoundary,
           sortOrder: 42,
         },
-      ]
+      ])
       return { id: '00000000-0000-4000-8000-000000000001' } as never
     })
+
+    const { harness, readDocument, updateSpaces, updateCanvasDocument } = seedStore([originalSpace])
 
     vi.stubGlobal('window', {
       opencoveApi: {
@@ -240,10 +261,9 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
       defaultTerminalProfileId: null,
       standardWindowSizeBucket: 'regular',
       workspacePath: '/repo',
-      spacesRef,
-      nodesRef: { current: [] },
-      setNodes: vi.fn(),
-      onSpacesChange,
+      readDocument,
+      updateCanvasDocument,
+      updateSpaces,
       createNodeForSession,
     })
 
@@ -252,7 +272,7 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
         cwd: '/repo/.opencove/worktrees/feature-a',
       }),
     )
-    expect(onSpacesChange).toHaveBeenCalledWith([
+    expect(harness.readStoreDocument().spaces).toEqual([
       expect.objectContaining({
         id: 'space-1',
         name: 'Renamed Locally',
@@ -264,5 +284,8 @@ describe('createTerminalNodeAtFlowPosition space worktree launch', () => {
         nodeIds: ['00000000-0000-4000-8000-000000000001'],
       }),
     ])
+    // The in-flight edit, then the push-away: the mount step before the spawn wrote nothing.
+    expect(harness.notifications).toHaveBeenCalledTimes(2)
+    expect(harness.flush).not.toHaveBeenCalled()
   })
 })

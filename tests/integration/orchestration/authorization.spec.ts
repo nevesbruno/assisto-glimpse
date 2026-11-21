@@ -1,3 +1,4 @@
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import { createControlSurface } from '../../../src/app/main/controlSurface/controlSurface'
@@ -93,7 +94,11 @@ async function fixture() {
     hub,
     createAgentPromptDelivery(
       hub,
-      new AgentProviderRegistry(createBuiltinAgentProviderContributions()),
+      new AgentProviderRegistry(
+        createBuiltinAgentProviderContributions({
+          artifactRoot: createTestAgentLaunchArtifactRoot(),
+        }),
+      ),
     ),
     guard,
     async () => store,
@@ -207,14 +212,15 @@ describe('A7 direct input against a linked executor', () => {
     expect(f.write).not.toHaveBeenCalled()
   })
 
-  it('session.writeNode by grant answers orch.use_dispatch and writes nothing to the PTY', async () => {
+  it('session.writeNode by grant is refused before the PTY, by policy or by the guard', async () => {
     const f = await fixture()
     const result = await f.invoke(f.grantCtx('orq'), 'session.writeNode', {
       nodeId: f.executorA,
       sessionId: 's',
       data: 'rm -rf',
     })
-    expect(result).toMatchObject({ ok: false, error: { code: 'orch.use_dispatch' } })
+    // Upstream schema S1d refuses every grant writeNode before the orchestration guard runs.
+    expect(result).toMatchObject({ ok: false, error: { code: 'common.forbidden' } })
     expect(f.writeAutomation).not.toHaveBeenCalled()
   })
 

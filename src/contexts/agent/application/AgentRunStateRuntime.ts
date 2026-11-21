@@ -39,6 +39,7 @@ export class AgentRunStateRuntime {
       hookCoverage?: AgentHookCoverage
       hookInstallState?: AgentHookInstallState
       piConversation?: { pid: number; revision: number }
+      // @compat agent-legacy-run-state-label
       /** Last raw state per source, for the legacy UI label only (never for decisions). */
       rawStates?: Partial<Record<string, TerminalSessionStateEvent['state']>>
     }
@@ -108,6 +109,7 @@ export class AgentRunStateRuntime {
 
   project(snapshot: AgentRunSnapshot): TerminalSessionStateEvent {
     const session = this.sessions.get(snapshot.sessionId)
+    // @compat agent-legacy-run-state-label
     // `unknown` stays explicit in agentRunState (I3). The legacy UI label keeps showing what
     // the selected source last reported, as before the Worker owned the decision.
     // Only a provider report counts; the launch fallback is not evidence of what the agent does.
@@ -120,6 +122,7 @@ export class AgentRunStateRuntime {
         : undefined
     return {
       ...projectAgentRunState(snapshot),
+      // @compat agent-legacy-run-state-label
       ...(legacyState ? { state: legacyState, observationUnavailable: false } : {}),
       hookInstallState: session?.hookInstallState,
     }
@@ -278,6 +281,7 @@ export class AgentRunStateRuntime {
         turn: null,
         turnOutcome: null,
         blockedReason: null,
+        blockedSummary: null,
         source: null,
         lastTransitionAt: this.now(),
       })
@@ -296,6 +300,10 @@ export class AgentRunStateRuntime {
     const session = this.sessions.get(record.sessionId)
     if (!session || session.remote) {
       return
+    }
+    if (record.captureConversation) {
+      // Capture belongs to the invocation known by this Worker, never a guessed PTY session ID.
+      record = { ...record, incarnation: session.incarnation }
     }
     if (!record.incarnation) {
       return
@@ -330,12 +338,26 @@ export class AgentRunStateRuntime {
       this.metadata({ sessionId: event.sessionId, resumeSessionId: null, agentProvider: provider })
     }
     const session = this.sessions.get(event.sessionId)!
+    const capturedInvocation = getPromptSubmissionEvidence(event)?.invocationId
+    if (capturedInvocation !== undefined && capturedInvocation !== session.incarnation) {
+      return
+    }
+    if (
+      !this.registry.acceptsObservation(
+        event.sessionId,
+        event.source ?? 'session_file',
+        getPromptSubmissionEvidence(event),
+      )
+    ) {
+      return
+    }
     if (event.remote) {
       this.markRemote(event.sessionId)
     }
     if (session.remote) {
       return
     }
+    // @compat codex-legacy-notify-bridge
     // Lifecycle hooks own turn state. Codex's separately spawned legacy notify can arrive
     // after the next submit; it must not replace hook evidence or the legacy UI label.
     if (
@@ -434,8 +456,10 @@ export class AgentRunStateRuntime {
           (session.hookInstallState !== undefined &&
             ['partial', 'error', 'not_installed', 'skipped'].includes(session.hookInstallState)),
         blockedReason: event.blockedReason,
+        blockedSummary: event.blockedSummary,
         boundary,
         hookEventName: name,
+        baseline: event.baseline,
         emittedAtMs: event.emittedAtMs,
       },
       getPromptSubmissionEvidence(event),
@@ -458,6 +482,7 @@ export class AgentRunStateRuntime {
           quality: 'authoritative',
           turn: null,
           blockedReason: null,
+          blockedSummary: null,
           lastTransitionAt: this.now(),
         })
       }

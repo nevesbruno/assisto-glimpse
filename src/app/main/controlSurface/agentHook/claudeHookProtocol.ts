@@ -32,6 +32,7 @@ export interface ClaudeHookInput {
   prompt?: unknown
   prompt_id?: unknown
   source?: string
+  reason?: string
   notification_type?: string
 }
 
@@ -42,7 +43,9 @@ export interface ClaudeHookEnvelope {
   state: ClaudeHookTurnState | null
   hookEventName: string
   claudeSessionId: string
+  notificationType?: string
   sessionStartSource?: ClaudeSessionStartSource
+  sessionEndReason?: 'clear'
   transcriptPath?: string
   promptId?: string
   promptDigest?: string
@@ -92,7 +95,13 @@ export function validateClaudeHookEnvelope(value: unknown): ClaudeHookEnvelope |
     state: hookEventName === 'SessionStart' ? null : state,
     hookEventName,
     claudeSessionId,
+    ...(typeof value.notificationType === 'string'
+      ? { notificationType: value.notificationType }
+      : {}),
     ...(sessionStartSourceValue ? { sessionStartSource: sessionStartSourceValue } : {}),
+    ...(hookEventName === 'SessionEnd' && (value.sessionEndReason ?? value.reason) === 'clear'
+      ? { sessionEndReason: 'clear' as const }
+      : {}),
     ...(typeof value.transcriptPath === 'string' &&
     isAbsolute(value.transcriptPath) &&
     value.transcriptPath.length <= 4096 &&
@@ -214,9 +223,13 @@ export function normalizeClaudeHookEnvelope(value: unknown): ClaudeHookEnvelope 
   return {
     version: 1,
     state,
+    ...(notificationType ? { notificationType } : {}),
     hookEventName,
     claudeSessionId,
     ...(sessionStartSourceValue ? { sessionStartSource: sessionStartSourceValue } : {}),
+    ...(hookEventName === 'SessionEnd' && value.reason === 'clear'
+      ? { sessionEndReason: 'clear' as const }
+      : {}),
     ...(isAbsolute(transcriptPath) &&
     transcriptPath.length <= 4096 &&
     !transcriptPath.includes('\0')

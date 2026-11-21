@@ -1,3 +1,7 @@
+import type { CreateAgentLaunchPlanCommand } from '../../../src/contexts/agent/application/ports/AgentProviderContribution'
+import { checkProductionGrantPolicy } from './sessionGrantPolicy.productionChecks'
+import { checkProductionGrantDelegation } from './sessionGrantDelegation.productionChecks'
+import type { ControlSurface } from '../../../src/app/main/controlSurface/controlSurface'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { AgentProviderRegistry } from '../../../src/contexts/agent/application/services/AgentProviderRegistry'
@@ -46,6 +50,19 @@ it('production Worker issues canvas credentials, exposes shim and whoami, and re
   }))
   const approvedWorkspaces = createApprovedWorkspaceStoreForPath(join(dir, 'approved.json'))
   await approvedWorkspaces.registerRoot(dir)
+  const write = vi.fn()
+  const kill = vi.fn((sessionId: string) => {
+    exits.forEach(emit => emit({ sessionId, exitCode: 0 }))
+  })
+  const createLaunchPlan = vi.fn(async (_command: CreateAgentLaunchPlanCommand) => ({
+    command: '/bin/sh',
+    args: [],
+    env: {},
+    effectiveModel: null,
+    launchMode: 'new' as const,
+    resumeSessionId: null,
+  }))
+  let surface!: ControlSurface
   const runtime = createControlSurfaceHttpRuntime({
     agentProviderRegistry: new AgentProviderRegistry([
       {
@@ -57,14 +74,7 @@ it('production Worker issues canvas credentials, exposes shim and whoami, and re
         },
         detector: { inspect: vi.fn() },
         launcher: {
-          createLaunchPlan: async () => ({
-            command: '/bin/sh',
-            args: [],
-            env: {},
-            effectiveModel: null,
-            launchMode: 'new',
-            resumeSessionId: null,
-          }),
+          createLaunchPlan,
         },
       },
     ]),
@@ -74,11 +84,9 @@ it('production Worker issues canvas credentials, exposes shim and whoami, and re
     approvedWorkspaces,
     ptyRuntime: {
       spawnSession: spawn,
-      write: () => {},
+      write,
       resize: async () => ({ status: 'session_not_found' }) as never,
-      kill: sessionId => {
-        exits.forEach(emit => emit({ sessionId, exitCode: 0 }))
-      },
+      kill,
       onData: () => () => {},
       onExit: listener => {
         exits.add(listener)
@@ -89,6 +97,9 @@ it('production Worker issues canvas credentials, exposes shim and whoami, and re
     },
   })
   try {
+    runtime.registerHandlers(control => {
+      surface = control
+    })
     await runtime.ready
     await runtime.listen({
       role: 'private',
@@ -129,7 +140,7 @@ it('production Worker issues canvas credentials, exposes shim and whoami, and re
           isWebUiAuthRevisionCurrent: () => true,
         },
       })
-      await vi.waitFor(() => expect(req.listenerCount('end')).toBe(1))
+      await vi.waitFor(() => expect(req.listenerCount('end')).toBe(1), { interval: 1 })
       req.emit('data', JSON.stringify({ kind, id, payload }))
       req.emit('end')
       await pending
@@ -148,6 +159,12 @@ it('production Worker issues canvas credentials, exposes shim and whoami, and re
     })
     expect(launched.result).toMatchObject({ ok: true })
     const env = spawn.mock.calls[0][0].env!
+    const published = createMinimalState(dir, 'project', 'space')
+    published.workspaces[0].nodes = [
+      { id: 'node', kind: 'terminal', title: 'Caller', sessionId: launched.result.value.sessionId },
+    ]
+    published.workspaces[0].spaces[0].nodeIds = ['node']
+    expect(await store.writeAppState(published)).toMatchObject({ ok: true })
     expect(env).toMatchObject({
       OPENCOVE_ENV: '1',
       OPENCOVE_NODE_ID: 'node',
@@ -178,6 +195,53 @@ it('production Worker issues canvas credentials, exposes shim and whoami, and re
     expect((await invoke('system.whoami', {}, token, 'query')).result).toMatchObject({
       ok: true,
       value: { kind: 'session-grant', nodeId: 'node', sessionId: launched.result.value.sessionId },
+    })
+    const delegate = () =>
+      checkProductionGrantDelegation({
+        env,
+        invoke,
+        spawned: () => spawn.mock.calls.map(c => c[0]),
+      })
+    await delegate()
+    await checkProductionGrantPolicy({
+      invoke,
+      token,
+      surface,
+      store,
+      spawnCount: () => spawn.mock.calls.length,
+      writeCount: () => write.mock.calls.length,
+      killCount: () => kill.mock.calls.length,
+    })
+    expect(createLaunchPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ agentFullAccess: false }),
+    )
+    await delegate()
+    const mount = await invoke('mount.create', {
+      projectId: 'project',
+      endpointId: 'local',
+      rootPath: dir,
+    })
+    expect(mount.result.error).toBeUndefined()
+    const forwarded = await invoke(
+      'session.launchAgent',
+      { spaceId: 'space', prompt: 'mounted review' },
+      token,
+    )
+    expect(forwarded.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'common.forbidden',
+        details: { spawnReason: 'node_create_required', operationId: 'session.launchAgent' },
+      },
+    })
+    await checkProductionGrantPolicy({
+      invoke,
+      token,
+      surface,
+      store,
+      spawnCount: () => spawn.mock.calls.length,
+      writeCount: () => write.mock.calls.length,
+      killCount: () => kill.mock.calls.length,
     })
     await invoke('session.kill', { sessionId: launched.result.value.sessionId })
     // Invalid auth returns before reading a body, so invoke directly with a completed fixture below.
@@ -219,14 +283,8 @@ it('production Worker issues canvas credentials, exposes shim and whoami, and re
     })
     expect(second.result.ok).toBe(true)
     exits.forEach(emit => emit({ sessionId: second.result.value.sessionId, exitCode: 0 }))
-    const secondToken = spawn.mock.calls[1][0].env!.OPENCOVE_CONTROL_TOKEN!
+    const secondToken = spawn.mock.calls.at(-1)![0].env!.OPENCOVE_CONTROL_TOKEN!
     expect(await unauthorized(secondToken)).toBe(401)
-    const mount = await invoke('mount.create', {
-      projectId: 'project',
-      endpointId: 'local',
-      rootPath: dir,
-    })
-    expect(mount.result.error).toBeUndefined()
     const mounted = await invoke('pty.spawnInMount', {
       mountId: mount.result.value.mount.mountId,
       workspaceId: 'project',

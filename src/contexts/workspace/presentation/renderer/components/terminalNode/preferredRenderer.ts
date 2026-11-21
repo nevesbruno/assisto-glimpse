@@ -86,6 +86,7 @@ function requiresWebglRenderer(
   return terminalProvider === 'opencode' && options.terminalKind === 'agent'
 }
 
+/** @internal Test seam: only specs call this. */
 export function resetPreferredTerminalRendererStateForTests(): void {
   activeWebglRendererCount = 0
   webglSupported = false
@@ -121,20 +122,21 @@ export function activatePreferredTerminalRenderer(
       activeWebglRendererCount = Math.max(0, activeWebglRendererCount - 1)
     }
     const contextLossDisposable = webglAddon.onContextLoss(() => {
-      if (disposed) {
+      if (disposed || kind === 'dom') {
         return
       }
 
-      disposed = true
       kind = 'dom'
       releaseWebglBudget()
-      options.onRendererKindChange?.('dom')
-      options.onRendererIssue?.({
-        reason: 'context_loss',
-        forceDom: !mustUseWebgl,
-      })
       contextLossDisposable.dispose()
+      // xterm installs a DOM renderer on addon disposal. Keep its parser, buffer,
+      // selection and viewport: recreating the terminal replays history as a new epoch.
       webglAddon.dispose()
+      options.onRendererKindChange?.('dom')
+      terminal.refresh(0, Math.max(0, terminal.rows - 1))
+      if (mustUseWebgl) {
+        options.onRendererIssue?.({ reason: 'context_loss', forceDom: false })
+      }
     })
 
     return {
@@ -155,11 +157,13 @@ export function activatePreferredTerminalRenderer(
 
         disposed = true
         contextLossDisposable.dispose()
-        webglAddon.dispose()
-        releaseWebglBudget()
+        if (kind === 'webgl') {
+          webglAddon.dispose()
+          releaseWebglBudget()
+        }
       },
       setRasterScale: scale => {
-        if (disposed) {
+        if (disposed || kind === 'dom') {
           return false
         }
 

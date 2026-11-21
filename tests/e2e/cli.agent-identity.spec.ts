@@ -1,80 +1,18 @@
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { randomUUID } from 'node:crypto'
+import { expect, test, type ElectronApplication } from '@playwright/test'
 import { mkdir, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { stripVTControlCharacters } from 'node:util'
 import type { CreateNodeResult } from '../../src/shared/contracts/dto/nodeControl'
 import { launchApp, removePathWithRetry, seedWorkspaceState } from './workspace-canvas.helpers'
+
+import { terminalCommand, jsonOutput } from './cli.terminal.helpers'
 
 const projectId = 'cli-identity-project'
 const mainSpaceId = 'cli-identity-main'
 const otherSpaceId = 'cli-identity-other'
 const briefId = 'cli-identity-brief'
-
-// Construct markers in the shell: neither complete marker occurs in the echoed input.
-function printMarker(suffix: string): string {
-  return process.platform === 'win32'
-    ? `Write-Output ('OC_CLI_' + '${suffix}')`
-    : `printf '\n%s%s\n' 'OC_CLI_' '${suffix}'`
-}
-
-async function terminalCommand(
-  page: Page,
-  binding: { nodeId: string; sessionId: string },
-  command: string,
-  label: string,
-): Promise<string> {
-  const nonce = randomUUID().replaceAll('-', '')
-  const begin = `${label}_BEGIN_${nonce}`
-  const end = `${label}_END_${nonce}`
-  // Capture the CLI process status immediately, before printing the end marker.
-  const status =
-    process.platform === 'win32' ? 'Write-Output ("exit=" + $LASTEXITCODE)' : 'echo "exit=$?"'
-  const input = [printMarker(begin), command, status, printMarker(end)].join('; ')
-  const accepted = await page.evaluate(
-    async payload => {
-      return await window.opencoveApi.controlSurface.invoke<{ accepted: boolean }>({
-        kind: 'command',
-        id: 'session.writeNode',
-        payload: { ...payload.binding, data: payload.input + '\r' },
-      })
-    },
-    { binding, input },
-  )
-  expect(accepted.accepted, `${label}: session.writeNode must accept the live binding`).toBe(true)
-
-  let output = ''
-  await expect
-    .poll(
-      async () => {
-        const raw = await page.evaluate(async sessionId => {
-          return (await window.opencoveApi.pty.snapshot({ sessionId })).data
-        }, binding.sessionId)
-        output = stripVTControlCharacters(raw).replaceAll('\r', '')
-        const start = output.lastIndexOf(`OC_CLI_${begin}`)
-        return start >= 0 && output.indexOf(`OC_CLI_${end}`, start) > start
-      },
-      {
-        timeout: 20_000,
-        intervals: [100, 250, 500],
-        message: `${label}: CLI output must complete between shell-assembled markers (not command echo)`,
-      },
-    )
-    .toBe(true)
-  const start = output.lastIndexOf(`OC_CLI_${begin}`) + `OC_CLI_${begin}`.length
-  return output.slice(start, output.indexOf(`OC_CLI_${end}`, start)).trim()
-}
-
-function jsonOutput(output: string): Record<string, unknown> {
-  expect(output, 'Read-only CLI command must exit successfully').toMatch(/\bexit=0\b/)
-  const start = output.indexOf('{')
-  const end = output.lastIndexOf('}')
-  expect(start, `Expected CLI JSON in framed terminal output: ${output}`).toBeGreaterThanOrEqual(0)
-  expect(end).toBeGreaterThan(start)
-  // ConPTY may wrap a compact JSON value across physical console rows.
-  return JSON.parse(output.slice(start, end + 1).replaceAll('\n', '')) as Record<string, unknown>
-}
+const frameArgument = (value: string) =>
+  `'${process.platform === 'win32' ? value.replaceAll('"', '\\"') : value}'`
 
 test('a canvas terminal discovers its identity, neighbors and scope through the CLI', async () => {
   const root = await mkdtemp(join(tmpdir(), 'opencove-cli-identity-'))
@@ -177,16 +115,40 @@ test('a canvas terminal discovers its identity, neighbors and scope through the 
       spaceId: mainSpaceId,
       nodeId,
       sessionId,
+      // A root terminal with no agents started yet; admission uses the same computation.
+      lineageQuota: {
+        depth: 1,
+        maxDepth: 3,
+        liveInTree: 0,
+        maxLiveInTree: 6,
+        remainingLiveInTree: 6,
+      },
     })
     expect(identity).not.toHaveProperty('token')
 
     const context = jsonOutput(await terminalCommand(page, binding, 'opencove context', 'CONTEXT'))
     expect(context).toMatchObject({
-      self: { caller: 'session-grant', projectId, spaceId: mainSpaceId, nodeId },
+      self: {
+        caller: 'session-grant',
+        projectId,
+        spaceId: mainSpaceId,
+        nodeId,
+        node: { id: nodeId, kind: 'terminal', title: 'Agent CLI terminal' },
+      },
       project: { id: projectId, name: 'CLI identity project', path: workspace },
       space: { id: mainSpaceId, name: 'Main', directoryPath: workspace },
     })
-    expect(context.nodes).toEqual([{ id: briefId, kind: 'note', title: 'Brief', state: null }])
+    expect(context.nodes).toEqual([
+      {
+        id: briefId,
+        kind: 'note',
+        title: 'Brief',
+        state: null,
+        spawnedBy: null,
+        lineageDepth: 1,
+        lineageStatus: 'root',
+      },
+    ])
     expect((context.nodes as { id: string }[]).some(node => node.id === nodeId)).toBe(false)
 
     const self = jsonOutput(
@@ -194,18 +156,92 @@ test('a canvas terminal discovers its identity, neighbors and scope through the 
     )
     expect(self).toEqual({ node: { id: nodeId } })
 
+    const otherContext = jsonOutput(
+      await terminalCommand(
+        page,
+        binding,
+        `opencove context --space ${otherSpaceId}`,
+        'OTHER_CONTEXT',
+      ),
+    )
+    expect(otherContext).toMatchObject({
+      self: {
+        nodeId,
+        node: { id: nodeId, kind: 'terminal', title: 'Agent CLI terminal' },
+      },
+      space: { id: otherSpaceId },
+      nodes: [],
+    })
+
+    // Read actual CLI output from a granted terminal through the real Worker.
+    // Collapse physical ConPTY wrapping before separating the notice from JSON.
+    const frameCommand = async (command: string, label: string, adjusted: boolean) => {
+      const output = (await terminalCommand(page, binding, command, label)).replaceAll('\n', '')
+      const notice = /Notice: note frame adjusted; applied frame: (\{[^}]+\})\./g
+      const notices = [...output.matchAll(notice)]
+      expect(notices).toHaveLength(adjusted ? 1 : 0)
+      const result = jsonOutput(output.replace(notice, ''))
+      expect(result.frameAdjusted).toBe(adjusted)
+      if (adjusted) {
+        expect(JSON.parse(notices[0][1])).toEqual(result.appliedFrame)
+      }
+      return result as unknown as CreateNodeResult & {
+        appliedFrame: CreateNodeResult['node']['frame']
+      }
+    }
+    const sized = await frameCommand(
+      `opencove node create note --text Sized --frame ${frameArgument('{"width":320,"height":240}')}`,
+      'NOTE_FRAME_EXACT',
+      false,
+    )
+    expect(sized.node.frame).toMatchObject({ width: 320, height: 240 })
+    for (const [label, frame] of [
+      ['NOTE_FRAME_SIZE', '{"width":400,"height":300}'],
+      ['NOTE_FRAME_POSITION', '{"x":100,"y":100,"width":400,"height":300}'],
+    ]) {
+      // Commands share one PTY and must run sequentially.
+      const result = await frameCommand(
+        `opencove node create note --text Bounded --frame ${frameArgument(frame)}`,
+        label,
+        true,
+      )
+      expect(result.appliedFrame).toEqual(result.node.frame)
+      expect(result.node.frame).toMatchObject({ width: 360, height: 260 })
+      if (label === 'NOTE_FRAME_POSITION') {
+        expect(result.node.frame).toMatchObject({ x: 100, y: 100 })
+      }
+      const persisted = jsonOutput(
+        await terminalCommand(
+          page,
+          binding,
+          `opencove node get --node ${result.node.id} --fields frame`,
+          `${label}_GET`,
+        ),
+      )
+      expect(persisted).toMatchObject({ node: { frame: result.appliedFrame } })
+    }
+    const updated = await frameCommand(
+      `opencove node update note --node ${sized.node.id} --frame ${frameArgument('{"width":400,"height":300}')}`,
+      'NOTE_FRAME_UPDATE',
+      true,
+    )
+    expect(updated.node.frame).toMatchObject({ width: 360, height: 260 })
+    expect(updated.appliedFrame).toEqual(updated.node.frame)
+
     // The server checks admin scope before payload validation. If the scope fence regresses,
     // this empty payload still cannot approve an unrelated filesystem root.
-    const denied = await terminalCommand(
-      page,
-      binding,
-      "opencove api call workspace.approveRoot --input '{}' -o json",
-      'SCOPE',
-    )
+    const denied = (
+      await terminalCommand(
+        page,
+        binding,
+        "opencove api call workspace.approveRoot --input '{}' -o json",
+        'SCOPE',
+      )
+    ).replaceAll('\n', '')
     expect(denied).toMatch(/\bexit=4\b/)
     expect(denied).toContain('common.forbidden')
-    expect(denied).toContain('An OpenCove session may read and interact')
-    expect(denied).toContain('outside the OpenCove session')
+    expect(denied).toContain('operation_denied')
+    expect(denied).toContain('requires a human decision')
   } finally {
     try {
       await app?.close()

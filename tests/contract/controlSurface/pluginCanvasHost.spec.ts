@@ -242,11 +242,53 @@ describe('plugin canvas routing over two authenticated Workers', () => {
       await expect(
         host('terminals.create', { target, command: 'echo unsafe-default-shell' }),
       ).rejects.toThrow('explicit target shell')
+      const beforeUnknownTask = remotePty.runtime.spawnSession.mock?.calls.length
+      await expect(
+        host('agents.launch', {
+          target,
+          provider: 'codex',
+          prompt: 'Inspect',
+          taskNodeId: 'missing-task',
+        }),
+      ).rejects.toThrow('was not found in the target project')
+      expect(remotePty.runtime.spawnSession.mock?.calls.length).toBe(beforeUnknownTask)
+      const task = await host<CreateNodeResult>('nodes.create', {
+        target,
+        kind: 'task',
+        data: { requirement: 'Inspect the project' },
+      })
+      const restrictedAgent = await host<CreateNodeResult>('agents.launch', {
+        target,
+        prompt: 'Inspect the project',
+        provider: 'codex',
+        agentFullAccess: false,
+        taskNodeId: task.node.id,
+      })
+      expect(
+        (await store.readAppState())?.workspaces
+          .flatMap(workspace => workspace.nodes)
+          .find(node => node.id === restrictedAgent.node.id)?.agent,
+      ).toMatchObject({ agentFullAccess: false, taskId: task.node.id })
+      expect(await host('nodes.get', { nodeId: task.node.id })).toMatchObject({
+        node: { data: { status: 'doing', linkedAgentNodeId: restrictedAgent.node.id } },
+      })
       const agent = await host<CreateNodeResult>('agents.launch', {
         target,
         prompt: 'Inspect the project',
         provider: 'codex',
+        agentFullAccess: true,
       })
+      const savedAgent = (await store.readAppState())?.workspaces
+        .flatMap(workspace => workspace.nodes)
+        .find(node => node.id === agent.node.id)
+      expect(savedAgent?.agent).toMatchObject({ agentFullAccess: true })
+      await expect(host('agents.launch', { target, agentFullAccess: 'true' })).rejects.toThrow(
+        'agentFullAccess',
+      )
+      await expect(host('agents.launch', { target, agentFullAccess: null })).rejects.toThrow(
+        'agentFullAccess',
+      )
+
       expect(agent.node).toMatchObject({
         kind: 'agent',
         data: { provider: 'codex', executionDirectory: remoteRoot },

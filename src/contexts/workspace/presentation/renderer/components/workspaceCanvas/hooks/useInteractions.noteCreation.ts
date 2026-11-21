@@ -1,25 +1,19 @@
-import type { MutableRefObject } from 'react'
 import type { Node } from '@xyflow/react'
 import type { Point, TerminalNodeData, WorkspaceSpaceState } from '../../../types'
+import type { WorkspaceDocument } from '../../../store/workspaceDocument'
 import {
   assignNodeToSpaceAndExpand,
   findContainingSpaceByAnchor,
 } from './useInteractions.spaceAssignment'
-
-type SetNodes = (
-  updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-  options?: { syncLayout?: boolean },
-) => void
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
 
 export function createNoteNodeAtAnchor({
   workspaceId,
   anchor,
   spaceAnchor = anchor,
   createNoteNode,
-  spacesRef,
-  nodesRef,
-  setNodes,
-  onSpacesChange,
+  readDocument,
+  updateCanvasDocument,
 }: {
   workspaceId?: string
   anchor: Point
@@ -32,12 +26,10 @@ export function createNoteNodeAtAnchor({
       }
     },
   ) => Node<TerminalNodeData> | null
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
+  readDocument: () => WorkspaceDocument
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
 }): void {
-  const targetSpace = findContainingSpaceByAnchor(spacesRef.current, spaceAnchor)
+  const targetSpace = findContainingSpaceByAnchor(readDocument().spaces, spaceAnchor)
   const created = createNoteNode(anchor, {
     placement: {
       targetSpaceRect: targetSpace?.rect ?? null,
@@ -56,9 +48,6 @@ export function createNoteNodeAtAnchor({
     createdNodeId: created.id,
     createdNode: created,
     targetSpaceId: targetSpace.id,
-    spacesRef,
-    nodesRef,
-    setNodes,
-    onSpacesChange,
+    updateCanvasDocument,
   })
 }

@@ -1,5 +1,6 @@
 import { resolveLaunchedAgentResumeBinding } from '../../../agent/domain/agentResumeBinding'
 import { randomUUID } from 'node:crypto'
+import { AGENT_PROVIDER_IDS } from '../../../../shared/contracts/dto'
 import type {
   AgentProviderId,
   CanvasNodeFrameDto,
@@ -11,6 +12,7 @@ import type {
 import { resolveWebsiteNavigationUrl } from '../../../../shared/utils/websiteUrl'
 import { createAppError } from '../../../../shared/errors/appError'
 import { resolveInitialAgentRuntimeStatus } from '../../../agent/domain/agentRuntimeStatus'
+import { buildControlSurfaceAgentLaunchTitle } from '../../domain/controlSurfaceAgentLaunchTitle'
 import {
   resolveCanonicalNodeMaxSize,
   resolveCanonicalNodeMinSize,
@@ -34,7 +36,14 @@ export type NodeControlCreateData =
       sessionMode: WebsiteWindowSessionMode
       profileId: string | null
     }
-  | { kind: 'agent'; prompt: string; provider: AgentProviderId | null; model: string | null }
+  | {
+      kind: 'agent'
+      prompt: string
+      provider: AgentProviderId | null
+      model: string | null
+      agentFullAccess?: boolean
+      taskNodeId?: string
+    }
   | { kind: 'terminal'; shell: string | null; command: string | null; profileId: string | null }
 
 export interface AgentNodeRuntimeData {
@@ -121,15 +130,9 @@ function normalizeAgentProvider(value: unknown): AgentProviderId | null {
     return null
   }
   const normalized = typeof value === 'string' ? value.trim() : value
-  if (
-    normalized === 'claude-code' ||
-    normalized === 'codex' ||
-    normalized === 'opencode' ||
-    normalized === 'gemini' ||
-    normalized === 'pi' ||
-    normalized === 'kimi'
-  ) {
-    return normalized
+  const provider = AGENT_PROVIDER_IDS.find(id => id === normalized)
+  if (provider) {
+    return provider
   }
   throw createAppError('common.invalid_input', { debugMessage: 'Invalid agent provider.' })
 }
@@ -189,11 +192,24 @@ export function normalizeCreateNodeData(
   }
 
   if (kind === 'agent') {
+    const taskNodeId = normalizeOptionalString(record.taskNodeId)
+    if (record.taskNodeId !== undefined && taskNodeId === null) {
+      throw createAppError('common.invalid_input', {
+        debugMessage: 'node.create agent data.taskNodeId must be a non-empty string.',
+      })
+    }
+    if (record.agentFullAccess !== undefined && typeof record.agentFullAccess !== 'boolean') {
+      throw createAppError('common.invalid_input', {
+        debugMessage: 'node.create agent data.agentFullAccess must be a boolean.',
+      })
+    }
     return {
       kind,
       prompt: typeof record.prompt === 'string' ? record.prompt : '',
       provider: normalizeAgentProvider(record.provider),
       model: normalizeOptionalString(record.model),
+      ...(taskNodeId === null ? {} : { taskNodeId }),
+      ...(record.agentFullAccess === undefined ? {} : { agentFullAccess: record.agentFullAccess }),
     }
   }
 
@@ -205,10 +221,7 @@ export function normalizeCreateNodeData(
   }
 }
 
-export function normalizeUpdateNodeData(
-  _kind: 'note' | 'task' | 'website',
-  data: unknown,
-): unknown {
+export function normalizeUpdateNodeData(_kind: ManagedCanvasNodeKind, data: unknown): unknown {
   return isRecord(data) ? data : {}
 }
 
@@ -239,7 +252,7 @@ export function resolveNodeTitle(options: {
 
     const provider = options.agentRuntime?.provider ?? 'codex'
     const model = options.agentRuntime?.effectiveModel ?? options.agentRuntime?.model ?? null
-    return model ? `${provider} ${model}` : 'Agent'
+    return buildControlSurfaceAgentLaunchTitle(provider, model)
   }
 
   if (options.kind === 'terminal') {
@@ -291,6 +304,7 @@ export function makeNode(options: {
   id?: string
   kind: ManagedCanvasNodeKind
   title: string
+  titlePinnedByUser?: boolean
   frame: CanvasNodeFrameDto
   data: NodeControlCreateData
   now: string
@@ -342,7 +356,10 @@ export function makeNode(options: {
           directoryMode: 'workspace',
           customDirectory: null,
           shouldCreateDirectory: false,
-          taskId: null,
+          taskId: options.data.taskNodeId ?? null,
+          ...(options.data.agentFullAccess === undefined
+            ? {}
+            : { agentFullAccess: options.data.agentFullAccess }),
         }
       : null
 
@@ -350,7 +367,8 @@ export function makeNode(options: {
     id: options.id ?? randomUUID(),
     sessionId: runtime?.sessionId ?? null,
     title: options.title,
-    titlePinnedByUser: false,
+    titlePinnedByUser: options.titlePinnedByUser === true,
+    titleIsLiteral: options.titlePinnedByUser === true,
     position: { x: options.frame.x, y: options.frame.y },
     width: options.frame.width,
     height: options.frame.height,

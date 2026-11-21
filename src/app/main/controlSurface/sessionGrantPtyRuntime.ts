@@ -1,4 +1,9 @@
-import { createAppError } from '../../../shared/errors/appError'
+import { terminalEnvironment } from '../../../shared/runtime/terminalEnvironment.mjs'
+import { OpenCoveAppError, createAppError } from '../../../shared/errors/appError'
+import {
+  createTerminalSpawnApplicationError,
+  publicTerminalSpawnApplicationError,
+} from '../../../shared/errors/terminalSpawnError'
 import { basename, delimiter } from 'node:path'
 import { removeElectronRunAsNode } from '../../../platform/os/ElectronControlEnvironment'
 import type { ControlSurfacePtyRuntime } from './handlers/sessionPtyRuntime'
@@ -54,9 +59,7 @@ export function createSessionGrantPtyRuntime(options: {
         return await options.runtime.spawnSession({ ...input, env })
       }
       if (process.platform === 'win32' && /^wsl(?:\.exe)?$/i.test(basename(input.command))) {
-        throw createAppError('common.unavailable', {
-          debugMessage: 'Canvas identity requires a native hosting Worker inside WSL.',
-        })
+        throw createTerminalSpawnApplicationError('native_wsl_worker_required')
       }
       const assets = await options.ensureAssets()
       if (closed) {
@@ -71,14 +74,14 @@ export function createSessionGrantPtyRuntime(options: {
       let settled = false
       try {
         Object.assign(env, {
-          OPENCOVE_ENV: '1',
-          OPENCOVE_NODE_ID: identity.nodeId,
-          OPENCOVE_SPACE_ID: identity.spaceId,
-          OPENCOVE_PROJECT_ID: identity.projectId,
-          OPENCOVE_CONTROL_URL: url,
-          OPENCOVE_CONTROL_TOKEN: reservation.token,
-          OPENCOVE_CLI: options.cliPath,
-          OPENCOVE_CLI_SHIM_DIRECTORY: assets.cliShimDirectory,
+          [terminalEnvironment.env]: '1',
+          ...(identity.nodeId ? { [terminalEnvironment.nodeId]: identity.nodeId } : {}),
+          [terminalEnvironment.spaceId]: identity.spaceId,
+          [terminalEnvironment.projectId]: identity.projectId,
+          [terminalEnvironment.controlUrl]: url,
+          [terminalEnvironment.controlToken]: reservation.token,
+          [terminalEnvironment.cli]: options.cliPath,
+          [terminalEnvironment.cliShimDirectory]: assets.cliShimDirectory,
         })
         const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') ?? 'PATH'
         // Only the CLI shim directory: provider shims on PATH would wrap a managed agent launch
@@ -96,14 +99,27 @@ export function createSessionGrantPtyRuntime(options: {
         }
         sessions.add(spawned.sessionId)
         reservation.commit(spawned.sessionId)
-        options.onSpawnIdentity?.(spawned.sessionId, identity.nodeId)
+        if (identity.nodeId) {
+          options.onSpawnIdentity?.(spawned.sessionId, identity.nodeId)
+        }
         return spawned
-      } catch {
+      } catch (error) {
         if (!settled) {
           attempt.cancel()
         }
         reservation.cancel()
+        if (
+          error instanceof OpenCoveAppError &&
+          ['common.forbidden', 'control_surface.unauthorized'].includes(error.code)
+        ) {
+          throw createAppError(error.code, { details: error.details })
+        }
+        const application = publicTerminalSpawnApplicationError(error)
+        if (application) {
+          throw createAppError(application)
+        }
         // Never propagate a spawn error that might serialize its environment.
+        // eslint-disable-next-line preserve-caught-error -- Private process data must not survive as a cause.
         throw new Error('Canvas PTY spawn failed.')
       }
     },

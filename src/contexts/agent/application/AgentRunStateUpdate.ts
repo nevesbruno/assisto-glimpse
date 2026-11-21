@@ -1,3 +1,5 @@
+import { acknowledgeClaudeJournal, projectClaudeJournal } from './ClaudeJournalResolution'
+import { permitsClearBaseline } from './ClaudeClearBaseline'
 import { debugAgentContinuation } from '../../../shared/runtime/agentHook/agentContinuationDiagnostics'
 import { publishRunTransition, scheduleRunExpiry } from './AgentRunStateEntry'
 import { acceptedRunStateReceipt } from './AgentRunStateFences'
@@ -31,6 +33,7 @@ function finish(
   const endedAt = Math.max(now, observation.observedAt)
   const model: AgentRunModel = {
     ...previous,
+    blockingEpisode: null,
     boundaryAt: endedAt,
     nextTransitionAtMs: null,
     observations: {
@@ -57,6 +60,7 @@ function finish(
       state: ready ? 'idle' : 'unknown',
       quality: ready ? 'authoritative' : 'degraded',
       blockedReason: null,
+      blockedSummary: null,
       source: 'claude_hook',
       turnOutcome: outcome,
       lastTransitionAt: endedAt,
@@ -105,6 +109,7 @@ export function updateAgentRunEntry(
     const ended = current.snapshot.turn
     const model: AgentRunModel = {
       ...current,
+      blockingEpisode: null,
       observations: {},
       lastTurnEnd: null,
       nextTransitionAtMs: null,
@@ -114,6 +119,7 @@ export function updateAgentRunEntry(
         state: 'unknown',
         quality: 'degraded',
         blockedReason: null,
+        blockedSummary: null,
         source: null,
         lastTransitionAt: now,
         ...(ended
@@ -127,7 +133,8 @@ export function updateAgentRunEntry(
     entry.history.accept(current, model, ended, null)
     return { model, ended, accepted: false }
   }
-  if (observation?.boundary?.kind === 'end' && entry.continuation.needsGenerationStart) {
+  const baseline = observation?.boundary?.kind === 'end' && entry.continuation.needsGenerationStart
+  if (baseline && !permitsClearBaseline(entry, observation, evidence)) {
     return unchanged()
   }
   // Validate source freshness and authority before changing any private continuation state.
@@ -138,6 +145,12 @@ export function updateAgentRunEntry(
     preview.model.observations[observation.source] === observation
   const selected =
     accepted && preview.model.snapshot.source === observation?.source && !observation?.degraded
+  if (baseline) {
+    if (!selected) {
+      return unchanged()
+    }
+    entry.continuation.acceptGenerationStart()
+  }
   if (
     selected &&
     observation?.boundary?.kind === 'end' &&
@@ -160,6 +173,7 @@ export function updateAgentRunEntry(
       return {
         model: {
           ...current,
+          blockingEpisode: null,
           observations: {
             ...current.observations,
             claude_hook: {
@@ -181,6 +195,7 @@ export function updateAgentRunEntry(
             state: 'idle' as const,
             quality: 'authoritative' as const,
             blockedReason: null,
+            blockedSummary: null,
             source: 'claude_hook' as const,
             lastTransitionAt: now,
           },
@@ -221,11 +236,37 @@ export function updateAgentRunEntry(
       return finish(entry, resolution.end, true, now)
     }
   }
-  if (observation && current.snapshot.turn && entry.history.hasEndedPrompt(evidence?.promptId)) {
+  if (
+    observation &&
+    current.snapshot.turn &&
+    entry.history.hasEndedPrompt(evidence?.promptId, evidence?.providerSessionId)
+  ) {
     return unchanged()
   }
   if (selected && observation?.boundary?.kind === 'start') {
     entry.continuation.acceptGenerationStart()
+  }
+  if (observation?.source === 'codex_hook' && entry.history.rejects(observation, evidence)) {
+    return unchanged()
+  }
+  if (
+    selected &&
+    observation?.source === 'codex_hook' &&
+    current.snapshot.turn &&
+    entry.history.sameSubmission(observation, evidence)
+  ) {
+    const prior = current.observations.codex_hook!
+    return {
+      model: {
+        ...current,
+        observations: {
+          ...current.observations,
+          codex_hook: { ...prior, sourceSequence: observation.sourceSequence },
+        },
+      },
+      ended: null,
+      accepted: true,
+    }
   }
   if (selected && observation && current.snapshot.turn && observation.source === 'claude_hook') {
     if (entry.history.sameSubmission(observation, evidence)) {
@@ -271,7 +312,11 @@ export function updateAgentRunEntry(
       }
     }
   }
-  if (observation && entry.history.rejects(observation, evidence)) {
+  if (
+    observation?.source !== 'codex_hook' &&
+    observation &&
+    entry.history.rejects(observation, evidence)
+  ) {
     return unchanged()
   }
   const result = transitionAgentRun(
@@ -289,8 +334,14 @@ export function updateAgentRunEntry(
   ) {
     result.model = {
       ...result.model,
+      blockingEpisode: null,
       lastTurnEnd: null,
-      snapshot: { ...result.model.snapshot, state: 'working', blockedReason: null },
+      snapshot: {
+        ...result.model.snapshot,
+        state: 'working',
+        blockedReason: null,
+        blockedSummary: null,
+      },
     }
   }
   entry.history.accept(current, result.model, result.ended, observation, evidence)
@@ -332,6 +383,7 @@ export function commitAgentRunUpdate(
       )
     )
   const result = updateAgentRunEntry(entry, observation, evidence, ports.now, ports.createTurnId)
+  acknowledgeClaudeJournal(entry, observation, evidence, result)
   if (
     canRelease &&
     result.accepted &&
@@ -349,9 +401,31 @@ export function commitAgentRunUpdate(
         state: 'unknown',
         quality: 'degraded',
         blockedReason: null,
+        blockedSummary: null,
       },
     }
   }
+  if (
+    entry.conversation?.ready &&
+    (!observation ||
+      (observation.source === 'session_file' &&
+        observation.state === 'idle' &&
+        !observation.degraded)) &&
+    !result.model.snapshot.turn &&
+    result.model.snapshot.state !== 'exited'
+  ) {
+    result.model = {
+      ...result.model,
+      snapshot: {
+        ...result.model.snapshot,
+        state: 'idle',
+        quality: 'authoritative',
+        source: 'claude_hook',
+        lastTransitionAt: entry.model.snapshot.lastTransitionAt,
+      },
+    }
+  }
+  result.model = projectClaudeJournal(entry, observation, result.model)
   const changed = JSON.stringify(result.model.snapshot) !== JSON.stringify(entry.model.snapshot)
   entry.model = result.model
   if (entry.model.snapshot.state === 'exited') {
@@ -370,7 +444,12 @@ export function commitAgentRunUpdate(
           result.accepted && observation
             ? acceptedRunStateReceipt(
                 observation,
-                result.model.snapshot.turn?.id ?? priorTurnId,
+                observation.source === 'codex_hook'
+                  ? entry.history.submissionTurnId(
+                      evidence,
+                      result.model.snapshot.turn?.id ?? priorTurnId,
+                    )
+                  : (result.model.snapshot.turn?.id ?? priorTurnId),
                 evidence,
               )
             : {},

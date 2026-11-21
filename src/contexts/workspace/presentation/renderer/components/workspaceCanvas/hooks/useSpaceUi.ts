@@ -1,32 +1,18 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { Node } from '@xyflow/react'
-import type { WorkspacePathOpener, WorkspacePathOpenerId } from '@shared/contracts/dto'
-import type { TerminalNodeData, WorkspaceSpaceState } from '../../../types'
-import type {
-  ContextMenuState,
-  EmptySelectionPromptState,
-  SpaceWorktreeOperationPhase,
-  SpaceWorktreeOperationState,
-} from '../types'
+import type { WorkspacePathOpenerId } from '@shared/contracts/dto'
+import type { TerminalNodeData } from '../../../types'
+import type { SpaceWorktreeOperationPhase, SpaceWorktreeOperationState } from '../types'
+import { useCanvasUiCommands, useReadCanvasDocument } from '../../../store/canvasStoreContext'
 
 export function useWorkspaceCanvasSpaceUi({
-  contextMenu,
-  setContextMenu,
-  setEmptySelectionPrompt,
-  cancelSpaceRename,
   workspacePath,
-  spacesRef,
   handlePaneClick,
   handlePaneContextMenu,
   handleNodeContextMenu,
   handleSelectionContextMenu,
 }: {
-  contextMenu: ContextMenuState | null
-  setContextMenu: React.Dispatch<React.SetStateAction<ContextMenuState | null>>
-  setEmptySelectionPrompt: React.Dispatch<React.SetStateAction<EmptySelectionPromptState | null>>
-  cancelSpaceRename: () => void
   workspacePath: string
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
   handlePaneClick: (event: React.MouseEvent | MouseEvent) => void
   handlePaneContextMenu: (event: React.MouseEvent | MouseEvent) => void
   handleNodeContextMenu: (event: React.MouseEvent, node: Node<TerminalNodeData>) => void
@@ -35,17 +21,13 @@ export function useWorkspaceCanvasSpaceUi({
     selectedNodes: Node<TerminalNodeData>[],
   ) => void
 }): {
-  spaceActionMenu: { spaceId: string; x: number; y: number } | null
   spaceWorktreeOperations: SpaceWorktreeOperationState[]
-  availablePathOpeners: WorkspacePathOpener[]
   onCanvasClick: () => void
-  closeContextMenu: () => void
   onPaneClick: (event: React.MouseEvent | MouseEvent) => void
   onPaneContextMenu: (event: React.MouseEvent | MouseEvent) => void
   onNodeContextMenu: (event: React.MouseEvent, node: Node<TerminalNodeData>) => void
   onSelectionContextMenu: (event: React.MouseEvent, selectedNodes: Node<TerminalNodeData>[]) => void
   openSpaceActionMenu: (spaceId: string, anchor: { x: number; y: number }) => void
-  closeSpaceActionMenu: () => void
   copySpacePath: (spaceId: string) => Promise<void>
   openSpacePath: (spaceId: string, openerId: WorkspacePathOpenerId) => Promise<void>
   openSpaceCreateWorktree: (spaceId: string, anchor: { x: number; y: number }) => void
@@ -53,26 +35,16 @@ export function useWorkspaceCanvasSpaceUi({
   closeSpaceWorktree: (operationId: string) => void
   setSpaceWorktreeOperationPhase: (operationId: string, phase: SpaceWorktreeOperationPhase) => void
 } {
-  const [spaceActionMenu, setSpaceActionMenu] = useState<{
-    spaceId: string
-    x: number
-    y: number
-  } | null>(null)
+  const ui = useCanvasUiCommands()
+  const readDocument = useReadCanvasDocument()
   const [spaceWorktreeOperations, setSpaceWorktreeOperations] = useState<
     SpaceWorktreeOperationState[]
   >([])
   const nextSpaceWorktreeOperationIdRef = useRef(0)
-  const [availablePathOpeners, setAvailablePathOpeners] = useState<WorkspacePathOpener[]>([])
-
-  useEffect(() => {
-    if (contextMenu) {
-      setSpaceActionMenu(null)
-    }
-  }, [contextMenu])
 
   const resolveSpacePath = useCallback(
     (spaceId: string): string => {
-      const space = spacesRef.current.find(candidate => candidate.id === spaceId)
+      const space = readDocument().spaces.find(candidate => candidate.id === spaceId)
       if (!space) {
         return workspacePath
       }
@@ -80,76 +52,52 @@ export function useWorkspaceCanvasSpaceUi({
       const trimmed = space.directoryPath.trim()
       return trimmed.length > 0 ? trimmed : workspacePath
     },
-    [spacesRef, workspacePath],
+    [readDocument, workspacePath],
   )
 
   const onCanvasClick = useCallback(() => {
-    setSpaceActionMenu(null)
-    setEmptySelectionPrompt(null)
-    cancelSpaceRename()
-  }, [cancelSpaceRename, setEmptySelectionPrompt])
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenu(null)
-    setSpaceActionMenu(null)
-  }, [setContextMenu])
+    ui.closeSpaceActionMenu()
+    ui.cancelSpaceRename()
+  }, [ui])
 
   const onPaneClick = useCallback(
     (event: React.MouseEvent | MouseEvent) => {
-      setSpaceActionMenu(null)
+      ui.closeSpaceActionMenu()
       handlePaneClick(event)
     },
-    [handlePaneClick],
+    [handlePaneClick, ui],
   )
 
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent | MouseEvent) => {
-      setSpaceActionMenu(null)
+      ui.closeSpaceActionMenu()
       handlePaneContextMenu(event)
     },
-    [handlePaneContextMenu],
+    [handlePaneContextMenu, ui],
   )
 
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node<TerminalNodeData>) => {
-      setSpaceActionMenu(null)
+      ui.closeSpaceActionMenu()
       handleNodeContextMenu(event, node)
     },
-    [handleNodeContextMenu],
+    [handleNodeContextMenu, ui],
   )
 
   const onSelectionContextMenu = useCallback(
     (event: React.MouseEvent, selectedNodes: Node<TerminalNodeData>[]) => {
-      setSpaceActionMenu(null)
+      ui.closeSpaceActionMenu()
       handleSelectionContextMenu(event, selectedNodes)
     },
-    [handleSelectionContextMenu],
+    [handleSelectionContextMenu, ui],
   )
 
   const openSpaceActionMenu = useCallback(
     (spaceId: string, anchor: { x: number; y: number }) => {
-      const listPathOpeners = window.opencoveApi?.workspace?.listPathOpeners
-      if (typeof listPathOpeners === 'function') {
-        void listPathOpeners()
-          .then(result => {
-            setAvailablePathOpeners(result.openers)
-          })
-          .catch(() => {
-            setAvailablePathOpeners([])
-          })
-      } else {
-        setAvailablePathOpeners([])
-      }
-
-      setContextMenu(null)
-      setSpaceActionMenu({ spaceId, x: anchor.x, y: anchor.y })
+      ui.openSpaceActionMenu({ spaceId, x: anchor.x, y: anchor.y })
     },
-    [setContextMenu],
+    [ui],
   )
-
-  const closeSpaceActionMenu = useCallback(() => {
-    setSpaceActionMenu(null)
-  }, [])
 
   const copySpacePath = useCallback(
     async (spaceId: string) => {
@@ -192,7 +140,7 @@ export function useWorkspaceCanvasSpaceUi({
       initialViewMode: SpaceWorktreeOperationState['initialViewMode'],
       anchor: { x: number; y: number },
     ) => {
-      setSpaceActionMenu(null)
+      ui.closeSpaceActionMenu()
       const operationId = `space-worktree-${nextSpaceWorktreeOperationIdRef.current}`
       nextSpaceWorktreeOperationIdRef.current += 1
       setSpaceWorktreeOperations(previous => [
@@ -206,7 +154,7 @@ export function useWorkspaceCanvasSpaceUi({
         },
       ])
     },
-    [],
+    [ui],
   )
 
   const openSpaceCreateWorktree = useCallback(
@@ -241,17 +189,13 @@ export function useWorkspaceCanvasSpaceUi({
   )
 
   return {
-    spaceActionMenu,
     spaceWorktreeOperations,
-    availablePathOpeners,
     onCanvasClick,
-    closeContextMenu,
     onPaneClick,
     onPaneContextMenu,
     onNodeContextMenu,
     onSelectionContextMenu,
     openSpaceActionMenu,
-    closeSpaceActionMenu,
     copySpacePath,
     openSpacePath,
     openSpaceCreateWorktree,

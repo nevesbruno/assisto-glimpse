@@ -12,7 +12,8 @@ import { resolveFirstAgentSessionId } from './workspace-canvas.agent-status-watc
 // Shared harness for the opt-in real Claude Code acceptance specs: the installed Claude Code CLI,
 // an isolated config and a local Messages API stand-in (no credentials, no model calls).
 
-type MessagesRequest = {
+export type MessagesRequest = {
+  system?: string | Array<{ type: string; text?: string }>
   stream?: boolean
   model?: string
   tools?: Array<{ name?: string }>
@@ -58,7 +59,12 @@ export function reply(
   const message = { id: `msg_${Date.now()}`, type: 'message', role: 'assistant', model }
   // AskUserQuestion opens a blocking dialog in every permission mode (auto mode runs Bash).
   const block = toolUse
-    ? { type: 'tool_use', id: `toolu_${Date.now()}`, name: 'AskUserQuestion', input: {} }
+    ? {
+        type: 'tool_use',
+        id: `toolu_${Date.now()}`,
+        name: 'AskUserQuestion',
+        input: {},
+      }
     : { type: 'text', text: '' }
   const delta = toolUse
     ? {
@@ -105,13 +111,20 @@ export function reply(
   ])
 }
 
-export async function startMessagesApi(): Promise<{
+export async function startMessagesApi(
+  options: {
+    replyText?: (body: MessagesRequest) => string
+    onMain?: (res: ServerResponse, body: MessagesRequest) => boolean | Promise<boolean>
+  } = {},
+): Promise<{
   server: Server
   url: string
   main: () => string[][]
+  requests: () => MessagesRequest[]
 }> {
   // Text blocks of the user message in each agent-loop request that starts a turn.
   const mainTurns: string[][] = []
+  const requests: MessagesRequest[] = []
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = []
     for await (const chunk of req) {
@@ -132,9 +145,15 @@ export async function startMessagesApi(): Promise<{
     if (req.method === 'POST' && url.startsWith('/v1/messages') && body) {
       // The agent loop sends tools; side requests (titles, summaries) do not.
       const isMain = (body.tools ?? []).some(tool => tool.name === 'Bash')
+      if (isMain) {
+        requests.push(structuredClone(body))
+      }
       const blocks = lastUserBlocks(body)
       if (isMain && !hasToolResult(body)) {
         mainTurns.push(blocks)
+      }
+      if (isMain && (await options.onMain?.(res, body))) {
+        return
       }
       const trigger = blocks.some(block => block.includes('TRIGGER_TOOL'))
       // A very long final reply makes the Stop hook body exceed the relay's post limit.
@@ -149,7 +168,7 @@ export async function startMessagesApi(): Promise<{
         res,
         body,
         isMain && trigger && !hasToolResult(body),
-        long ? 'L'.repeat(300_000) : 'ACK',
+        long ? 'L'.repeat(300_000) : ((isMain ? options.replyText?.(body) : undefined) ?? 'ACK'),
       )
       return
     }
@@ -158,7 +177,12 @@ export async function startMessagesApi(): Promise<{
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const { port } = server.address() as AddressInfo
-  return { server, url: `http://127.0.0.1:${port}`, main: () => [...mainTurns] }
+  return {
+    server,
+    url: `http://127.0.0.1:${port}`,
+    main: () => [...mainTurns],
+    requests: () => structuredClone(requests),
+  }
 }
 
 export async function cli(userDataDir: string, args: string[]) {
@@ -207,7 +231,11 @@ export async function prompt(userDataDir: string, nodeId: string, text: string) 
   })
 }
 
-export async function launchRealClaude(testInfo: TestInfo) {
+export async function launchRealClaude(
+  testInfo: TestInfo,
+  residentContext: 'suggest' | 'off' = 'suggest',
+  options: { messages?: Parameters<typeof startMessagesApi>[0]; fullAccess?: boolean } = {},
+) {
   const version = execFileSync('claude', ['--version'], { encoding: 'utf8', timeout: 10_000 })
   await testInfo.attach('real-cli-version', {
     body: Buffer.from(version),
@@ -228,11 +256,20 @@ export async function launchRealClaude(testInfo: TestInfo) {
       hasSeenAutoDefaultNotice: true,
       hasSeenAutoModeEntryWarning: true,
       hasSeenAutoModeOutsideReadPrompt: true,
+      // Full-access launches use bypass mode; Claude 2.1.322 otherwise downgrades it pending consent.
+      ...(options.fullAccess ? { bypassPermissionsModeAccepted: true } : {}),
       customApiKeyResponses: { approved: [apiKey.slice(-20)], rejected: [] },
       projects: { [workspace]: { hasTrustDialogAccepted: true } },
     }),
   )
-  const api = await startMessagesApi()
+  if (options.fullAccess) {
+    // The current settings key for the same consent; the global-config key above is legacy.
+    await writeFile(
+      join(config, 'settings.json'),
+      JSON.stringify({ skipDangerousModePermissionPrompt: true }),
+    )
+  }
+  const api = await startMessagesApi(options.messages)
   const { electronApp, window } = await launchApp({
     userDataDir,
     cleanupUserDataDir: false,
@@ -251,7 +288,8 @@ export async function launchRealClaude(testInfo: TestInfo) {
     activeWorkspaceId: 'real-prompt',
     settings: {
       defaultProvider: 'claude-code',
-      agentFullAccess: false,
+      agentResidentContext: residentContext,
+      agentFullAccess: options.fullAccess ?? false,
       customModelEnabledByProvider: { 'claude-code': false },
     },
     workspaces: [
@@ -259,6 +297,16 @@ export async function launchRealClaude(testInfo: TestInfo) {
         id: 'real-prompt',
         name: 'Real prompt',
         path: workspace,
+        activeSpaceId: 'real-prompt-main',
+        spaces: [
+          {
+            id: 'real-prompt-main',
+            name: 'Main',
+            directoryPath: workspace,
+            nodeIds: ['real-prompt-task'],
+            rect: { x: 20, y: 20, width: 1600, height: 900 },
+          },
+        ],
         nodes: [
           {
             id: 'real-prompt-task',

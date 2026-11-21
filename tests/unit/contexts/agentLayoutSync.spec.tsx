@@ -1,10 +1,15 @@
 import React, { useEffect } from 'react'
-import { act, render, waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
+import {
+  CANVAS_STORE_TEST_WORKSPACE_ID,
+  renderWithCanvasStore,
+} from '../../support/canvasStoreTestHarness'
+import { createCanvasDocumentHarness } from '../../support/canvasDocumentHarness'
+import { storeBackedChannelsOf } from '../../support/workspaceCanvasStoreHarness'
 import { describe, expect, it, vi } from 'vitest'
 import type { Node } from '@xyflow/react'
 import type { TerminalNodeData } from '../../../src/contexts/workspace/presentation/renderer/types'
 import { DEFAULT_AGENT_ENV_BY_PROVIDER } from '../../../src/contexts/settings/domain/agentEnv'
-import type { WorkspaceSpaceState } from '../../../src/contexts/workspace/presentation/renderer/types'
 import { useWorkspaceCanvasAgentNodeLifecycle } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useAgentNodeLifecycle'
 import { useWorkspaceCanvasPtyTaskCompletion } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/usePtyTaskCompletion'
 
@@ -61,10 +66,11 @@ function createAgentNode(): Node<TerminalNodeData> {
 
 describe('agent terminal layout sync', () => {
   it('does not trigger layout sync during agent lifecycle status updates', async () => {
-    const nodesRef = {
-      current: [createAgentNode()],
-    } as React.MutableRefObject<Node<TerminalNodeData>[]>
-    const spacesRef = { current: [] } as React.MutableRefObject<WorkspaceSpaceState[]>
+    createCanvasDocumentHarness({
+      workspaceId: CANVAS_STORE_TEST_WORKSPACE_ID,
+      nodes: [createAgentNode()],
+    })
+    const { nodesRef } = storeBackedChannelsOf(CANVAS_STORE_TEST_WORKSPACE_ID)
 
     const setNodes = vi.fn(
       (
@@ -100,10 +106,8 @@ describe('agent terminal layout sync', () => {
       },
     })
 
-    function Harness(): null {
+    function Harness(): React.ReactElement | null {
       const { launchAgentInNode } = useWorkspaceCanvasAgentNodeLifecycle({
-        nodesRef,
-        spacesRef,
         setNodes,
         bumpAgentLaunchToken: () => 1,
         isAgentLaunchTokenCurrent: () => true,
@@ -120,7 +124,7 @@ describe('agent terminal layout sync', () => {
       return null
     }
 
-    render(<Harness />)
+    renderWithCanvasStore(<Harness />)
 
     await waitFor(() => {
       expect(window.opencoveApi.agent.launch).toHaveBeenCalledTimes(1)
@@ -136,7 +140,7 @@ describe('agent terminal layout sync', () => {
     ])
   })
 
-  it('does not trigger layout sync for agent runtime state events', async () => {
+  it('leaves agent runtime state events to the shell writer, so the canvas never syncs layout for them', async () => {
     let onStateListener:
       | ((event: { sessionId: string; state: 'running' | 'standby' }) => void)
       | null = null
@@ -168,15 +172,15 @@ describe('agent terminal layout sync', () => {
       return null
     }
 
-    render(<Harness />)
+    renderWithCanvasStore(<Harness />)
 
-    onStateListener?.({ sessionId: 'agent-session-1', state: 'running' })
-
-    await waitFor(() => {
-      expect(setNodes).toHaveBeenCalledTimes(1)
+    act(() => {
+      onStateListener?.({ sessionId: 'agent-session-1', state: 'running' })
     })
 
-    expect(setNodes.mock.calls[0]?.[1]).toEqual({ syncLayout: false })
+    // Moved from "setNodes called once with { syncLayout: false }": the shell writer now owns this
+    // write (ptyRuntimeObservation.singleWriter.spec.tsx asserts no layout sync event for it).
+    expect(setNodes).not.toHaveBeenCalled()
   })
 
   it('updates a directly launched Agent title after session metadata resolves', async () => {
@@ -185,9 +189,11 @@ describe('agent terminal layout sync', () => {
       | null = null
     const node = createAgentNode()
     node.data.sessionId = 'runtime-1'
-    const nodesRef = {
-      current: [node],
-    } as React.MutableRefObject<Node<TerminalNodeData>[]>
+    const documentHarness = createCanvasDocumentHarness({
+      workspaceId: CANVAS_STORE_TEST_WORKSPACE_ID,
+      nodes: [node],
+    })
+    const { nodesRef } = storeBackedChannelsOf(CANVAS_STORE_TEST_WORKSPACE_ID)
     const setNodes = vi.fn(
       (
         updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
@@ -207,7 +213,8 @@ describe('agent terminal layout sync', () => {
         source: 'codex-file' as const,
       },
     ])
-    const onRequestPersistFlush = vi.fn()
+    // The shell's persist flush, as the document module calls it.
+    const onRequestPersistFlush = documentHarness.flush
 
     Object.defineProperty(window, 'opencoveApi', {
       configurable: true,
@@ -229,15 +236,13 @@ describe('agent terminal layout sync', () => {
 
     function Harness(): null {
       useWorkspaceCanvasPtyTaskCompletion({
-        nodesRef,
         setNodes,
         listAgentSessions,
-        onRequestPersistFlush,
       })
       return null
     }
 
-    render(<Harness />)
+    renderWithCanvasStore(<Harness />)
 
     act(() => {
       onMetadataListener?.({ sessionId: 'runtime-1', resumeSessionId: 'resume-1' })
@@ -264,9 +269,8 @@ describe('agent terminal layout sync', () => {
       const node = createAgentNode()
       node.data.sessionId = 'runtime-1'
       node.data.title = 'codex · gpt-5.2-codex'
-      const nodesRef = {
-        current: [node],
-      } as React.MutableRefObject<Node<TerminalNodeData>[]>
+      createCanvasDocumentHarness({ workspaceId: CANVAS_STORE_TEST_WORKSPACE_ID, nodes: [node] })
+      const { nodesRef } = storeBackedChannelsOf(CANVAS_STORE_TEST_WORKSPACE_ID)
       const setNodes = vi.fn(
         (
           updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
@@ -315,14 +319,13 @@ describe('agent terminal layout sync', () => {
 
       function Harness(): null {
         useWorkspaceCanvasPtyTaskCompletion({
-          nodesRef,
           setNodes,
           listAgentSessions,
         })
         return null
       }
 
-      render(<Harness />)
+      renderWithCanvasStore(<Harness />)
 
       await act(async () => {
         onMetadataListener?.({ sessionId: 'runtime-1', resumeSessionId: 'resume-1' })

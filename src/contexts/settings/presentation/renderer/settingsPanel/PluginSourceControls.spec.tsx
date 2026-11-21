@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyUiLanguage } from '@app/renderer/i18n'
 import * as registry from '@contexts/plugins/presentation/renderer/usePluginRegistry'
-import { examplePlugin } from '@contexts/plugins/presentation/renderer/pluginPresentationTestFixture'
+import { examplePlugin } from '../../../../../../tests/support/pluginPresentationTestFixture'
 import { PluginSourceControls } from './PluginSourceControls'
 
 let invoke = vi.fn()
@@ -42,7 +42,7 @@ describe('plugin source actions', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Apply update' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Resolve the source conflict')
-    expect(screen.getByRole('alert')).toHaveTextContent('/candidates/merge')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('/candidates/merge')
     expect(registry.changeInstalledPlugin).toHaveBeenCalledWith('plugin.git.update', {
       pluginId: examplePlugin.id,
     })

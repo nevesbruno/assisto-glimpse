@@ -1,3 +1,4 @@
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 import { promptDeliveryRuntimeFixture } from '../../support/promptDeliveryRuntimeFixture'
 import { promptAdmission } from '../../../src/contexts/agent/application/promptAdmission'
 import { toLocalAgentLaunchInput } from '../../../src/app/main/controlSurface/handlers/sessionLaunchPayloadSupport'
@@ -25,6 +26,8 @@ vi.mock('node:net', async importOriginal => {
   }
 })
 const channel = {
+  async start() {},
+  getInstallState: () => 'installed',
   reserveSpawn: async () => ({
     usesHook: true,
     installState: 'installed',
@@ -100,11 +103,15 @@ it.each([
     const contribution =
       provider === 'codex'
         ? new CodexAgentProviderContribution({
+            artifactRoot: createTestAgentLaunchArtifactRoot(),
             channel,
             runtimePlatform: 'linux',
             hookTrustResolver: async () => 'hooks.state={}',
           })
-        : new ClaudeCodeAgentProviderContribution({ channel })
+        : new ClaudeCodeAgentProviderContribution({
+            artifactRoot: createTestAgentLaunchArtifactRoot(),
+            channel,
+          })
     try {
       const plan = await contribution.launcher.createLaunchPlan({
         ...command,
@@ -165,6 +172,7 @@ it.each([
 it('managed Codex uses the effective CODEX_HOME environment and every generated lifecycle argument', async () => {
   const trust = vi.fn(async () => 'hooks.state={}')
   const contribution = new CodexAgentProviderContribution({
+    artifactRoot: createTestAgentLaunchArtifactRoot(),
     channel,
     runtimePlatform: 'linux',
     hookTrustResolver: trust,
