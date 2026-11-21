@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { spaceUpdateInput, normalizeSpaceUpdateInput } from '../spaceUpdateInput'
 import { normalizeBootstrapInput } from '../workspaceBootstrapNormalize'
 import { defineOperation } from '../defineOperation'
 import { normalizeCreateChildPayload } from '../spaceCreateChildNormalize'
@@ -38,6 +39,7 @@ export const spaceCreateChildOperation = defineOperation({
     z.array(z.unknown()),
   ]),
   normalize: normalizeCreateChildPayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeCreateChildPayload,
   errors: [
     'space.not_found',
@@ -57,9 +59,11 @@ export const spaceGetOperation = defineOperation({
   scope: 'read',
   availability: 'always',
   summary: 'Get a space with its nodes and owning project',
+  // @compat control-surface-legacy-validation
   // Legacy isRecord accepts arrays; raw normalization retains named array properties.
   input: z.union([z.looseObject({ spaceId: z.string() }), z.array(z.unknown())]),
   normalize: normalizeGetSpacePayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeGetSpacePayload,
   errors: ['space.not_found', 'persistence.unavailable'],
 })
@@ -69,11 +73,13 @@ export const spaceListOperation = defineOperation({
   scope: 'read',
   availability: 'always',
   summary: 'List spaces and their nodes in the selected or active project',
+  // @compat control-surface-legacy-validation
   // Legacy isRecord accepts arrays; raw normalization retains named array properties.
   input: z
     .union([z.looseObject({ projectId: z.string().nullish() }), z.array(z.unknown())])
     .nullish(),
   normalize: normalizeListSpacesPayload,
+  compat: 'control-surface-legacy-validation',
   legacyNormalize: normalizeListSpacesPayload,
   errors: ['persistence.unavailable'],
 })
@@ -93,7 +99,25 @@ export const spaceCreateOperation = defineOperation({
   errors: ['persistence.invalid_state', 'persistence.io_failed', 'persistence.unavailable'],
 })
 
+export const spaceUpdateOperation = defineOperation({
+  id: 'space.update',
+  kind: 'command',
+  scope: 'interact',
+  availability: 'always',
+  summary: 'Rename a space or adjust its boundary around fixed contents',
+  input: spaceUpdateInput,
+  normalize: normalizeSpaceUpdateInput,
+  errors: [
+    'space.not_found',
+    'persistence.invalid_state',
+    'persistence.io_failed',
+    'persistence.unavailable',
+    'persistence.payload_too_large',
+  ],
+})
+
 export const spaceOperations = [
+  spaceUpdateOperation,
   spaceCreateOperation,
   spaceCreateChildOperation,
   spaceGetOperation,

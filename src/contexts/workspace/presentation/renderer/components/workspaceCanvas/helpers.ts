@@ -5,7 +5,6 @@ import { resolveSpaceWorkingDirectory } from '@contexts/space/application/resolv
 import { useAppStore } from '@app/renderer/shell/store/useAppStore'
 import {
   formatAppErrorMessage,
-  getAppErrorDebugMessage,
   isAppErrorDescriptor,
   OpenCoveAppError,
 } from '@shared/errors/appError'
@@ -91,21 +90,6 @@ export function focusNodeInViewport(
     ...animation,
     zoom,
   })
-}
-
-export function centerNodeInViewport(
-  reactFlow: ReactFlowInstance<Node<TerminalNodeData>>,
-  node: Pick<Node<TerminalNodeData>, 'position' | 'data'>,
-  options: { duration?: number; zoom: number },
-): void {
-  reactFlow.setCenter(
-    node.position.x + node.data.width / 2,
-    node.position.y + node.data.height / 2,
-    {
-      ...resolveWorkspaceCanvasViewportAnimation(options.duration ?? 180),
-      zoom: Number.isFinite(options.zoom) && options.zoom > 0 ? options.zoom : 1,
-    },
-  )
 }
 
 export function centerFlowPositionInViewportPreservingZoom(
@@ -398,13 +382,36 @@ export function validateSpaceTransfer(
 }
 
 export function toErrorMessage(error: unknown): string {
+  if (error instanceof OpenCoveAppError || isAppErrorDescriptor(error)) {
+    if (error.code === 'agent.managed_launch_commit_failed') {
+      return translate('messages.managedAgentLaunchUncertain')
+    }
+    if (error.code === 'agent.managed_launch_rejected') {
+      const details = error.details as { reason?: string } | undefined
+      return translate(
+        details?.reason === 'resumeBindingDrainExpired'
+          ? 'messages.managedAgentClearSaveUnconfirmed'
+          : details?.reason === 'workerUpgradeRequired'
+            ? 'messages.managedAgentWorkerUpgradeRequired'
+            : details?.reason === 'clientUpgradeRequired'
+              ? 'messages.managedAgentClientUpgradeRequired'
+              : details?.reason === 'writesDisabled'
+                ? 'messages.managedAgentWritesDisabled'
+                : details?.reason === 'resumeUnavailable'
+                  ? 'messages.managedAgentResumeUnavailable'
+                  : 'messages.managedAgentChanged',
+      )
+    }
+  }
+  if (
+    (error instanceof OpenCoveAppError || isAppErrorDescriptor(error)) &&
+    error.code === 'persistence.owned_node_identity_conflict'
+  ) {
+    return translate('messages.managedAgentChanged')
+  }
   if (error instanceof OpenCoveAppError) {
     if (error.code === 'terminal.runtime_not_ready') {
       return translate('common.terminalRuntimeNotReady')
-    }
-    const debug = getAppErrorDebugMessage(error)
-    if (typeof debug === 'string' && error.code.startsWith('integration.github.')) {
-      return normalizeIntegrationErrorMessage(debug)
     }
 
     return formatAppErrorMessage(error)
@@ -413,10 +420,6 @@ export function toErrorMessage(error: unknown): string {
   if (isAppErrorDescriptor(error)) {
     if (error.code === 'terminal.runtime_not_ready') {
       return translate('common.terminalRuntimeNotReady')
-    }
-    const debug = getAppErrorDebugMessage(error)
-    if (typeof debug === 'string' && error.code.startsWith('integration.github.')) {
-      return normalizeIntegrationErrorMessage(debug)
     }
 
     return formatAppErrorMessage(error)
@@ -431,10 +434,6 @@ export function toErrorMessage(error: unknown): string {
   }
 
   return translate('common.unknownError')
-}
-
-function normalizeIntegrationErrorMessage(message: string): string {
-  return message.replace(/^[A-Za-z0-9_]+Error:\s*/, '')
 }
 
 export function providerLabel(provider: AgentProvider): string {

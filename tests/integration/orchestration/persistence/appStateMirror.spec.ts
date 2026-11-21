@@ -36,16 +36,20 @@ function openDb(): { raw: DatabaseSync; sqlite: Database.Database; db: BetterSQL
         }),
       }
     },
-    transaction: (work: () => unknown) => () => {
-      raw.exec('BEGIN')
-      try {
-        const result = work()
-        raw.exec('COMMIT')
-        return result
-      } catch (error) {
-        raw.exec('ROLLBACK')
-        throw error
+    transaction: (work: () => unknown) => {
+      const run = () => {
+        raw.exec('BEGIN')
+        try {
+          const result = work()
+          raw.exec('COMMIT')
+          return result
+        } catch (error) {
+          raw.exec('ROLLBACK')
+          throw error
+        }
       }
+      // better-sqlite3 transaction functions expose lock-mode variants.
+      return Object.assign(run, { immediate: run, deferred: run, exclusive: run })
     },
     pragma: (query: string, options?: { simple?: boolean }) => {
       if (query.includes('=')) {

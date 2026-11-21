@@ -1,13 +1,24 @@
-import { useCallback, type MutableRefObject } from 'react'
-import type { Node } from '@xyflow/react'
+import { requestCanonicalRefresh } from '../../../utils/persistence/canonicalRefresh'
+import {
+  confirmManagedClaudeRuntime,
+  projectManagedClaudeRuntimeData,
+} from '../../../utils/managedClaudeProjection'
+import { useAgentNodeSessionControls } from './useAgentNodeSessionControls'
+import { planManagedClaudeRelaunch } from '@contexts/workspace/application/agentLifecycle/managedClaudeRelaunch'
+import { readManagedClaudeBinding } from '../../../utils/managedClaudeLifecycle'
+import { requireManagedClaudeWorkerSupport } from '../../../utils/managedClaudeWorkerSupport'
+import type {
+  ManagedClaudeLaunchIntent,
+  ManagedClaudeLifecycleReceipt,
+} from '@shared/contracts/managedClaudeLaunch'
+import { useCallback } from 'react'
 import { useTranslation } from '@app/renderer/i18n'
 import { resolveEnabledEnvForAgent } from '@contexts/settings/domain/agentEnv'
 import type {
   AgentEnvByProvider,
   AgentExecutablePathOverrideByProvider,
 } from '@contexts/settings/domain/agentSettings'
-import type { AgentSessionSummary } from '@shared/contracts/dto'
-import type { AgentNodeData, TerminalNodeData, WorkspaceSpaceState } from '../../../types'
+import type { AgentNodeData } from '../../../types'
 import { resolveInitialAgentRuntimeStatus } from '../../../utils/agentRuntimeStatus'
 import {
   clearResumeSessionBinding,
@@ -23,24 +34,22 @@ import {
   findLinkedTaskTitleForAgent,
 } from '../../../utils/agentTitle'
 import { useAgentNodeSessionSwitch } from './useAgentNodeSessionSwitch'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
+import { useCanvasDocumentCommands, useReadCanvasDocument } from '../../../store/canvasStoreContext'
 import {
+  preflightAgentRelaunch,
   findAgentNode,
   launchAgentRuntime,
   normalizeOptionalString,
   resolveAgentRuntimeLaunchFrameSize,
+  type AgentNodeLaunchOverrides,
   type RelaunchAgentNodeOptions,
 } from './useAgentNodeLifecycle.support'
 
 interface UseAgentNodeLifecycleParams {
   workspaceId: string
   workspacePath: string
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  setNodes: (
-    updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-    options?: { syncLayout?: boolean },
-  ) => void
+  setNodes: UseWorkspaceCanvasNodesStoreResult['setNodes']
   bumpAgentLaunchToken: (nodeId: string) => number
   isAgentLaunchTokenCurrent: (nodeId: string, token: number) => boolean
   agentFullAccess: boolean
@@ -51,15 +60,11 @@ interface UseAgentNodeLifecycleParams {
   agentEnvByProvider: AgentEnvByProvider
   agentExecutablePathOverrideByProvider?: AgentExecutablePathOverrideByProvider
   environmentVariables?: Record<string, string>
-  onRequestPersistFlush?: () => void
 }
 
 export function useWorkspaceCanvasAgentNodeLifecycle({
   workspaceId,
   workspacePath,
-  nodesRef,
-  spacesRef,
-  onSpacesChange,
   setNodes,
   bumpAgentLaunchToken,
   isAgentLaunchTokenCurrent,
@@ -70,10 +75,11 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
   agentEnvByProvider,
   agentExecutablePathOverrideByProvider,
   environmentVariables,
-  onRequestPersistFlush,
   terminalDisplayMetrics,
 }: UseAgentNodeLifecycleParams) {
   const { t } = useTranslation()
+  const documentCommands = useCanvasDocumentCommands()
+  const readDocument = useReadCanvasDocument()
 
   const buildAgentNodeTitle = useCallback(
     (provider: AgentNodeData['provider'], label: string | null): string => {
@@ -109,15 +115,14 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
 
   const resolveMountId = useCallback(
     async (nodeId: string): Promise<string | null | undefined> => {
-      const owningSpace = spacesRef.current.find(space => space.nodeIds.includes(nodeId)) ?? null
+      const owningSpace =
+        readDocument().spaces.find(space => space.nodeIds.includes(nodeId)) ?? null
       try {
         const resolvedMountContext = await resolveSpaceMountLaunchContext({
           workspaceId,
           workspacePath,
           space: owningSpace,
-          spaces: spacesRef.current,
-          onSpacesChange,
-          onRequestPersistFlush,
+          commitSpaceRepair: recipe => documentCommands.updateSpaces(recipe, { flush: true }),
         })
         return resolvedMountContext.mountId
       } catch (error) {
@@ -128,15 +133,7 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
         return undefined
       }
     },
-    [
-      onRequestPersistFlush,
-      onSpacesChange,
-      setAgentNodeFailure,
-      spacesRef,
-      t,
-      workspaceId,
-      workspacePath,
-    ],
+    [documentCommands, readDocument, setAgentNodeFailure, t, workspaceId, workspacePath],
   )
 
   const relaunchAgentNode = useCallback(
@@ -145,16 +142,32 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
       mode,
       executionDirectory,
       expectedDirectory,
+      prompt,
       resumeSessionId,
       startedAtOverride,
-    }: RelaunchAgentNodeOptions): Promise<void> => {
-      const node = findAgentNode(nodeId, nodesRef.current)
+      intent: explicitIntent,
+    }: RelaunchAgentNodeOptions): Promise<ManagedClaudeLifecycleReceipt | undefined> => {
+      const node = findAgentNode(nodeId, readDocument().nodes)
       if (!node) {
-        return
+        return undefined
       }
-      const launchData = node.data.agent
+      const launchData = prompt === undefined ? node.data.agent : { ...node.data.agent, prompt }
+      if (!preflightAgentRelaunch(nodeId, mode, launchData, setNodes)) {
+        return undefined
+      }
+      let binding
+      try {
+        await requireManagedClaudeWorkerSupport(launchData.provider)
+        binding = await readManagedClaudeBinding(nodeId, launchData.provider)
+      } catch (error) {
+        setAgentNodeFailure(nodeId, toErrorMessage(error))
+        return undefined
+      }
+      const intent: ManagedClaudeLaunchIntent | undefined =
+        explicitIntent ??
+        planManagedClaudeRelaunch(binding, mode, resumeSessionId, launchData.provider)
       const linkedTaskTitle = findLinkedTaskTitleForAgent(
-        nodesRef.current,
+        readDocument().nodes,
         nodeId,
         launchData.taskId ?? null,
       )
@@ -169,18 +182,21 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
             )
           : null
 
-      if (mode === 'resume' && !requestedResumeSessionId) {
+      if (mode === 'resume' && !requestedResumeSessionId && !binding) {
         setAgentNodeFailure(nodeId, t('messages.resumeSessionMissing'))
-        return
+        return undefined
       }
 
       if (mode === 'new' && launchData.prompt.trim().length === 0) {
         setAgentNodeFailure(nodeId, t('messages.agentPromptRequired'))
-        return
+        return undefined
       }
-      const mountId = await resolveMountId(nodeId)
+      const mountId =
+        binding && node.data.workerBinding
+          ? node.data.workerBinding.mountId
+          : await resolveMountId(nodeId)
       if (mountId === undefined) {
-        return
+        return undefined
       }
       const env = resolveEnabledEnvForAgent({ rows: agentEnvByProvider[launchData.provider] ?? [] })
       const normalizedExecutablePathOverride =
@@ -197,21 +213,21 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
         await window.opencoveApi.workspace.ensureDirectory({ path: requestedExecutionDirectory })
 
         if (!isAgentLaunchTokenCurrent(nodeId, launchToken)) {
-          return
+          return undefined
         }
       }
 
-      if (node.data.sessionId.length > 0) {
+      if (!binding && node.data.sessionId.length > 0) {
         invalidateCachedTerminalScreenState(nodeId, node.data.sessionId)
         await window.opencoveApi.pty.kill({ sessionId: node.data.sessionId })
 
         if (!isAgentLaunchTokenCurrent(nodeId, launchToken)) {
-          return
+          return undefined
         }
       }
 
       if (!isAgentLaunchTokenCurrent(nodeId, launchToken)) {
-        return
+        return undefined
       }
       setNodes(
         prevNodes =>
@@ -232,7 +248,7 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
                 lastError: null,
                 recoveryIssue: null,
                 agent:
-                  mode === 'new' && item.data.agent
+                  !binding && !intent && mode === 'new' && item.data.agent
                     ? {
                         ...item.data.agent,
                         launchMode: 'new',
@@ -248,10 +264,12 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
       try {
         const launched = await launchAgentRuntime({
           node,
+          intent,
           mountId,
           mergedEnv,
           mode,
           executionDirectory: requestedExecutionDirectory,
+          prompt: launchData.prompt,
           resumeSessionId: requestedResumeSessionId,
           agentFullAccess,
           codexReuseRunningAppServer,
@@ -261,14 +279,41 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
           terminalDisplayMetrics,
         })
 
+        if (binding && !launched.managedClaudeLifecycle) {
+          requestCanonicalRefresh({ reason: 'uncertain' })
+          return undefined
+        }
+        if (launched.managedClaudeLifecycle) {
+          const current = readDocument().nodes.find(item => item.id === nodeId)
+          if (!current || !isAgentLaunchTokenCurrent(nodeId, launchToken)) {
+            return undefined
+          }
+          const confirmed = await confirmManagedClaudeRuntime(nodeId, {
+            ...current.data,
+            sessionId: launched.sessionId,
+            managedClaudeBindingObservation: launched.managedClaudeLifecycle.binding,
+          })
+          if (!confirmed) {
+            return undefined
+          }
+        }
+        const ownsNode = binding || launched.managedClaudeLifecycle?.binding.nodeSeen
         if (!isAgentLaunchTokenCurrent(nodeId, launchToken)) {
-          void window.opencoveApi.pty.kill({ sessionId: launched.sessionId }).catch(() => undefined)
-          return
+          if (!launched.managedClaudeLifecycle) {
+            void window.opencoveApi.pty
+              .kill({ sessionId: launched.sessionId })
+              .catch(() => undefined)
+          }
+          return undefined
         }
 
-        if (!nodesRef.current.some(item => item.id === nodeId)) {
-          void window.opencoveApi.pty.kill({ sessionId: launched.sessionId }).catch(() => undefined)
-          return
+        if (!readDocument().nodes.some(item => item.id === nodeId)) {
+          if (!launched.managedClaudeLifecycle) {
+            void window.opencoveApi.pty
+              .kill({ sessionId: launched.sessionId })
+              .catch(() => undefined)
+          }
+          return undefined
         }
 
         setNodes(
@@ -278,8 +323,19 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
                 return item
               }
 
+              const runtimeData = launched.managedClaudeLifecycle
+                ? projectManagedClaudeRuntimeData(nodeId, {
+                    ...item.data,
+                    sessionId: launched.sessionId,
+                    managedClaudeBindingObservation: launched.managedClaudeLifecycle.binding,
+                  })
+                : item.data
+              if (!runtimeData) {
+                return item
+              }
               const nextAgentData: AgentNodeData = {
                 ...launchData,
+                taskId: item.data.agent?.taskId ?? null,
                 launchMode: launched.launchMode,
                 effectiveModel: launched.effectiveModel,
                 executionDirectory: launched.executionDirectory,
@@ -289,19 +345,23 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
                 ...resolveLaunchedAgentResumeBinding(
                   launchData.provider,
                   launched.launchMode,
-                  launched.resumeSessionId,
+                  launched.managedClaudeLifecycle
+                    ? launched.managedClaudeLifecycle.binding.tuple.resumeSessionId
+                    : mode === 'resume'
+                      ? requestedResumeSessionId
+                      : launched.resumeSessionId,
                 ),
               }
 
               return {
                 ...item,
                 data: {
-                  ...item.data,
+                  ...runtimeData,
                   sessionId: launched.sessionId,
                   profileId: launched.profileId,
                   runtimeKind: launched.runtimeKind,
                   terminalGeometry: launched.terminalGeometry,
-                  workerBinding: launched.workerBinding,
+                  workerBinding: ownsNode ? item.data.workerBinding : launched.workerBinding,
                   width: launched.frameSize.width,
                   height: launched.frameSize.height,
                   title:
@@ -324,21 +384,30 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
                   exitCode: null,
                   lastError: null,
                   scrollback: mode === 'new' ? null : item.data.scrollback,
-                  agent: nextAgentData,
+                  agent: runtimeData.managedClaudeResumeBindingOwnership
+                    ? {
+                        ...nextAgentData,
+                        resumeSessionId: runtimeData.agent?.resumeSessionId ?? null,
+                        resumeSessionIdVerified:
+                          runtimeData.agent?.resumeSessionIdVerified === true,
+                      }
+                    : nextAgentData,
                 },
               }
             }),
           { syncLayout: false },
         )
+        return launched.managedClaudeLifecycle
       } catch (error) {
         if (!isAgentLaunchTokenCurrent(nodeId, launchToken)) {
-          return
+          return undefined
         }
 
         setAgentNodeFailure(
           nodeId,
           t('messages.agentLaunchFailed', { message: toErrorMessage(error) }),
         )
+        return undefined
       }
     },
     [
@@ -347,7 +416,7 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
       bumpAgentLaunchToken,
       environmentVariables,
       isAgentLaunchTokenCurrent,
-      nodesRef,
+      readDocument,
       resolveMountId,
       setAgentNodeFailure,
       setNodes,
@@ -362,93 +431,39 @@ export function useWorkspaceCanvasAgentNodeLifecycle({
   )
 
   const launchAgentInNode = useCallback(
-    async (nodeId: string, mode: 'new' | 'resume') => {
-      await relaunchAgentNode({ nodeId, mode })
+    async (nodeId: string, mode: 'new' | 'resume', overrides?: AgentNodeLaunchOverrides) => {
+      await relaunchAgentNode({ ...overrides, nodeId, mode })
     },
     [relaunchAgentNode],
   )
 
   const reloadAgentNode = useCallback(
     async (nodeId: string) => {
-      const node = findAgentNode(nodeId, nodesRef.current)
+      const node = findAgentNode(nodeId, readDocument().nodes)
       if (!node) {
         return
       }
 
-      await relaunchAgentNode({
-        nodeId,
-        mode: isResumeSessionBindingVerified(node.data.agent) ? 'resume' : 'new',
-      })
+      try {
+        const binding = await readManagedClaudeBinding(nodeId, node.data.agent.provider)
+        await relaunchAgentNode({
+          nodeId,
+          mode: binding || isResumeSessionBindingVerified(node.data.agent) ? 'resume' : 'new',
+          ...(binding ? { intent: { kind: 'resumeCurrent' } } : {}),
+        })
+      } catch (error) {
+        setAgentNodeFailure(nodeId, toErrorMessage(error))
+      }
     },
-    [nodesRef, relaunchAgentNode],
+    [readDocument, relaunchAgentNode, setAgentNodeFailure],
   )
 
-  const listAgentSessionsForNode = useCallback(
-    async (nodeId: string, limit = 20): Promise<AgentSessionSummary[]> => {
-      const node = findAgentNode(nodeId, nodesRef.current)
-      if (!node) {
-        return []
-      }
+  const switchAgentNodeSession = useAgentNodeSessionSwitch({ setNodes, relaunchAgentNode })
 
-      const cwd = node.data.agent.executionDirectory.trim()
-      if (cwd.length === 0) {
-        return []
-      }
-
-      const result = await window.opencoveApi.agent.listSessions({
-        provider: node.data.agent.provider,
-        cwd,
-        limit,
-      })
-
-      return result.sessions
-    },
-    [nodesRef],
-  )
-
-  const switchAgentNodeSession = useAgentNodeSessionSwitch({
-    nodesRef,
+  const { listAgentSessionsForNode, stopAgentNode } = useAgentNodeSessionControls({
     setNodes,
-    relaunchAgentNode,
-    onRequestPersistFlush,
+    bumpAgentLaunchToken,
   })
-
-  const stopAgentNode = useCallback(
-    async (nodeId: string) => {
-      const node = nodesRef.current.find(item => item.id === nodeId)
-      if (!node || node.data.kind !== 'agent') {
-        return
-      }
-
-      bumpAgentLaunchToken(nodeId)
-
-      if (node.data.sessionId.length > 0) {
-        invalidateCachedTerminalScreenState(nodeId, node.data.sessionId)
-        await window.opencoveApi.pty.kill({ sessionId: node.data.sessionId })
-      }
-
-      setNodes(
-        prevNodes =>
-          prevNodes.map(item => {
-            if (item.id !== nodeId) {
-              return item
-            }
-
-            return {
-              ...item,
-              data: {
-                ...item.data,
-                status: 'stopped',
-                endedAt: new Date().toISOString(),
-                exitCode: null,
-              },
-            }
-          }),
-        { syncLayout: false },
-      )
-    },
-    [bumpAgentLaunchToken, nodesRef, setNodes],
-  )
 
   return {
     buildAgentNodeTitle,

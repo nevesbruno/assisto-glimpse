@@ -1,0 +1,247 @@
+import { act, cleanup, renderHook } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { Node } from '@xyflow/react'
+import type {
+  AgentSessionSummary,
+  TerminalSessionMetadataEvent,
+  TerminalSessionStateEvent,
+} from '@shared/contracts/dto'
+import type { TerminalNodeData } from '@contexts/workspace/presentation/renderer/types'
+import { createPtyEventHub, type PtyEventHub } from '@app/renderer/shell/utils/ptyEventHub'
+import {
+  CANVAS_STORE_TEST_WORKSPACE_ID,
+  CanvasStoreTestProvider,
+} from '../../support/canvasStoreTestHarness'
+import { createCanvasDocumentHarness } from '../../support/canvasDocumentHarness'
+import { storeBackedChannelsOf } from '../../support/workspaceCanvasStoreHarness'
+import { useWorkspaceCanvasPtyTaskCompletion } from '@contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/usePtyTaskCompletion'
+
+const shared = vi.hoisted(() => ({ hub: null as PtyEventHub | null }))
+vi.mock('@app/renderer/shell/utils/ptyEventHub', async importOriginal => ({
+  ...(await importOriginal<typeof import('@app/renderer/shell/utils/ptyEventHub')>()),
+  getPtyEventHub: () => shared.hub!,
+}))
+
+function setup() {
+  let emitMetadata!: (event: TerminalSessionMetadataEvent) => void
+  let emitState!: (event: TerminalSessionStateEvent) => void
+  shared.hub = createPtyEventHub({
+    onData: () => () => undefined,
+    onExit: () => () => undefined,
+    onState: listener => {
+      emitState = listener
+      return () => undefined
+    },
+    onMetadata: listener => {
+      emitMetadata = listener
+      return () => undefined
+    },
+  })
+  shared.hub.onMetadata(() => undefined)
+  emitMetadata({ sessionId: 'runtime-1', resumeSessionId: 'resume-1' })
+  // The hook reads the committed nodes of its workspace from the store: the harness seeds it, and
+  // `nodesRef` is a view of it for the assertions. The harness's flush spy is the shell's flush.
+  const documentHarness = createCanvasDocumentHarness({
+    workspaceId: CANVAS_STORE_TEST_WORKSPACE_ID,
+    nodes: [
+      {
+        id: 'agent-1',
+        position: { x: 0, y: 0 },
+        data: {
+          sessionId: 'runtime-1',
+          kind: 'agent',
+          title: 'codex · default',
+          agent: {
+            provider: 'codex',
+            launchMode: 'new',
+            taskId: null,
+            resumeSessionId: 'resume-1',
+            resumeSessionIdVerified: true,
+          },
+        },
+      } as Node<TerminalNodeData>,
+    ],
+  })
+  const { nodesRef } = storeBackedChannelsOf(CANVAS_STORE_TEST_WORKSPACE_ID)
+  let resolve!: (value: AgentSessionSummary[]) => void
+  const pending = new Promise<AgentSessionSummary[]>(onResolve => {
+    resolve = onResolve
+  })
+  const query = vi.fn(() => pending)
+  const update = vi.fn((updater: (nodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[]) => {
+    nodesRef.current = updater(nodesRef.current)
+  })
+  const flush = documentHarness.flush
+  const summary: AgentSessionSummary = {
+    sessionId: 'resume-1',
+    provider: 'codex',
+    cwd: '/project',
+    title: 'Review persistence',
+    preview: null,
+    startedAt: null,
+    updatedAt: null,
+    source: 'codex-file',
+  }
+  return {
+    nodesRef,
+    query,
+    update,
+    flush,
+    resolve,
+    summary,
+    emitState: (event: TerminalSessionStateEvent) => emitState(event),
+  }
+}
+
+describe('PTY title subscription lifetime', () => {
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+    shared.hub?.dispose()
+    shared.hub = null
+  })
+
+  it('keeps one title request through callback changes and uses the latest commit callbacks', async () => {
+    const state = setup()
+    const { rerender } = renderHook(useWorkspaceCanvasPtyTaskCompletion, {
+      wrapper: CanvasStoreTestProvider,
+      initialProps: {
+        nodes: state.nodesRef.current,
+        listAgentSessions: state.query,
+        setNodes: state.update,
+      },
+    })
+    const latestUpdate = vi.fn(state.update)
+    for (let index = 0; index < 10; index++) {
+      rerender({
+        nodes: [...state.nodesRef.current],
+        listAgentSessions: vi.fn(state.query),
+        setNodes: latestUpdate,
+      })
+    }
+    const requests = state.query.mock.calls.length
+    latestUpdate.mockClear()
+    state.flush.mockClear()
+    await act(async () => state.resolve([state.summary]))
+    expect(requests).toBe(1)
+    expect(state.nodesRef.current[0].data.title).toBe('codex · Review persistence')
+    expect(latestUpdate).toHaveBeenCalled()
+    expect(state.flush).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['unmount', 'session switch'] as const)('discards the result after %s', async action => {
+    const state = setup()
+    const { unmount } = renderHook(
+      () =>
+        useWorkspaceCanvasPtyTaskCompletion({
+          listAgentSessions: state.query,
+          setNodes: state.update,
+        }),
+      { wrapper: CanvasStoreTestProvider },
+    )
+    if (action === 'unmount') {
+      unmount()
+    } else {
+      state.nodesRef.current[0].data.sessionId = 'replacement-runtime'
+    }
+    state.update.mockClear()
+    state.flush.mockClear()
+    await act(async () => state.resolve([state.summary]))
+    expect(state.update).not.toHaveBeenCalled()
+    expect(state.flush).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { title: 'Agent', model: null },
+    { title: 'codex gpt-5.2-codex', model: 'gpt-5.2-codex' },
+  ])(
+    'loads the CLI launch title $title after the initial empty scan finishes',
+    async ({ title, model }) => {
+      vi.useFakeTimers()
+      const state = setup()
+      const node = state.nodesRef.current[0]
+      node.data.title = title
+      node.data.agent!.model = model
+      node.data.agent!.prompt = ''
+      const query = vi.fn(async () => [{ ...state.summary, title: null }] as AgentSessionSummary[])
+      renderHook(
+        () =>
+          useWorkspaceCanvasPtyTaskCompletion({
+            listAgentSessions: query,
+            setNodes: state.update,
+          }),
+        { wrapper: CanvasStoreTestProvider },
+      )
+      await act(async () => vi.runAllTimersAsync())
+      expect(query).toHaveBeenCalledTimes(5)
+      expect(state.nodesRef.current[0].data.title).toBe(title)
+
+      // The user can submit their first prompt after startup's bounded catalog scan.
+      query.mockResolvedValue([state.summary])
+      await act(async () =>
+        state.emitState({ sessionId: 'runtime-1', state: 'standby', source: 'session_file' }),
+      )
+      expect(state.nodesRef.current[0].data.title).toBe('codex · Review persistence')
+      expect(state.flush).toHaveBeenCalledTimes(1)
+      const requests = query.mock.calls.length
+      await act(async () =>
+        state.emitState({ sessionId: 'runtime-1', state: 'standby', source: 'session_file' }),
+      )
+      expect(query).toHaveBeenCalledTimes(requests)
+    },
+  )
+
+  it('starts a fresh subscription when returning to a workspace', async () => {
+    const state = setup()
+    const props = {
+      listAgentSessions: state.query,
+      setNodes: state.update,
+    }
+    const { rerender } = renderHook(useWorkspaceCanvasPtyTaskCompletion, {
+      wrapper: CanvasStoreTestProvider,
+      initialProps: { ...props, workspaceId: 'first' },
+    })
+    const originalNodes = state.nodesRef.current
+    state.nodesRef.current = []
+    rerender({ ...props, workspaceId: 'second' })
+    state.nodesRef.current = originalNodes
+    rerender({ ...props, workspaceId: 'first' })
+    const requests = state.query.mock.calls.length
+    await act(async () => state.resolve([state.summary]))
+    expect(requests).toBe(2)
+    expect(state.nodesRef.current[0].data.title).toBe('codex · Review persistence')
+  })
+
+  it.each(['claude_hook', 'pi_hook'] as const)(
+    'projects cached %s state when recovery binds a node after the event arrived',
+    source => {
+      const state = setup()
+      const originalNodes = state.nodesRef.current
+      state.nodesRef.current = []
+      const props = {
+        nodes: state.nodesRef.current,
+        setNodes: state.update,
+        listAgentSessions: state.query,
+      }
+      const { rerender } = renderHook(useWorkspaceCanvasPtyTaskCompletion, {
+        wrapper: CanvasStoreTestProvider,
+        initialProps: props,
+      })
+      act(() =>
+        state.emitState({
+          sessionId: 'runtime-1',
+          state: 'standby',
+          source,
+          hookInstallState: 'installed',
+        }),
+      )
+      state.nodesRef.current = originalNodes
+      rerender({ ...props, nodes: originalNodes, setNodes: vi.fn(state.update) })
+      expect(state.nodesRef.current[0].data.agentRuntimeObservation).toMatchObject({
+        status: 'standby',
+        source,
+        hookInstallState: 'installed',
+      })
+    },
+  )
+})

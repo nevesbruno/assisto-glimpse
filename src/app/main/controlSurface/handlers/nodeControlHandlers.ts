@@ -1,6 +1,14 @@
+import {
+  taskClaimOperation,
+  taskReleaseOperation,
+} from '../../../../shared/contracts/controlSurface/operations/domains/task'
+import { noteAppendOperation } from '../../../../shared/contracts/controlSurface/operations/domains/note'
+import { installAgentSpawnOwner } from '../agentSpawnContext'
 import { canvasFocusOperation } from '../../../../shared/contracts/controlSurface/operations/domains/canvas'
 import { registerOperation } from '../registerOperation'
 import {
+  nodeManagedClaudeBindingOperation,
+  nodeResolveCallerSelectorOperation,
   nodeCreateOperation,
   nodeListOperation,
   nodeGetOperation,
@@ -18,18 +26,24 @@ import type {
 import { createAppError } from '../../../../shared/errors/appError'
 import type { WorkerTopologyStore } from '../topology/topologyStore'
 import {
+  claimTask,
+  releaseTask,
+  appendNote,
+  AgentSpawnAdmissionOwner,
+  type AgentSpawnRuntimePort,
+  resolveCallerParent,
   createNodeForNodeControl,
   getNodeForNodeControl,
   listNodesForNodeControl,
-} from '../../../../contexts/workspace/application/nodeControl/nodeControlUseCases'
-import { updateNodeForNodeControl } from '../../../../contexts/workspace/application/nodeControl/nodeControlUpdate'
-import { deleteNodeForNodeControl } from '../../../../contexts/workspace/application/nodeControl/nodeControlDelete'
-import { resolveCanvasFocusTargetForNodeControl } from '../../../../contexts/workspace/application/nodeControl/nodeControlFocus'
-import type { SpaceLocatorResolverDeps } from '../../../../contexts/workspace/application/nodeControl/spaceLocator'
-import type { NodeControlAppStateStore } from '../../../../contexts/workspace/application/nodeControl/nodeControlState'
+  updateNodeForNodeControl,
+  deleteNodeForNodeControl,
+  resolveCanvasFocusTargetForNodeControl,
+  type SpaceLocatorResolverDeps,
+  type NodeControlAppStateStore,
+} from '../../../../contexts/workspace/application'
 import { normalizePersistedAppState } from '../../../../platform/persistence/sqlite/normalize'
 import { createRuntimeDeps } from './nodeControlRuntime'
-import { grantProjectOf } from './grantProjectScope'
+import { grantProjectOf, isNodeInGrantLineage } from './grantProjectScope'
 
 async function invokeInternal<TResult>(
   controlSurface: ControlSurface,
@@ -72,10 +86,51 @@ function createLocatorDeps(
 
 function toNodeControlStateStore(store: PersistenceStore): NodeControlAppStateStore {
   return {
+    nodeLineage: store.nodeLineage,
+    commitCreatedNodeState: store.commitCreatedNodeState,
     readAppState: async () => normalizePersistedAppState(await store.readAppState()),
+    isAppStateRevisionCurrent: store.isAppStateRevisionCurrent,
     readAppStateRevision: store.readAppStateRevision,
     writeAppState: store.writeAppState,
+    isRuntimeReferenced: store.isManagedClaudeRuntimeReferenced,
+    isManagedNode: store.observeManagedClaudeNode
+      ? id => Boolean(store.observeManagedClaudeNode!(id).binding)
+      : undefined,
   }
+}
+
+/** Unscoped only inside the grant's own lineage subtree; a foreign stranger stays absent. */
+async function nodeProjectScopeForGrant(
+  ctx: ControlSurfaceContext,
+  store: NodeControlAppStateStore,
+  nodeId: string,
+  getPersistenceStore: () => Promise<PersistenceStore>,
+): Promise<string | undefined> {
+  const scope = grantProjectOf(ctx)
+  if (scope === undefined) {
+    return undefined
+  }
+  const state = await store.readAppState()
+  const owner = state?.workspaces.find(workspace =>
+    workspace.nodes.some(node => node.id === nodeId),
+  )?.id
+  if (owner === undefined || owner === scope) {
+    return scope
+  }
+  return (await isNodeInGrantLineage(ctx, getPersistenceStore, nodeId)) ? undefined : scope
+}
+
+async function isNodeInGrantProject(
+  store: NodeControlAppStateStore,
+  nodeId: string,
+  scope: string,
+): Promise<boolean> {
+  const state = await store.readAppState()
+  return Boolean(
+    state?.workspaces.some(
+      workspace => workspace.id === scope && workspace.nodes.some(node => node.id === nodeId),
+    ),
+  )
 }
 
 function queued<T>(queueRef: { current: Promise<void> }, task: () => Promise<T>): Promise<T> {
@@ -90,6 +145,8 @@ function queued<T>(queueRef: { current: Promise<void> }, task: () => Promise<T>)
 export function registerNodeControlHandlers(
   controlSurface: ControlSurface,
   deps: {
+    agentSpawnRuntime?: AgentSpawnRuntimePort
+    killExactSession?: (sessionId: string) => void | Promise<void>
     topology: WorkerTopologyStore
     getPersistenceStore: () => Promise<PersistenceStore>
     publishSyncEvent?: (payload: SyncEventPayload) => number
@@ -97,63 +154,180 @@ export function registerNodeControlHandlers(
     closeWebsiteNode?: (nodeId: string) => Promise<void> | void
   },
 ): void {
+  const admission =
+    deps.agentSpawnRuntime && deps.killExactSession
+      ? new AgentSpawnAdmissionOwner(deps.agentSpawnRuntime)
+      : undefined
+  if (admission) {
+    installAgentSpawnOwner(controlSurface, admission, async () =>
+      toNodeControlStateStore(await deps.getPersistenceStore()),
+    )
+  }
   const mutationQueue = { current: Promise.resolve() }
   const withDeps = async (ctx: ControlSurfaceContext) => ({
     store: toNodeControlStateStore(await deps.getPersistenceStore()),
     locatorDeps: createLocatorDeps(controlSurface, deps.topology, ctx),
-    runtime: createRuntimeDeps(controlSurface, ctx, deps.closeWebsiteNode, deps.closePluginNode),
+    runtime: createRuntimeDeps(
+      controlSurface,
+      ctx,
+      deps.closeWebsiteNode,
+      deps.closePluginNode,
+      admission,
+      deps.killExactSession,
+    ),
   })
 
+  registerOperation(controlSurface, taskClaimOperation, {
+    defaultErrorCode: 'persistence.io_failed',
+    handle: async (ctx, input) =>
+      claimTask({
+        store: toNodeControlStateStore(await deps.getPersistenceStore()),
+        input,
+        now: ctx.now(),
+        authority: ctx.requestAuth?.kind === 'session-grant' ? ctx.requestAuth.grant : undefined,
+        assertActive: ctx.assertActive,
+      }),
+  })
+  registerOperation(controlSurface, taskReleaseOperation, {
+    defaultErrorCode: 'persistence.io_failed',
+    handle: async (ctx, input) =>
+      releaseTask({
+        store: toNodeControlStateStore(await deps.getPersistenceStore()),
+        input,
+        now: ctx.now(),
+        authority: ctx.requestAuth?.kind === 'session-grant' ? ctx.requestAuth.grant : undefined,
+        assertActive: ctx.assertActive,
+      }),
+  })
+  registerOperation(controlSurface, noteAppendOperation, {
+    defaultErrorCode: 'persistence.io_failed',
+    handle: async (ctx, input) =>
+      appendNote({
+        store: toNodeControlStateStore(await deps.getPersistenceStore()),
+        input,
+        authority: ctx.requestAuth?.kind === 'session-grant' ? ctx.requestAuth.grant : undefined,
+        assertActive: ctx.assertActive,
+      }),
+  })
+  registerOperation(controlSurface, nodeManagedClaudeBindingOperation, {
+    defaultErrorCode: 'persistence.unavailable',
+    handle: async (_ctx, input) => {
+      const store = await deps.getPersistenceStore()
+      if (!store.observeManagedClaudeNode) {
+        throw createAppError('persistence.unavailable')
+      }
+      const observed = store.observeManagedClaudeNode(input.nodeId)
+      return {
+        managedClaudeBinding: observed.binding,
+        nodeRuntimeSessionId: observed.nodeRuntimeSessionId ?? null,
+        retired: observed.retired,
+        executionDirectory: observed.context?.directory ?? null,
+      }
+    },
+  })
+  registerOperation(controlSurface, nodeResolveCallerSelectorOperation, {
+    defaultErrorCode: 'common.unexpected',
+    handle: async (ctx, input) => {
+      const caller = ctx.requestAuth?.kind === 'session-grant' ? ctx.requestAuth.grant.nodeId : null
+      if (!caller) {
+        throw createAppError('node.parent_unavailable', {
+          details: { reason: 'caller_identity_required' },
+        })
+      }
+      const store = toNodeControlStateStore(await deps.getPersistenceStore())
+      const result = await resolveCallerParent(store, caller, input)
+      ctx.assertActive?.()
+      return result
+    },
+  })
   registerOperation(controlSurface, nodeListOperation, {
     defaultErrorCode: 'common.unexpected',
     handle: async (ctx, input) => {
       const { store, locatorDeps } = await withDeps(ctx)
-      return await listNodesForNodeControl({
-        store,
-        locatorDeps,
-        input,
-        projectScope: grantProjectOf(ctx),
-      })
+      const scope = grantProjectOf(ctx)
+      const foreign =
+        scope !== undefined && input.projectId !== undefined && input.projectId !== scope
+      if (!foreign) {
+        return await listNodesForNodeControl({ store, locatorDeps, input, projectScope: scope })
+      }
+      // Narrow lineage carve-out: a grant sees its own creator's children in another project,
+      // never the project itself. Everything else reads as an empty listing.
+      const empty = { projectId: input.projectId, spaceId: null, nodes: [] } as const
+      if (!input.spawnedByNodeId) {
+        return empty
+      }
+      if (!(await isNodeInGrantProject(store, input.spawnedByNodeId, scope))) {
+        return empty
+      }
+      return await listNodesForNodeControl({ store, locatorDeps, input, projectScope: undefined })
     },
   })
   registerOperation(controlSurface, nodeGetOperation, {
     defaultErrorCode: 'common.unexpected',
     handle: async (ctx, input) => {
-      return await getNodeForNodeControl({
-        store: toNodeControlStateStore(await deps.getPersistenceStore()),
+      const store = await deps.getPersistenceStore()
+      const controlStore = toNodeControlStateStore(store)
+      const result = await getNodeForNodeControl({
+        store: controlStore,
         input,
-        projectScope: grantProjectOf(ctx),
+        projectScope: await nodeProjectScopeForGrant(
+          ctx,
+          controlStore,
+          input.nodeId,
+          deps.getPersistenceStore,
+        ),
       })
+      const binding = store.observeManagedClaudeNode?.(input.nodeId).binding
+      return { ...result, ...(binding ? { managedClaudeBinding: binding } : {}) }
     },
   })
   registerOperation(controlSurface, nodeCreateOperation, {
     defaultErrorCode: 'common.unexpected',
     handle: async (ctx, input) =>
       queued(mutationQueue, async () => {
+        ctx.assertActive?.()
         const { store, locatorDeps, runtime } = await withDeps(ctx)
+        const scope = grantProjectOf(ctx)
+        const grantNodeId =
+          ctx.requestAuth?.kind === 'session-grant' ? ctx.requestAuth.grant.nodeId : null
+        const foreignCreate =
+          scope !== undefined && typeof input.projectId === 'string' && input.projectId !== scope
+        if (foreignCreate && !grantNodeId) {
+          throw createAppError('node.not_found')
+        }
         return await createNodeForNodeControl({
           store,
           locatorDeps,
           runtime,
           input,
-          projectScope: grantProjectOf(ctx),
+          // A foreign create is allowed only as a child of the caller; prepareNodeLineage
+          // records the grant as creator, so the new node joins the lineage subtree.
+          projectScope: foreignCreate ? undefined : scope,
           now: ctx.now(),
+          admission,
+          authority: ctx.requestAuth?.kind === 'session-grant' ? ctx.requestAuth.grant : undefined,
+          callerNodeId:
+            ctx.requestAuth?.kind === 'session-grant' ? ctx.requestAuth.grant.nodeId : null,
         })
       }),
   })
   registerOperation(controlSurface, nodeUpdateOperation, {
     defaultErrorCode: 'common.unexpected',
     handle: async (ctx, input) =>
-      queued(
-        mutationQueue,
-        async () =>
-          await updateNodeForNodeControl({
-            store: toNodeControlStateStore(await deps.getPersistenceStore()),
-            input,
-            projectScope: grantProjectOf(ctx),
-            assertActive: ctx.assertActive,
-          }),
-      ),
+      queued(mutationQueue, async () => {
+        const controlStore = toNodeControlStateStore(await deps.getPersistenceStore())
+        return await updateNodeForNodeControl({
+          store: controlStore,
+          input,
+          projectScope: await nodeProjectScopeForGrant(
+            ctx,
+            controlStore,
+            input.nodeId,
+            deps.getPersistenceStore,
+          ),
+          assertActive: ctx.assertActive,
+        })
+      }),
   })
   registerOperation(controlSurface, nodeDeleteOperation, {
     defaultErrorCode: 'common.unexpected',
@@ -164,6 +338,8 @@ export function registerNodeControlHandlers(
           ctx,
           deps.closeWebsiteNode,
           deps.closePluginNode,
+          admission,
+          deps.killExactSession,
         )
         return await deleteNodeForNodeControl({
           store: toNodeControlStateStore(await deps.getPersistenceStore()),

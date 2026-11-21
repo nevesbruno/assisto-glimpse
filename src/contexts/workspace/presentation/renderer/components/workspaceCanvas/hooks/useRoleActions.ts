@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useState,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from 'react'
+import { useCallback, useLayoutEffect, useMemo } from 'react'
 import { resolvePaneNodeCreationAnchor } from './useInteractions.creationAnchor'
 import type { Node } from '@xyflow/react'
 import { useTranslation } from '@app/renderer/i18n'
@@ -18,27 +10,23 @@ import {
   type ProjectRoleDefinition,
   type StandardWindowSizeBucket,
 } from '@contexts/settings/domain/agentSettings'
-import type { Point, RoleNodeData, TerminalNodeData, WorkspaceSpaceState } from '../../../types'
+import type { Point, RoleNodeData, TerminalNodeData } from '../../../types'
 import { resolveNodePlacementAnchorFromViewportCenter } from '../helpers'
 import {
   assignNodeToSpaceAndExpand,
   findContainingSpaceByAnchor,
 } from './useInteractions.spaceAssignment'
-import type {
-  ContextMenuState,
-  CreateNodeInput,
-  NodePlacementOptions,
-  RoleCreatorState,
-  ShowWorkspaceCanvasMessage,
-} from '../types'
+import type { CreateNodeInput, NodePlacementOptions, ShowWorkspaceCanvasMessage } from '../types'
 import { resolveDefaultRoleWindowSize } from '../constants'
 import type { WorkspaceCanvasActionRefs } from './useActionRefs'
 import { runRoleNodeAction } from './useRoleActions.run'
-
-type SetNodes = (
-  updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-  options?: { syncLayout?: boolean },
-) => void
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
+import {
+  useCanvasDocumentCommands,
+  useCanvasUiCommands,
+  useReadCanvasUi,
+} from '../../../store/canvasStoreContext'
+import type { WorkspaceDocument } from '../../../store/workspaceDocument'
 
 function toRoleNameKey(name: string): string {
   return name.trim().toLowerCase()
@@ -49,13 +37,9 @@ export function useWorkspaceCanvasRoleActions({
   workspacePath,
   environmentVariables,
   agentSettings,
-  contextMenu,
-  setContextMenu,
-  nodesRef,
-  spacesRef,
+  readDocument,
   setNodes,
-  onSpacesChange,
-  onRequestPersistFlush,
+  updateCanvasDocument,
   onShowMessage,
   standardWindowSizeBucket,
   createRoleNode,
@@ -70,13 +54,14 @@ export function useWorkspaceCanvasRoleActions({
   workspacePath: string
   environmentVariables?: Record<string, string>
   agentSettings: AgentSettings
-  contextMenu: ContextMenuState | null
-  setContextMenu: (next: ContextMenuState | null) => void
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
-  setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  /**
+   * The document reader of the render that made these actions. The role UI makes it: this file
+   * subscribes to the app store for the settings, and a file that reads the document through its
+   * own reader does not also subscribe to that store.
+   */
+  readDocument: () => WorkspaceDocument
+  setNodes: UseWorkspaceCanvasNodesStoreResult['setNodes']
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
   onShowMessage?: ShowWorkspaceCanvasMessage
   standardWindowSizeBucket: StandardWindowSizeBucket
   createRoleNode: (
@@ -97,8 +82,6 @@ export function useWorkspaceCanvasRoleActions({
   actionRefs: WorkspaceCanvasActionRefs
   buildAgentNodeTitle: (provider: AgentProvider, label: string | null) => string
 }): {
-  roleCreator: RoleCreatorState | null
-  setRoleCreator: Dispatch<SetStateAction<RoleCreatorState | null>>
   openRoleCreator: () => void
   closeRoleCreator: () => void
   createRole: () => void
@@ -106,13 +89,16 @@ export function useWorkspaceCanvasRoleActions({
   openRoleEditor: (roleId: string) => void
   deleteProjectRole: (roleId: string) => void
 } {
+  const ui = useCanvasUiCommands()
+  const readUi = useReadCanvasUi()
+  const documentCommands = useCanvasDocumentCommands()
+
   const { t } = useTranslation()
   const setAgentSettings = useAppStore(state => state.setAgentSettings)
   const projectRoles = useMemo(
     () => agentSettings.projectRolesByWorkspaceId[workspaceId] ?? [],
     [agentSettings.projectRolesByWorkspaceId, workspaceId],
   )
-  const [roleCreator, setRoleCreator] = useState<RoleCreatorState | null>(null)
 
   const createRoleNodeAtFlowPoint = useCallback(
     (anchor: Point, role: ProjectRoleDefinition): Node<TerminalNodeData> | null => {
@@ -121,7 +107,7 @@ export function useWorkspaceCanvasRoleActions({
         cursorAnchor,
         resolveDefaultRoleWindowSize(standardWindowSizeBucket),
       )
-      const targetSpace = findContainingSpaceByAnchor(spacesRef.current, cursorAnchor)
+      const targetSpace = findContainingSpaceByAnchor(readDocument().spaces, cursorAnchor)
       const created = createRoleNode(nodeAnchor, role, {
         targetSpaceRect: targetSpace?.rect ?? null,
         selectedProvider: resolveSelectableAgentProvider(agentSettings.defaultProvider),
@@ -136,33 +122,30 @@ export function useWorkspaceCanvasRoleActions({
         createdNodeId: created.id,
         createdNode: created,
         targetSpaceId: targetSpace.id,
-        spacesRef,
-        nodesRef,
-        setNodes,
-        onSpacesChange,
+        updateCanvasDocument,
       })
-      onRequestPersistFlush?.()
+      // The assignment is one write of the nodes and the Spaces; the flush follows it.
+      documentCommands.requestPersistFlush()
       return created
     },
     [
       workspaceId,
       agentSettings.defaultProvider,
       createRoleNode,
-      nodesRef,
-      onRequestPersistFlush,
-      onSpacesChange,
-      setNodes,
-      spacesRef,
+      documentCommands,
+      readDocument,
       standardWindowSizeBucket,
+      updateCanvasDocument,
     ],
   )
 
   const openRoleCreator = useCallback(() => {
+    const contextMenu = readUi().contextMenu
     if (!contextMenu || contextMenu.kind !== 'pane') {
       return
     }
 
-    setRoleCreator({
+    ui.openDialog('roleCreator', {
       anchor: resolvePaneNodeCreationAnchor(contextMenu),
       mode: 'create',
       roleId: null,
@@ -174,14 +157,19 @@ export function useWorkspaceCanvasRoleActions({
       isCreating: false,
       error: null,
     })
-    setContextMenu(null)
-  }, [contextMenu, setContextMenu])
+    ui.closeContextMenu()
+  }, [readUi, ui])
 
   const closeRoleCreator = useCallback(() => {
-    setRoleCreator(prev => (prev?.isCreating ? prev : null))
-  }, [])
+    if (readUi().roleCreator?.isCreating) {
+      return
+    }
+
+    ui.closeDialog('roleCreator')
+  }, [readUi, ui])
 
   const createRole = useCallback(() => {
+    const roleCreator = readUi().roleCreator
     if (!roleCreator) {
       return
     }
@@ -189,12 +177,18 @@ export function useWorkspaceCanvasRoleActions({
     const name = roleCreator.name.trim()
     const promptTemplate = roleCreator.promptTemplate.trim()
     if (name.length === 0) {
-      setRoleCreator(prev => (prev ? { ...prev, error: t('roleCreator.nameRequired') } : prev))
+      ui.updateDialog('roleCreator', current => ({
+        ...current,
+        error: t('roleCreator.nameRequired'),
+      }))
       return
     }
 
     if (promptTemplate.length === 0) {
-      setRoleCreator(prev => (prev ? { ...prev, error: t('roleCreator.promptRequired') } : prev))
+      ui.updateDialog('roleCreator', current => ({
+        ...current,
+        error: t('roleCreator.promptRequired'),
+      }))
       return
     }
 
@@ -204,7 +198,10 @@ export function useWorkspaceCanvasRoleActions({
         (roleCreator.mode !== 'edit' || role.id !== roleCreator.roleId),
     )
     if (duplicate) {
-      setRoleCreator(prev => (prev ? { ...prev, error: t('roleCreator.duplicateName') } : prev))
+      ui.updateDialog('roleCreator', current => ({
+        ...current,
+        error: t('roleCreator.duplicateName'),
+      }))
       return
     }
 
@@ -212,9 +209,10 @@ export function useWorkspaceCanvasRoleActions({
     const existingRole =
       roleCreator.mode === 'edit' ? projectRoles.find(role => role.id === roleCreator.roleId) : null
     if (roleCreator.mode === 'edit' && !existingRole) {
-      setRoleCreator(prev =>
-        prev ? { ...prev, error: t('roleNode.missingRoleDefinition') } : prev,
-      )
+      ui.updateDialog('roleCreator', current => ({
+        ...current,
+        error: t('roleNode.missingRoleDefinition'),
+      }))
       return
     }
 
@@ -229,7 +227,7 @@ export function useWorkspaceCanvasRoleActions({
       updatedAt: now,
     }
 
-    setRoleCreator(prev => (prev ? { ...prev, isCreating: true, error: null } : prev))
+    ui.updateDialog('roleCreator', current => ({ ...current, isCreating: true, error: null }))
     setAgentSettings(prev => {
       const current = prev.projectRolesByWorkspaceId[workspaceId] ?? []
       const nextRoles =
@@ -268,21 +266,23 @@ export function useWorkspaceCanvasRoleActions({
                 }
               : node,
           ),
-        { syncLayout: false },
+        { syncLayout: false, flush: true },
       )
     } else {
       createRoleNodeAtFlowPoint(roleCreator.anchor, role)
+      // The new role node and its Space were written by the creation above; the flush follows.
+      documentCommands.requestPersistFlush()
     }
-    setRoleCreator(null)
-    onRequestPersistFlush?.()
+    ui.closeDialog('roleCreator')
   }, [
     createRoleNodeAtFlowPoint,
-    onRequestPersistFlush,
+    documentCommands,
     projectRoles,
-    roleCreator,
+    readUi,
     setAgentSettings,
     setNodes,
     t,
+    ui,
     workspaceId,
   ])
 
@@ -294,11 +294,10 @@ export function useWorkspaceCanvasRoleActions({
         environmentVariables,
         agentSettings,
         projectRoles,
-        nodesRef,
-        spacesRef,
+        readDocument,
         setNodes,
-        onSpacesChange,
-        onRequestPersistFlush,
+        updateCanvasDocument,
+        updateSpaces: documentCommands.updateSpaces,
         onShowMessage,
         createNodeForSession,
         updateRoleInput,
@@ -312,15 +311,14 @@ export function useWorkspaceCanvasRoleActions({
       appendRoleRunRecord,
       buildAgentNodeTitle,
       createNodeForSession,
+      documentCommands,
       environmentVariables,
-      nodesRef,
-      onRequestPersistFlush,
       onShowMessage,
-      onSpacesChange,
       projectRoles,
+      readDocument,
       setNodes,
-      spacesRef,
       t,
+      updateCanvasDocument,
       updateRoleInput,
       workspaceId,
       workspacePath,
@@ -341,6 +339,7 @@ export function useWorkspaceCanvasRoleActions({
 
   const runProjectRoleFromContextMenu = useCallback(
     (roleId: string) => {
+      const contextMenu = readUi().contextMenu
       if (!contextMenu || contextMenu.kind !== 'pane') {
         return
       }
@@ -350,10 +349,10 @@ export function useWorkspaceCanvasRoleActions({
         return
       }
 
-      setContextMenu(null)
+      ui.closeContextMenu()
       createRoleNodeAtFlowPoint(resolvePaneNodeCreationAnchor(contextMenu), role)
     },
-    [contextMenu, createRoleNodeAtFlowPoint, projectRoles, setContextMenu],
+    [createRoleNodeAtFlowPoint, projectRoles, readUi, ui],
   )
 
   const openRoleEditor = useCallback(
@@ -363,8 +362,8 @@ export function useWorkspaceCanvasRoleActions({
         return
       }
 
-      setContextMenu(null)
-      setRoleCreator({
+      ui.closeContextMenu()
+      ui.openDialog('roleCreator', {
         anchor: { x: 0, y: 0 },
         mode: 'edit',
         roleId: role.id,
@@ -377,12 +376,12 @@ export function useWorkspaceCanvasRoleActions({
         error: null,
       })
     },
-    [projectRoles, setContextMenu],
+    [projectRoles, ui],
   )
 
   const deleteProjectRole = useCallback(
     (roleId: string) => {
-      setContextMenu(null)
+      ui.closeContextMenu()
       setAgentSettings(prev => {
         const current = prev.projectRolesByWorkspaceId[workspaceId] ?? []
         const nextRoles = current.filter(role => role.id !== roleId)
@@ -399,15 +398,17 @@ export function useWorkspaceCanvasRoleActions({
           projectRolesByWorkspaceId: nextByWorkspace,
         }
       })
-      setRoleCreator(prev => (prev?.mode === 'edit' && prev.roleId === roleId ? null : prev))
-      onRequestPersistFlush?.()
+      const roleCreator = readUi().roleCreator
+      if (roleCreator?.mode === 'edit' && roleCreator.roleId === roleId) {
+        ui.closeDialog('roleCreator')
+      }
+      // The role definitions are settings; no node write comes before this flush.
+      documentCommands.requestPersistFlush()
     },
-    [onRequestPersistFlush, setAgentSettings, setContextMenu, workspaceId],
+    [documentCommands, readUi, setAgentSettings, ui, workspaceId],
   )
 
   return {
-    roleCreator,
-    setRoleCreator,
     openRoleCreator,
     closeRoleCreator,
     createRole,

@@ -82,7 +82,10 @@ describe('executor run state adapter', () => {
     f.tick(5)
     await f.adapter.recordWaitingForApproval(NODE, 'req-1', 'rm -rf build')
     expect(f.state()).toBe('waiting')
-    expect(f.registry.get({ sessionId: 's1' })?.blockedSummary).toBe('rm -rf build')
+    expect(f.registry.get({ sessionId: 's1' })?.blockedSummary).toEqual({
+      kind: 'question',
+      questions: [{ question: 'rm -rf build', options: [] }],
+    })
     f.tick(5)
     await f.adapter.recordApprovalResolved(NODE, 'req-1')
     expect(f.state()).toBe('working')

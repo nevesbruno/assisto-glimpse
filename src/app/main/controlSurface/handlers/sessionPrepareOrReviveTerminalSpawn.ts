@@ -1,5 +1,6 @@
 import { logAgentLaunchInfo } from '../../diagnostics/agentLaunchRuntimeDiagnostics'
-import { toFileUri } from '../../../../contexts/filesystem/domain/fileUri'
+import { composeTerminalSpawnGuard } from './terminalAgentActivitySpawn'
+import { toFileUri } from '../../../../contexts/filesystem/domain'
 import { resolveSpaceMountContext } from '../../../../contexts/space/application/resolveSpaceMountContext'
 import type { MountDto, SpawnTerminalResult } from '../../../../shared/contracts/dto'
 import {
@@ -9,6 +10,10 @@ import {
 import type { ControlSurface } from '../controlSurface'
 import type { ControlSurfaceContext } from '../types'
 import { invokeCommand } from './sessionPrepareOrReviveShared'
+import {
+  withManagedClaudeFallback,
+  noteManagedClaudeRuntimeCreated,
+} from '../managedClaudeLaunchRuntime'
 import {
   DEFAULT_PTY_COLS,
   DEFAULT_PTY_ROWS,
@@ -197,6 +202,46 @@ export class RemoteWorkerBindingUnresolvedError extends Error {
   }
 }
 
+export function spawnPreparedFallbackTerminal(
+  options: Parameters<typeof spawnFallbackTerminal>[0] & {
+    launchContext: PrepareOrReviveLaunchContext
+  },
+) {
+  const { launchContext } = options
+  return withManagedClaudeFallback(
+    {
+      cwd: launchContext.workingDirectory,
+      mountId: launchContext.mountId,
+      endpointId: launchContext.endpointId,
+    },
+    (assertActive, assertExecution) => {
+      const assertCallerActive = composeTerminalSpawnGuard(options.ctx)
+      const guard = () => {
+        assertCallerActive()
+        assertActive?.()
+      }
+      return spawnFallbackTerminal({
+        ...options,
+        launchContext,
+        ctx: assertActive
+          ? {
+              ...options.ctx,
+              assertActive: guard,
+              terminalSpawnLifecycle: {
+                assertActive: guard,
+                onSpawned: noteManagedClaudeRuntimeCreated,
+                assertExecution: execution => {
+                  options.ctx.terminalSpawnLifecycle?.assertExecution?.(execution)
+                  assertExecution?.(execution)
+                },
+              },
+            }
+          : options.ctx,
+      })
+    },
+  )
+}
+
 export async function spawnFallbackTerminal(options: {
   controlSurface: ControlSurface
   ctx: ControlSurfaceContext
@@ -224,6 +269,7 @@ export async function spawnFallbackTerminal(options: {
     throw new RemoteWorkerBindingUnresolvedError(launchContext)
   }
 
+  options.ctx.assertActive?.()
   if (launchContext.mountId) {
     const spawned = await invokeCommand<SpawnTerminalResult>(
       options.controlSurface,

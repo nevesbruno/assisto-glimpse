@@ -4,6 +4,7 @@ import {
   type RetainedAgentTurn,
   type TurnArchiveContext,
 } from './AgentTurnRecord'
+import { CodexTurnIdentity, sameCodexPair } from './CodexTurnIdentity'
 import { AGENT_TURN_ARCHIVE_LIMITS } from './AgentTurnArchive'
 import { createAppError } from '../../../shared/errors/appError'
 import type { PromptSubmissionEvidence } from '../../../shared/runtime/agentHook/claudePromptEvidence'
@@ -20,11 +21,14 @@ export type FinalMessageSelector = { turnId?: string; promptId?: string; nodeId?
 
 /** Private per-incarnation content owner. No references enter event or receipt rings. */
 export class AgentTurnHistory {
+  private readonly codexIdentity = new CodexTurnIdentity()
   private revoked = false
   private active: Identity | undefined
   private readonly ended: RetainedAgentTurn[] = []
   constructor(
-    private readonly archiveContext: TurnArchiveContext = {
+    private readonly archiveContext: TurnArchiveContext & {
+      providerScopedPrompts?: () => boolean
+    } = {
       now: Date.now,
       nodeId: () => null,
       remote: () => false,
@@ -57,18 +61,27 @@ export class AgentTurnHistory {
     return removed
   }
 
-  identity(): Identity & { endedTurnIds: string[] } {
+  identity(providerSessionId?: string): Identity & { endedTurnIds: string[] } {
     return {
-      endedTurnIds: this.ended.map(turn => turn.turnId),
-      ...(this.active
+      endedTurnIds: [
+        ...new Set([...this.ended.map(turn => turn.turnId), ...this.codexIdentity.endedTurnIds()]),
+      ],
+      ...(providerSessionId && this.active?.providerSessionId !== providerSessionId
         ? {
-            promptId: this.active.promptId,
-            providerSessionId: this.active.providerSessionId,
-            providerTurnId: this.active.providerTurnId,
+            providerSessionId,
+            promptId:
+              this.ended.findLast(turn => turn.providerSessionId === providerSessionId)?.promptId ??
+              undefined,
           }
-        : this.ended.at(-1)?.promptId
-          ? { promptId: this.ended.at(-1)!.promptId ?? undefined }
-          : {}),
+        : this.active
+          ? {
+              promptId: this.active.promptId,
+              providerSessionId: this.active.providerSessionId,
+              providerTurnId: this.active.providerTurnId,
+            }
+          : this.ended.at(-1)?.promptId
+            ? { promptId: this.ended.at(-1)!.promptId ?? undefined }
+            : (this.codexIdentity.identity() ?? {})),
     }
   }
 
@@ -76,11 +89,16 @@ export class AgentTurnHistory {
     evidence: PromptSubmissionEvidence | undefined,
     currentTurnId?: string,
   ): string | undefined {
+    if (evidence?.providerTurnId || (!evidence?.promptId && this.codexIdentity.identity())) {
+      return this.codexIdentity.submissionTurnId(evidence, currentTurnId, this.active)
+    }
     return (
       (evidence?.promptId &&
         this.ended.find(
           turn =>
-            turn.promptId === evidence.promptId || turn.promptIds?.includes(evidence.promptId!),
+            (!this.archiveContext.providerScopedPrompts?.() ||
+              turn.providerSessionId === evidence.providerSessionId) &&
+            (turn.promptId === evidence.promptId || turn.promptIds?.includes(evidence.promptId!)),
         )?.turnId) ||
       currentTurnId
     )
@@ -91,8 +109,17 @@ export class AgentTurnHistory {
   hasPrompt(id?: string): boolean {
     return !!id && (this.active?.promptId === id || !!this.active?.promptIds?.includes(id))
   }
-  hasEndedPrompt(id?: string): boolean {
-    return !!id && this.ended.some(turn => turn.promptId === id || turn.promptIds?.includes(id))
+  hasEndedPrompt(id?: string, providerSessionId?: string): boolean {
+    return (
+      !!id &&
+      this.ended.some(
+        turn =>
+          (!this.archiveContext.providerScopedPrompts?.() ||
+            !providerSessionId ||
+            turn.providerSessionId === providerSessionId) &&
+          (turn.promptId === id || turn.promptIds?.includes(id)),
+      )
+    )
   }
   hasCurrentPrompt(evidence?: PromptSubmissionEvidence): boolean {
     return (
@@ -102,7 +129,12 @@ export class AgentTurnHistory {
     )
   }
   sameSubmission(observation: AgentRunObservation, evidence?: PromptSubmissionEvidence): boolean {
-    return observation.hookEventName === 'UserPromptSubmit' && this.hasCurrentPrompt(evidence)
+    return (
+      observation.hookEventName === 'UserPromptSubmit' &&
+      (observation.source === 'codex_hook'
+        ? sameCodexPair(this.active, evidence)
+        : this.hasCurrentPrompt(evidence))
+    )
   }
   continueWith(promptId?: string): void {
     if (!this.active || !promptId) {
@@ -120,6 +152,9 @@ export class AgentTurnHistory {
     observation: AgentRunObservation | null,
     evidence?: PromptSubmissionEvidence,
   ): boolean {
+    if (observation?.source === 'codex_hook') {
+      return this.codexIdentity.supersedes(observation, evidence, this.active)
+    }
     return !!(
       observation?.source === 'claude_hook' &&
       observation.hookEventName === 'UserPromptSubmit' &&
@@ -138,16 +173,8 @@ export class AgentTurnHistory {
   }
 
   rejects(observation: AgentRunObservation, evidence?: PromptSubmissionEvidence): boolean {
-    if (observation.source === 'codex_hook' && observation.hookEventName === 'notify') {
-      // Reject before arbitration: refusing only completion would still project false idle.
-      return !!(
-        (this.active?.providerTurnId &&
-          evidence?.providerTurnId &&
-          this.active.providerTurnId !== evidence.providerTurnId) ||
-        (this.active?.providerSessionId &&
-          evidence?.providerSessionId &&
-          this.active.providerSessionId !== evidence.providerSessionId)
-      )
+    if (observation.source === 'codex_hook') {
+      return this.codexIdentity.rejects(observation, evidence, this.active)
     }
     if (observation.source !== 'claude_hook' || !evidence?.promptId) {
       return false
@@ -164,7 +191,10 @@ export class AgentTurnHistory {
     // Superseded ends are late. Replays cannot reopen or close another active turn. A repeated
     // Stop with no active turn can still refresh idle after provider continuation.
     const retained = this.ended.find(
-      turn => turn.promptId === evidence.promptId || turn.promptIds?.includes(evidence.promptId!),
+      turn =>
+        (!this.archiveContext.providerScopedPrompts?.() ||
+          turn.providerSessionId === evidence.providerSessionId) &&
+        (turn.promptId === evidence.promptId || turn.promptIds?.includes(evidence.promptId!)),
     )
     if (retained) {
       return (
@@ -197,13 +227,18 @@ export class AgentTurnHistory {
   ): void {
     if (ended && !this.revoked) {
       const correlated =
-        observation?.boundary?.kind === 'end' &&
-        (observation.source === 'executor_service' ||
-          (observation.source === 'claude_hook' &&
-            this.active?.promptId !== undefined &&
-            this.active.promptId === evidence?.promptId &&
-            this.active.providerSessionId !== undefined &&
-            this.active.providerSessionId === evidence?.providerSessionId))
+        (observation?.boundary?.kind === 'end' &&
+          observation.source === 'executor_service') ||
+        (observation?.source === 'codex_hook' &&
+          observation.hookEventName === 'Stop' &&
+          observation.boundary?.kind === 'end' &&
+          sameCodexPair(this.active, evidence)) ||
+        (observation?.source === 'claude_hook' &&
+          observation.boundary?.kind === 'end' &&
+          this.active?.promptId !== undefined &&
+          this.active.promptId === evidence?.promptId &&
+          this.active.providerSessionId !== undefined &&
+          this.active.providerSessionId === evidence?.providerSessionId)
       const content = correlated || intermediate ? evidence?.finalMessage : undefined
       this.ended.push({
         ...captureTurn(
@@ -226,6 +261,7 @@ export class AgentTurnHistory {
         ),
         promptIds: this.active?.promptIds,
       })
+      this.codexIdentity.end(this.active, next.snapshot.turn !== null)
       this.active = undefined
       while (
         this.ended.length > AGENT_TURN_ARCHIVE_LIMITS.perNode ||
@@ -252,9 +288,19 @@ export class AgentTurnHistory {
           : observation?.source === 'codex_hook'
             ? {
                 providerTurnId: evidence?.providerTurnId,
+                emittedAtMs:
+                  observation.hookEventName === 'UserPromptSubmit'
+                    ? observation.emittedAtMs
+                    : undefined,
                 providerSessionId: evidence?.providerSessionId,
               }
             : {}
+      if (
+        observation?.source === 'codex_hook' &&
+        observation.hookEventName === 'UserPromptSubmit'
+      ) {
+        this.codexIdentity.bind(evidence, next.snapshot.turn.id, observation.emittedAtMs)
+      }
     }
   }
 

@@ -1,4 +1,11 @@
+import {
+  spawnedByOption,
+  lineageFields,
+  lineageProjection,
+  lineageFieldDescriptions,
+} from '../core/nodeLineage'
 import { projectTaskLinks } from '../core/agentMetadata'
+import { kindWithArticle } from '../core/kindWording'
 import { defineCommand } from '../core/command'
 import { agentReadCommand } from './agentRead'
 import { CliError, usage } from '../core/errors'
@@ -17,6 +24,9 @@ const runFields = [
   'provider',
   'state',
   'blockedReason',
+  'blockedSummary',
+  'blockedSummary.kind',
+  'blockedSummary.questions',
   'turn',
   'turn.id',
   'turn.startedAt',
@@ -29,12 +39,18 @@ const runFields = [
   'lastEndedTurn.id',
   'lastEndedTurn.outcome',
   'lastEndedTurn.endedAt',
+  ...lineageFields,
 ]
 const stateWaitRender = {
   ...declaredOutput(
     runFields
-      .filter(field => field !== 'title')
+      .filter(field => field !== 'title' && !lineageFields.includes(field))
       .concat([
+        'completion',
+        'completion.nodeId',
+        'completion.sessionId',
+        'completion.turnId',
+        'completion.outcome',
         'endedTurn',
         'endedTurn.id',
         'endedTurn.startedAt',
@@ -73,7 +89,8 @@ export const agentQueryCommands = [
     description:
       'Returns {epoch, seq, agents}, one row per live agent session. Exited sessions are excluded by agent.list (so --state exited returns no rows); use agent get or wait for a known exited node. taskNodeId is the task whose linkedAgentNodeId points here (null if absent/ambiguous). Titles come from node metadata; null means unbound or deleted. turn.startedAt is epoch milliseconds, or absent when no turn is active. Inside OpenCove, the default scope is your space; --project selects a whole project.',
     options: {
-      space: stringOption('Space ID'),
+      space: { ...stringOption('Space ID'), defaultSelfUnless: ['spawned-by'] },
+      'spawned-by': spawnedByOption,
       state: {
         type: 'string',
         choices: ['working', 'waiting', 'idle', 'exited', 'unknown'],
@@ -81,13 +98,30 @@ export const agentQueryCommands = [
         description: 'Filter the authoritative run state',
       },
     },
-    buildInput: ({ options: o }) => ({ spaceId: o.space, projectId: o.project, state: o.state }),
+    buildInput: ({ options: o }) => {
+      if (
+        o.output === 'table' &&
+        String(o.fields ?? '')
+          .split(',')
+          .some(field => /^(agents\.)?blockedSummary(?:\.|$)/.test(field.trim()))
+      ) {
+        usage('Dialog summaries are available in JSON output only. Use -o json.')
+      }
+      return {
+        spaceId: o.space,
+        projectId: o.project,
+        state: o.state,
+        spawnedByNodeId: o['spawned-by'],
+      }
+    },
     render: {
       ...declaredOutput(
         runFields,
         { epoch: 'e', seq: 1, agents: [{ nodeId: 'node-123' }] },
         { listKey: 'agents' },
       ),
+      defaultLimit: 50,
+      fieldDescriptions: lineageFieldDescriptions,
       columns: [
         'nodeId',
         'title',
@@ -130,6 +164,7 @@ export const agentQueryCommands = [
         ...result,
         agents: rows.map(({ agent, node }) => ({
           ...agent,
+          ...lineageProjection(node),
           lastEndedTurn: agent.lastEndedTurn ?? null,
           title: node?.title ?? null,
           taskNodeId: agent.nodeId
@@ -150,7 +185,10 @@ export const agentQueryCommands = [
       'Returns the Worker snapshot plus title and taskNodeId (reverse task-owned link, null if absent/ambiguous), including observed agents inside terminal nodes. A node without registered run state fails with agent.not_found (exit 1); use node get to inspect a terminal/note, or start/resume an agent window. State is runtime evidence, independent of persisted node status. Unknown/degraded is never ready. lastEndedTurn identifies the most recent ended turn with {id, outcome, endedAt} (epoch milliseconds), or null before any end in this incarnation. It persists while the next turn runs and resets on replacement/restart. turnOutcome keeps its legacy behavior: set on end (completed, failed, aborted or unknown), usually cleared on the next start; use lastEndedTurn for identity-bound results.',
     options: { node: stringOption('Node ID', true) },
     buildInput: ({ options: o }) => ({ nodeId: o.node }),
-    render: declaredOutput(runFields, { nodeId: 'node-123' }),
+    render: {
+      ...declaredOutput(runFields, { nodeId: 'node-123' }),
+      fieldDescriptions: lineageFieldDescriptions,
+    },
     examples: [
       'opencove agent get --node "Reviewer" --pretty',
       'opencove agent get --node @self --fields state,quality,turn',
@@ -164,7 +202,7 @@ export const agentQueryCommands = [
         throw new CliError(
           'agent.not_found',
           1,
-          `${JSON.stringify(node.title)} is a ${node.kind}, not an agent window.`,
+          `${JSON.stringify(node.title)} is ${kindWithArticle(node.kind)}, not an agent window.`,
           'Use "opencove node get --node <selector>" to inspect this node, or "opencove agent list" to find agent windows.',
         )
       }
@@ -178,6 +216,7 @@ export const agentQueryCommands = [
       }
       return {
         ...snapshot,
+        ...lineageProjection(node),
         taskNodeId: (await projectTaskLinks(ctx, node?.projectId)).get(nodeId) ?? null,
         lastEndedTurn: snapshot.lastEndedTurn ?? null,
         title: node?.title ?? null,
@@ -191,11 +230,10 @@ export const agentQueryCommands = [
       '--node <selector> (--turn <turnId> | --until idle|waiting|exited|turn-end [--node <selector> ...] [--any|--all]) [--timeout <duration>] [options]',
     summary: 'Wait until agents reach a state or finish a turn',
     description: [
-      'Wait without sending input. After prompting, save turnId: prompt → delivery status → wait --turn <turnId> → read --turn <turnId> -o json. Never resend because waiting times out.',
-      '--turn selects one exact turn on one node, conflicts with --until/--any, and waits through permission/question pauses and provider continuations. Ended results include outcome, state, durability and retained deliveryIds/promptIds. Every ended outcome exits 0: check outcome and reply before claiming success.',
-      '--until waits for idle, waiting, exited or turn-end. Existing state matches immediately; idle requires no active turn and known, nondegraded state. turn-end observes an end after waiting starts. Multiple nodes use --all (default) or --any.',
-      'Exit codes: 0 condition met; 1 unavailable history; 2 invalid input; 124 timeout (lastKnown on stderr); 130 interruption. Agents keep running. Retention, restart/remote limits and error recovery: opencove skill.',
-      'deliveryIds are retained correlations of OpenCove deliveries with this turn, including refused or uncertain attempts. Membership proves neither submission nor consumption, and an empty list proves nothing either: delivery records live in memory only, are cleared when OpenCove restarts and expire 30 minutes after resolving; inspect each deliveryId with opencove agent delivery <id>. promptIds are the provider prompt IDs for this turn (Claude continuations included); agent delivery does not accept them.',
+      'Wait without sending input. Save turnId: prompt → delivery status → wait --turn <turnId> → read --turn <turnId>. Never resend after timeout.',
+      '--turn selects one exact turn and includes provider continuations. All ended outcomes exit 0; check outcome. --until selects idle, waiting, exited or a future turn-end. Idle requires no active turn and nondegraded evidence. --all remembers fulfilled bindings; a session change resets progress; --any stops on the first success OR waiting/exited observation of an unfulfilled target.',
+      'Exit codes: 0 condition met; 1 unavailable history; 2 invalid input; 4 authentication or grant-policy refusal; 10 waiting observed (the agent may need the user — inspect before acting); 11 target exited before the condition was met (a PTY exit that ends the selected turn succeeds with outcome unknown); 124 timeout; 130 interruption. --through-waiting continues when waiting is reported; it does not suppress 11. Resolve in OpenCove, inspect agent read --screen with the same connection options and matching session/turn IDs, then repeat the wait. Prefer --turn: turn-end cannot resume an already observed completion. Details: opencove skill wait.',
+      'deliveryIds are retained correlations, including refused or uncertain attempts; membership proves neither submission nor consumption. Records expire 30 minutes after resolving and clear on restart: inspect each deliveryId with opencove agent delivery <id>. promptIds are the provider prompt IDs, not delivery IDs.',
     ].join('\n\n'),
     options: {
       node: { ...stringOption('Node ID', true), multiple: true },
@@ -214,12 +252,17 @@ export const agentQueryCommands = [
       any: {
         type: 'boolean',
         conflicts: ['all'],
-        description: 'Resolve when any selected node matches',
+        description:
+          'Stop on the first success or waiting/exited observation of an unfulfilled target',
       },
       all: {
         type: 'boolean',
         conflicts: ['any'],
         description: 'Resolve when all selected nodes match (default)',
+      },
+      'through-waiting': {
+        type: 'boolean',
+        description: 'Continue waiting when a target reports waiting',
       },
       timeout: {
         type: 'number',
@@ -296,6 +339,7 @@ export const agentQueryCommands = [
         until: ctx.options.until as WaitUntil,
         turnId: ctx.options.turn as string | undefined,
         any: ctx.options.any === true,
+        throughWaiting: ctx.options['through-waiting'] === true,
         timeoutMs: Number(ctx.options.timeout ?? 20000),
         connection: ctx.connection!,
         fetch: ctx.io.fetch,

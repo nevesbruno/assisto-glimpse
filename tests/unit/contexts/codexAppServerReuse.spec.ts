@@ -1,3 +1,4 @@
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 import { EventEmitter } from 'node:events'
 import { connect } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -40,6 +41,8 @@ describe.skipIf(process.platform === 'win32').each(['HOME', 'CODEX_HOME'])(
         const dispose = vi.fn(async () => undefined)
         const commit = vi.fn()
         const channel = {
+          async start() {},
+          getInstallState: () => 'installed',
           reserveSpawn: vi.fn(async () => ({
             usesHook: true,
             installState: 'installed',
@@ -51,6 +54,7 @@ describe.skipIf(process.platform === 'win32').each(['HOME', 'CODEX_HOME'])(
         const artifacts = new AgentLaunchArtifactScope()
         const trust = vi.fn(async () => "hooks.state={'hook'={trusted_hash='sha256:abc'}}")
         const provider = new CodexAgentProviderContribution({
+          artifactRoot: createTestAgentLaunchArtifactRoot(),
           channel,
           hookTrustResolver: trust,
           runtimePlatform: 'linux',
@@ -63,6 +67,7 @@ describe.skipIf(process.platform === 'win32').each(['HOME', 'CODEX_HOME'])(
             model: null,
             resumeSessionId: null,
             workspaceDirectory: '/tmp/workspace',
+            residentContext: 'canvas',
             agentFullAccess: false,
             codexReuseRunningAppServer: reuse,
             environment: homeSource === 'CODEX_HOME' ? { CODEX_HOME: codexHome } : {},
@@ -85,6 +90,9 @@ describe.skipIf(process.platform === 'win32').each(['HOME', 'CODEX_HOME'])(
           }
           plan.onStarted?.('pty-codex')
           expect(commit).toHaveBeenCalledExactlyOnceWith('pty-codex')
+          expect(vi.mocked(channel.reserveSpawn).mock.calls).toEqual(
+            skipped ? [[]] : [[{ residentContext: 'canvas' }]],
+          )
         } finally {
           artifacts.seal()
           await artifacts.dispose()

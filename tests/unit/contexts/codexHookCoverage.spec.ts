@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 import { afterEach, expect, it, vi } from 'vitest'
 import { CodexAgentProviderContribution } from '../../../src/contexts/agent/infrastructure/providers/codex/CodexAgentProviderContribution'
 import { AgentLaunchArtifactScope } from '../../../src/contexts/agent/application/services/AgentLaunchArtifactScope'
@@ -48,8 +49,15 @@ it.each([
   // A live shared daemon is skipped only when the user opted into reusing it.
   daemon.live = branch === 'daemon' || branch === 'daemon-default'
   const provider = new CodexAgentProviderContribution({
+    artifactRoot: createTestAgentLaunchArtifactRoot(),
     channel:
-      branch === 'no-channel' ? undefined : ({ reserveSpawn } as unknown as AgentHookChannel),
+      branch === 'no-channel'
+        ? undefined
+        : ({
+            reserveSpawn,
+            async start() {},
+            getInstallState: () => (branch === 'unavailable' ? 'error' : 'installed'),
+          } as unknown as AgentHookChannel),
     runtimePlatform: branch === 'windows' ? 'win32' : 'linux',
     hookTrustResolver,
     sessionDiscovery: {

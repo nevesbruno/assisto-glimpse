@@ -16,4 +16,6 @@ export type SessionRecord = GetSessionResult & {
   route: SessionRoute
   launchMode?: AgentLaunchMode
   geminiDiscoveryCursor?: GeminiSessionDiscoveryCursor | null
+  /** Project of the session grant that admitted this launch; null for user and bearer launches. */
+  grantProjectId?: string | null
 }

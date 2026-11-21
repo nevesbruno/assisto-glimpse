@@ -1,8 +1,9 @@
+import { abortable } from './streamLifetime'
+import { requireWorkerOperation } from './operationDiscovery'
 import { unknownOperation } from './operationErrors'
 import { validateUriInputs } from './uriInputs'
 import { nodeFieldNotice } from './nodeFields'
-import { listLimitNotice } from './listOutput'
-import { promptComparisonNotice } from './promptTransport'
+import { listLimitNotice, cappedListNotice } from './listOutput'
 import { promptValidationPresentation } from '../../../shared/errors/agentPromptError'
 import { commands } from '../commands'
 import { getControlSurfaceOperation } from '../../../shared/contracts/controlSurface/operations'
@@ -16,7 +17,9 @@ import type { CliIo } from './io'
 import type { OperationId } from './command'
 import { version } from '../../../../package.json'
 import { resolveSelectors } from './selectors'
-import { selfUnavailable } from './identity'
+import { requireNodeNearPlacement } from './nodeNearPlacement'
+import { requireBoundedAgentSpawningForRequest } from './boundedAgentSpawning'
+import { sessionIdentity, selfUnavailable } from './identity'
 import type { ZodType } from 'zod'
 
 /**
@@ -24,12 +27,14 @@ import type { ZodType } from 'zod'
  * independent of the registry's full union, which grows past what TypeScript can represent.
  */
 type CliOperation =
+  // @compat control-surface-legacy-validation
   | { kind: 'query' | 'command'; contract: 'legacy' }
   | {
       kind: 'query' | 'command'
       contract: 'schema'
       input: ZodType
       normalize(wire: never): unknown
+      // @compat control-surface-legacy-validation
       legacyNormalize?(payload: unknown): unknown
     }
 
@@ -40,7 +45,9 @@ function commandForOperation(id: string) {
 export async function run(argv: string[], io: CliIo): Promise<number> {
   let json = false,
     promptCommand = false,
-    invokeStarted = false
+    invokeStarted = false,
+    mutationStarted = false
+  let scope: { dispose(): void } | undefined
   try {
     const specs = { ...globals, ...Object.assign({}, ...commands.map(c => c.options)) }
     const words = commandWords(argv, specs)
@@ -93,6 +100,13 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       io.stdout.write(help(commands, command.path))
       return 0
     }
+    command.validateBeforeConnect?.(args, io.env)
+    const execution = command.executionScope?.(args, io)
+    if (execution) {
+      scope = execution
+      io = execution.io
+    }
+    const prepared = await command.prepare?.(args, io)
     let input = command.buildInput?.(args)
     const id =
       command.path.join(' ') === 'api call'
@@ -115,7 +129,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     // rather than discover an invalid projection after their effects have completed.
     if (
       ((command.rawQueryFields && operation?.kind === 'command') ||
-        command.stream ||
+        (command.stream && !command.streamProjection) ||
         ((operation?.kind === 'command' || command.mutation) && !command.render?.fields)) &&
       args.options.fields !== undefined
     ) {
@@ -133,6 +147,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       try {
         const validation = operation.input.safeParse(input)
         if (!validation.success) {
+          // @compat control-surface-legacy-validation
           operation.legacyNormalize?.(input)
           throw validationError(id!, validation.error.issues, 2, 'cli.usage', input)
         }
@@ -185,7 +200,14 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       }
     }
     for (const [key, spec] of Object.entries(command.options ?? {})) {
+      // Batch node failures belong to the command's per-target resolver. Single
+      // targets and other selector kinds retain the early identity preflight.
+      const deferredBatchNode =
+        command.resolveInExecute &&
+        spec.selector === 'node' &&
+        [args.options[key]].flat().length > 1
       if (
+        !deferredBatchNode &&
         spec.selector &&
         [args.options[key]].flat().includes('@self') &&
         io.env.OPENCOVE_ENV !== '1' &&
@@ -195,91 +217,136 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
         selfUnavailable(spec.selector)
       }
     }
-    const needsConnection =
-      command.connect || (command.path.join(' ') === 'api ops' && io.env.OPENCOVE_ENV === '1')
-    const connection = needsConnection ? await resolveConnection(args.options, io) : undefined
-    // Selector reads and the final query share a per-run snapshot. A write ends
-    // that snapshot so a later read cannot reuse data from before its effects.
-    const reads = new Map<string, Promise<unknown>>()
-    const call = async (
-      operationId: OperationId,
-      payload: unknown,
-      callOptions?: { fresh?: boolean; signal?: AbortSignal },
-    ) => {
-      const op = getControlSurfaceOperation(operationId)!
-      if (!connection) {
-        throw new CliError('context.unreachable', 3, 'No connection')
-      }
-      const key = JSON.stringify([operationId, payload])
-      if (op.kind === 'command') {
-        reads.clear()
-      } else if (!callOptions?.fresh && reads.has(key)) {
-        return reads.get(key)!
-      }
-      if (operationId === 'agent.prompt') {
-        invokeStarted = true
-      }
-      const pending = invoke(
-        connection,
-        { kind: op.kind, id: operationId, payload },
-        {
-          timeoutMs:
-            operationId === 'agent.prompt'
-              ? Number(args.options.timeout ?? 15000) + 5000
-              : Number(args.options.timeout ?? command.timeoutMs ?? 20000),
-          fetch: io.fetch,
-          signal: callOptions?.signal ?? io.signal,
-          errorTargets: command.errorTargets,
-          inputOptions: commandForOperation(operationId)?.options,
+    let result: unknown
+    try {
+      const needsConnection =
+        command.connect ||
+        (['api ops', 'api schema'].includes(command.path.join(' ')) && io.env.OPENCOVE_ENV === '1')
+      const connection = needsConnection
+        ? await (io.signal && command.recoverPreflight && prepared !== undefined
+            ? abortable(resolveConnection(args.options, io), io.signal)
+            : resolveConnection(args.options, io))
+        : undefined
+      // Selector reads and the final query share a per-run snapshot. A write ends
+      // that snapshot so a later read cannot reuse data from before its effects.
+      const reads = new Map<string, Promise<unknown>>()
+      const call = async (
+        operationId: OperationId,
+        payload: unknown,
+        callOptions?: {
+          fresh?: boolean
+          signal?: AbortSignal
+          timeoutMs?: number
+          onDispatch?: () => void
         },
-      )
-      if (op.kind === 'query' && !callOptions?.fresh) {
-        reads.set(key, pending)
-      }
-      return pending
-    }
-    const selfSelected = Object.values(args.options).flat().includes('@self')
-    const identity = await resolveSelectors(command, args, io, call)
-    input = command.buildInput?.(args)
-    const result = command.execute
-      ? await command.execute({
-          ...args,
-          io,
-          input,
-          invoke: call,
+      ) => {
+        const op = getControlSurfaceOperation(operationId)!
+        if (!connection) {
+          throw new CliError('context.unreachable', 3, 'No connection')
+        }
+        await requireNodeNearPlacement(operationId, payload, call)
+        await requireBoundedAgentSpawningForRequest(operationId, payload, identity, call)
+        if (commandForOperation(operationId)?.requireOperationDiscovery) {
+          await requireWorkerOperation(call, operationId)
+        }
+        const key = JSON.stringify([operationId, payload])
+        if (op.kind === 'command') {
+          mutationStarted = true
+          callOptions?.onDispatch?.()
+          reads.clear()
+        } else if (!callOptions?.fresh && reads.has(key)) {
+          return reads.get(key)!
+        }
+        if (operationId === 'agent.prompt') {
+          invokeStarted = true
+        }
+        const pending = invoke(
           connection,
-          selfSelected,
-          whoami: identity.whoami,
-          self: identity.self,
-        })
-      : await call(id as OperationId, input)
+          { kind: op.kind, id: operationId, payload },
+          {
+            timeoutMs:
+              callOptions?.timeoutMs ??
+              (operationId === 'agent.prompt'
+                ? Number((payload as { timeoutMs?: number }).timeoutMs ?? 15000) + 5000
+                : Number(args.options.timeout ?? command.timeoutMs ?? 20000)),
+            fetch: io.fetch,
+            signal: callOptions?.signal ?? io.signal,
+            errorTargets: command.errorTargets,
+            inputOptions: commandForOperation(operationId)?.options,
+          },
+        )
+        if (op.kind === 'query' && !callOptions?.fresh) {
+          reads.set(key, pending)
+        }
+        return pending
+      }
+      const selfSelected = Object.values(args.options).flat().includes('@self')
+      const identity = sessionIdentity(io.env, call)
+      if (id) {
+        await requireBoundedAgentSpawningForRequest(id, input, identity, call, 'before_selectors')
+      }
+      if (!command.resolveInExecute) {
+        await resolveSelectors(command, args, io, call, identity)
+      }
+      input = command.buildInput?.(args)
+      mutationStarted ||= command.mutation === true
+      result = command.execute
+        ? await command.execute({
+            ...args,
+            io,
+            input,
+            prepared,
+            invoke: call,
+            connection,
+            selfSelected,
+            whoami: identity.whoami,
+            self: identity.self,
+          })
+        : await call(id as OperationId, input)
+    } catch (error) {
+      if (mutationStarted || !command.recoverPreflight) {
+        throw error
+      }
+      result = command.recoverPreflight(error, { ...args, io, prepared })
+      if (result === undefined) {
+        throw error
+      }
+    }
     if (command.stream) {
       return Number(result)
     }
-    if (promptCommand) {
-      const comparisonNotice = promptComparisonNotice(result)
-      if (comparisonNotice) {
-        io.stderr.write(comparisonNotice + '\n')
-      }
+    const value = command.outputValue ? command.outputValue(result) : result
+    // Apply display defaults only after execution: selectors and internal reads stay complete.
+    if (args.options.limit === undefined && renderSpec?.defaultLimit && !args.options.full) {
+      args.options.limit = renderSpec.defaultLimit
     }
     const output =
-      command.textOutput && !args.options.output && args.options.fields === undefined
-        ? command.textOutput(result)
-        : render(result, args.options, renderSpec)
-    const notice = nodeFieldNotice(result, args.options, renderSpec)
+      args.options.quiet && command.quietIdPath
+        ? String(get(value, command.quietIdPath)) + '\n'
+        : command.textOutput && !args.options.output && args.options.fields === undefined
+          ? (command.textOutput(value, {
+              io,
+              options: args.options,
+              render: () => render(value, args.options, renderSpec),
+            }) ?? render(value, args.options, renderSpec))
+          : render(value, args.options, renderSpec)
+    const notice = nodeFieldNotice(value, args.options, renderSpec)
     if (notice) {
       io.stderr.write(notice + '\n')
     }
     const tableListKey = args.options.output === 'table' ? renderSpec?.listKey : undefined
-    const listNotice = listLimitNotice(
-      tableListKey ? get(result, tableListKey) : result,
-      args.options.limit,
-      command.path.join(' ') === 'api ops'
-        ? args.options.domains
-          ? 'domains'
-          : 'operations'
-        : (tableListKey ?? 'items'),
-    )
+    const listNotice =
+      renderSpec?.defaultLimit && renderSpec.listKey
+        ? cappedListNotice(value, args.options.limit, renderSpec.listKey)
+        : listLimitNotice(
+            tableListKey ? get(value, tableListKey) : value,
+            args.options.limit,
+            command.path.join(' ') === 'api ops'
+              ? args.options.domains
+                ? 'domains'
+                : 'operations'
+              : (tableListKey ?? 'items'),
+          )
     if (listNotice) {
       io.stderr.write(listNotice + '\n')
     }
@@ -288,12 +355,18 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       const delivery = result as { available?: boolean; status?: string }
       return delivery.available && delivery.status === 'submitted' ? 0 : 1
     }
-    return 0
+    return command.exitCode?.(result) ?? 0
   } catch (error) {
+    const failure =
+      scope && io.signal?.aborted && io.signal.reason instanceof CliError ? io.signal.reason : error
     let cliError =
-      error instanceof CliError
-        ? error
-        : new CliError('cli.failed', 1, error instanceof Error ? error.message : String(error))
+      failure instanceof CliError
+        ? failure
+        : new CliError(
+            'cli.failed',
+            1,
+            failure instanceof Error ? failure.message : String(failure),
+          )
     if (promptCommand && !invokeStarted && cliError.code === 'cli.interrupted') {
       cliError = new CliError(
         'cli.interrupted',
@@ -302,7 +375,9 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
         'Retry when ready.',
       )
     }
-    printError(io, cliError, json)
+    printError(io, cliError, json, !mutationStarted)
     return cliError.exitCode
+  } finally {
+    scope?.dispose()
   }
 }

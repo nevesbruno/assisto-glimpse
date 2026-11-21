@@ -51,17 +51,15 @@ describe('pty.spawnInMount under a grant', () => {
     return { invoke, spawn }
   }
 
-  it('answers a mount of another project exactly like an unknown mount', async () => {
+  it('refuses every grant spawn before the mount is resolved', async () => {
+    // Upstream schema S1d: a grant starts terminals with node.create, never pty.spawnInMount.
     const { invoke, spawn } = setup()
-    const foreign = await invoke('mount-b')
-    expect(foreign).toMatchObject({
-      ok: false,
-      error: { code: 'common.invalid_input', debugMessage: 'Unknown mountId: mount-b' },
-    })
-    const unknown = await invoke('mount-ghost')
-    const swap = (result: unknown, id: string) =>
-      JSON.parse(JSON.stringify(result).replaceAll(id, '<id>'))
-    expect(swap(foreign, 'mount-b')).toEqual(swap(unknown, 'mount-ghost'))
+    for (const mountId of ['mount-b', 'mount-ghost', 'mount-a']) {
+      expect(await invoke(mountId)).toMatchObject({
+        ok: false,
+        error: { code: 'common.forbidden', details: { reason: 'operation_denied' } },
+      })
+    }
     expect(spawn).not.toHaveBeenCalled()
   })
 })

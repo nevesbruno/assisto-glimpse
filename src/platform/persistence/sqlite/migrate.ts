@@ -1,4 +1,6 @@
+import { ensureNodeLineageSchema } from '../../../contexts/workspace/infrastructure/nodeLineage/SqliteNodeLineageRepository'
 import type Database from 'better-sqlite3'
+import { ensureManagedClaudeResumeSchema } from './managedClaudeResumeSchema'
 import { DB_SCHEMA_VERSION, LEGACY_WORKSPACE_STATE_KEY } from './constants'
 import { normalizePersistedAppState } from './normalize'
 import { createOrchestrationTables } from './orchestrationTables'
@@ -14,6 +16,8 @@ function quoteSqliteIdentifier(value: string): string {
 }
 
 function createTables(db: Database.Database): void {
+  ensureManagedClaudeResumeSchema(db)
+  ensureNodeLineageSchema(db)
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
@@ -53,6 +57,7 @@ function createTables(db: Database.Database): void {
       session_id TEXT,
       title TEXT NOT NULL,
       title_pinned_by_user INTEGER NOT NULL,
+      title_is_literal INTEGER NOT NULL DEFAULT 0,
       position_x REAL NOT NULL,
       position_y REAL NOT NULL,
       width INTEGER NOT NULL,
@@ -200,10 +205,9 @@ function createTables(db: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS browser_permissions_profile_origin_permission_unique_idx
       ON browser_permission_decisions (profile_key, origin, permission);
   `)
-
-  createOrchestrationTables(db)
 }
 
+// @compat sqlite-workspace-state-kv
 function readLegacyRawFromKv(db: Database.Database): string | null {
   try {
     const stmt = db.prepare('SELECT value FROM kv WHERE key = ?')
@@ -214,6 +218,7 @@ function readLegacyRawFromKv(db: Database.Database): string | null {
   }
 }
 
+// @compat sqlite-workspace-state-kv
 function dropLegacyKv(db: Database.Database): void {
   try {
     db.exec('DROP TABLE IF EXISTS kv;')
@@ -281,6 +286,10 @@ function backfillWorkspaceSortOrder(db: Database.Database): void {
 function ensureCurrentSchema(db: Database.Database): void {
   createTables(db)
 
+  // D018: the fork's orchestration tables are additive and idempotent, so any database below 16
+  // (including an upstream schema 15 without them) gains them here instead of only on create.
+  createOrchestrationTables(db)
+
   ensureTableColumn(db, {
     tableName: 'workspaces',
     columnName: 'pull_request_base_branch_options_json',
@@ -303,6 +312,12 @@ function ensureCurrentSchema(db: Database.Database): void {
     tableName: 'workspaces',
     columnName: 'space_archive_records_json',
     definitionSql: `TEXT NOT NULL DEFAULT '[]'`,
+  })
+
+  ensureTableColumn(db, {
+    tableName: 'nodes',
+    columnName: 'title_is_literal',
+    definitionSql: 'INTEGER NOT NULL DEFAULT 0',
   })
 
   const addedWorkspaceSortOrder = ensureTableColumn(db, {
@@ -409,9 +424,11 @@ export function migrate(db: Database.Database): void {
     return
   }
 
+  // @compat sqlite-workspace-state-kv
   if (currentVersion === 1) {
     const legacyRaw = readLegacyRawFromKv(db)
     createTables(db)
+    createOrchestrationTables(db)
 
     if (legacyRaw) {
       const parsed = safeJsonParse(legacyRaw)

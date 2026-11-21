@@ -23,6 +23,7 @@ it.each([
     data: { url: 'example.com', pinned: false, sessionMode: 'profile', profileId: 'p' },
   },
   { kind: 'agent', data: { prompt: 'hi', provider: 'codex', model: null } },
+  { kind: 'agent', data: { taskNodeId: 'task', agentFullAccess: false } },
   { kind: 'terminal', data: { shell: null, command: 'pwd', profileId: null } },
 ])('accepts caller create payload %j', input => {
   expect(
@@ -42,6 +43,10 @@ it.each([
   { kind: 'website', data: {} },
   { kind: 'note', data: { text: 1 } },
   { kind: 'agent', data: { provider: 'bad' } },
+  ...[null, '', ' \t ', 1, false, {}, []].map(taskNodeId => ({
+    kind: 'agent',
+    data: { taskNodeId },
+  })),
   { kind: 'terminal', data: { command: 1 } },
   { kind: 'note', title: 1 },
   { kind: 'note', projectId: 1 },
@@ -58,8 +63,11 @@ it.each([
   expect(update.input.safeParse({ nodeId: 'n', ...input }).success).toBe(true),
 )
 it.each([
-  { kind: 'agent' },
-  { kind: 'terminal' },
+  { kind: 'agent', data: {} },
+  { kind: 'agent', data: { agentFullAccess: true } },
+  { kind: 'agent', data: { agentFullAccess: false } },
+  { kind: 'agent', agentFullAccess: true },
+  { kind: 'terminal', data: null },
   { kind: 'task', data: { tags: [1] } },
   { kind: 'website', data: { pinned: 'true' } },
   { kind: 'note', data: { text: false } },

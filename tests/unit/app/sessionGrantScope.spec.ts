@@ -4,7 +4,7 @@ import { createAppError } from '../../../src/shared/errors/appError'
 import { createControlSurface } from '../../../src/app/main/controlSurface/controlSurface'
 import { registerAgentPromptHandlers } from '../../../src/app/main/controlSurface/handlers/agentPromptHandlers'
 import { registerAgentRunStateHandlers } from '../../../src/app/main/controlSurface/handlers/agentRunStateHandlers'
-import { registerSessionGetKillHandlers } from '../../../src/app/main/controlSurface/handlers/sessionGetKillHandlers'
+import { registerSessionQueryHandlers } from '../../../src/app/main/controlSurface/handlers/sessionQueryHandlers'
 import { registerSessionInputHandlers } from '../../../src/app/main/controlSurface/handlers/sessionInputHandlers'
 import { registerSpaceHandlers } from '../../../src/app/main/controlSurface/handlers/spaceHandlers'
 import { createSessionNodeResolver } from '../../../src/app/main/controlSurface/handlers/sessionNodeResolver'
@@ -106,13 +106,18 @@ describe('session operations under a grant', () => {
       ['sess-a', { sessionId: 'sess-a' }],
       ['sess-b', { sessionId: 'sess-b' }],
     ])
-    registerSessionGetKillHandlers(control, {
-      getPersistenceStore,
-      ptyStreamHub: hub,
-      ptyRuntime,
-      sessions,
+    registerSessionQueryHandlers(
+      control,
+      {
+        getPersistenceStore,
+        ptyStreamHub: hub,
+        ptyRuntime,
+        sessions,
+        resolveNode,
+      } as never,
+      sessions as never,
       resolveNode,
-    } as never)
+    )
     registerSessionInputHandlers(control, {
       getPersistenceStore,
       ptyStreamHub: hub as never,
@@ -162,7 +167,7 @@ describe('session operations under a grant', () => {
     expect(kill).toHaveBeenCalledWith('sess-a')
   })
 
-  it('refuses stopNode and writeNode on another project before the guard and the write', async () => {
+  it('refuses stopNode on another project and every grant writeNode before the guard', async () => {
     const { control, kill, writeAutomation, guardDirectInput } = await setup()
     const stop = await invoke(control, grantA, 'command', 'session.stopNode', {
       nodeId: 'n-b',
@@ -174,7 +179,8 @@ describe('session operations under a grant', () => {
       data: 'x',
     })
     expect(errorCode(stop)).toBe('session.not_found')
-    expect(errorCode(write)).toBe('session.not_found')
+    // Upstream schema S1d: a grant never writes raw node input; use agent.prompt.
+    expect(errorCode(write)).toBe('common.forbidden')
     expect(guardDirectInput).not.toHaveBeenCalled()
     expect(writeAutomation).not.toHaveBeenCalled()
     expect(kill).not.toHaveBeenCalled()
@@ -183,8 +189,8 @@ describe('session operations under a grant', () => {
       sessionId: 'sess-a',
       data: 'x',
     })
-    expect(own.ok).toBe(true)
-    expect(guardDirectInput).toHaveBeenCalledTimes(1)
+    expect(errorCode(own)).toBe('common.forbidden')
+    expect(guardDirectInput).not.toHaveBeenCalled()
   })
 })
 

@@ -1,18 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { Node } from '@xyflow/react'
-import type { TerminalNodeData, WorkspaceSpaceRect, WorkspaceSpaceState } from '../../../types'
+import type { TerminalNodeData, WorkspaceSpaceRect } from '../../../types'
 import { WORKSPACE_ARRANGE_GRID_PX } from '../../../utils/workspaceArrange.shared'
-import { resolveWorkspaceSnap, type WorkspaceSnapGuide } from '../../../utils/workspaceSnap'
+import { resolveWorkspaceSnap } from '../../../utils/workspaceSnap'
 import {
   resolveWorkspaceNodeSnapCandidateRects,
   unionWorkspaceNodeRects,
 } from '../../../utils/workspaceSnap.nodes'
-import {
-  areSpaceRectsEqual,
-  buildDragBaselineNodes,
-  setResolvedSnapGuides,
-  setResolvedSpaceFramePreview,
-} from './useApplyNodeChanges.helpers'
+import { areSpaceRectsEqual, buildDragBaselineNodes } from './useApplyNodeChanges.helpers'
 import { projectWorkspaceSpaceDominantLayout } from './useApplyNodeChanges.spaceDominant'
 import {
   projectCanvasInteractionDrop,
@@ -30,36 +25,31 @@ import {
   type LastLiveDragSecondaryProjection,
 } from './useNodeDragSession.liveProjection'
 import type { WorkspaceCanvasNodeDragSession } from './useNodeDragSession.types'
+import {
+  useCanvasInteractionCommands,
+  useReadCanvasDocument,
+  useReadCanvasInteraction,
+  useReadCanvasSelection,
+} from '../../../store/canvasStoreContext'
 export type { WorkspaceCanvasNodeDragSession } from './useNodeDragSession.types'
 
 export function useWorkspaceCanvasNodeDragSession({
   workspaceId,
-  spacesRef,
-  selectedSpaceIdsRef,
-  dragSelectedSpaceIdsRef,
-  magneticSnappingEnabledRef,
-  setSnapGuides,
-  onSpacesChange,
-  onRequestPersistFlush,
 }: {
   workspaceId: string
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  selectedSpaceIdsRef: React.MutableRefObject<string[]>
-  dragSelectedSpaceIdsRef: React.MutableRefObject<string[] | null>
-  magneticSnappingEnabledRef: React.MutableRefObject<boolean>
-  setSnapGuides: React.Dispatch<React.SetStateAction<WorkspaceSnapGuide[] | null>>
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
 }): WorkspaceCanvasNodeDragSession {
+  const readSelection = useReadCanvasSelection()
+  const readDocument = useReadCanvasDocument()
+  const readInteraction = useReadCanvasInteraction()
+  const { setSnapGuides, setNodeDragFramePreview } = useCanvasInteractionCommands()
+  // Private to the session: written once per drag, read per frame, never rendered.
+  const dragStartSpaceIdsRef = useRef<readonly string[] | null>(null)
   const nodeDragPointerAnchorRef = useRef<{
     nodeId: string
     offset: { x: number; y: number }
   } | null>(null)
-  // Visual-only for ordinary node drops; ownership always recomputes from durable Spaces.
-  const [nodeSpaceFramePreview, setNodeSpaceFramePreview] = useState<ReadonlyMap<
-    string,
-    WorkspaceSpaceRect
-  > | null>(null)
+  // The frame preview of an ordinary node drop is visual-only and lives in the canvas store
+  // (`setNodeDragFramePreview`); ownership always recomputes from durable Spaces.
   const dragBaselinePositionByIdRef = useRef<Map<string, { x: number; y: number }> | null>(null)
   const dragBaselineSpaceRectByIdRef = useRef<Map<string, WorkspaceSpaceRect> | null>(null)
   const dragSpaceDominantRef = useRef(false)
@@ -70,12 +60,6 @@ export function useWorkspaceCanvasNodeDragSession({
   const pendingReleasePositionByIdRef = useRef<Map<string, { x: number; y: number }> | null>(null)
   const latestDragLayoutProjectionInputRef = useRef<DragLayoutProjectionInput | null>(null)
   const lastLiveDragSecondaryProjectionRef = useRef<LastLiveDragSecondaryProjection | null>(null)
-
-  const setNodeSpaceFramePreviewState = useCallback(
-    (next: React.SetStateAction<ReadonlyMap<string, WorkspaceSpaceRect> | null>) =>
-      setNodeSpaceFramePreview(next),
-    [],
-  )
 
   const resetLiveDragLayoutProjection = useCallback(() => {
     latestDragLayoutProjectionInputRef.current = null
@@ -105,7 +89,9 @@ export function useWorkspaceCanvasNodeDragSession({
         : null
       const dragDx = baselineAnchor && desiredAnchor ? desiredAnchor.x - baselineAnchor.x : 0
       const dragDy = baselineAnchor && desiredAnchor ? desiredAnchor.y - baselineAnchor.y : 0
-      const activeSelectedSpaceIds = dragSelectedSpaceIdsRef.current ?? selectedSpaceIdsRef.current
+      const activeSelectedSpaceIds = dragStartSpaceIdsRef.current ?? readSelection().spaceIds
+      // One read for the whole frame: nothing writes the store between the branches.
+      const { spaces } = readDocument()
 
       const shouldUseSpaceDominantProjection =
         dragSpaceDominantRef.current &&
@@ -117,7 +103,7 @@ export function useWorkspaceCanvasNodeDragSession({
       if (shouldUseSpaceDominantProjection && baselinePositionById && baselineSpaceRectById) {
         const projected = projectWorkspaceSpaceDominantLayout({
           nodes: currentNodes,
-          spaces: spacesRef.current,
+          spaces,
           baselineNodePositionById: baselinePositionById,
           baselineSpaceRectById,
           desiredDraggedPositionById,
@@ -134,7 +120,7 @@ export function useWorkspaceCanvasNodeDragSession({
 
         dragSpaceFramePreviewRef.current = projected.nextSpaceFramePreview
         committableSpaceFramePreviewRef.current = projected.nextSpaceFramePreview
-        setResolvedSpaceFramePreview(setNodeSpaceFramePreviewState, projected.nextSpaceFramePreview)
+        setNodeDragFramePreview(projected.nextSpaceFramePreview)
         pendingReleasePositionByIdRef.current = null
 
         return {
@@ -161,7 +147,7 @@ export function useWorkspaceCanvasNodeDragSession({
       const projected = projectCanvasInteractionDrop(
         {
           nodes: baselineNodes,
-          spaces: spacesRef.current,
+          spaces,
           draggedNodeIds,
           draggedNodePositionById: desiredDraggedPositionById,
           dragDx,
@@ -178,9 +164,7 @@ export function useWorkspaceCanvasNodeDragSession({
       })
 
       const currentRectsById = new Map(
-        spacesRef.current
-          .filter(space => Boolean(space.rect))
-          .map(space => [space.id, space.rect!] as const),
+        spaces.filter(space => Boolean(space.rect)).map(space => [space.id, space.rect!] as const),
       )
       let hasChanged = false
       for (const space of projected.nextSpaces) {
@@ -208,7 +192,7 @@ export function useWorkspaceCanvasNodeDragSession({
       if (strategy !== 'primary') {
         dragSpaceFramePreviewRef.current = nextSpaceFramePreview
         committableSpaceFramePreviewRef.current = null
-        setResolvedSpaceFramePreview(setNodeSpaceFramePreviewState, nextSpaceFramePreview)
+        setNodeDragFramePreview(nextSpaceFramePreview)
       }
 
       return {
@@ -222,13 +206,7 @@ export function useWorkspaceCanvasNodeDragSession({
         nextSpaceFramePreview,
       }
     },
-    [
-      dragSelectedSpaceIdsRef,
-      selectedSpaceIdsRef,
-      setNodeSpaceFramePreviewState,
-      spacesRef,
-      workspaceId,
-    ],
+    [readDocument, readSelection, setNodeDragFramePreview, workspaceId],
   )
 
   const clearNodeDragProjection = useCallback(() => {
@@ -236,9 +214,9 @@ export function useWorkspaceCanvasNodeDragSession({
     committableSpaceFramePreviewRef.current = null
     pendingReleasePositionByIdRef.current = null
     resetLiveDragLayoutProjection()
-    setResolvedSnapGuides(setSnapGuides, null)
-    setResolvedSpaceFramePreview(setNodeSpaceFramePreviewState, null)
-  }, [resetLiveDragLayoutProjection, setNodeSpaceFramePreviewState, setSnapGuides])
+    setSnapGuides(null)
+    setNodeDragFramePreview(null)
+  }, [resetLiveDragLayoutProjection, setNodeDragFramePreview, setSnapGuides])
 
   const beginNodeDragSession = useCallback(
     (currentNodes: Node<TerminalNodeData>[]) => {
@@ -246,18 +224,18 @@ export function useWorkspaceCanvasNodeDragSession({
         currentNodes.map(node => [node.id, { x: node.position.x, y: node.position.y }]),
       )
       dragBaselineSpaceRectByIdRef.current = new Map(
-        spacesRef.current
-          .filter(space => Boolean(space.rect))
+        readDocument()
+          .spaces.filter(space => Boolean(space.rect))
           .map(space => [space.id, { ...space.rect! }] as const),
       )
-      const selectedSpaceIdsAtStart = dragSelectedSpaceIdsRef.current ?? selectedSpaceIdsRef.current
+      const selectedSpaceIdsAtStart = dragStartSpaceIdsRef.current ?? readSelection().spaceIds
       dragSpaceDominantRef.current = selectedSpaceIdsAtStart.length > 0
       dragSpaceFramePreviewRef.current = null
       committableSpaceFramePreviewRef.current = null
       pendingReleasePositionByIdRef.current = null
       resetLiveDragLayoutProjection()
     },
-    [dragSelectedSpaceIdsRef, resetLiveDragLayoutProjection, selectedSpaceIdsRef, spacesRef],
+    [readDocument, readSelection, resetLiveDragLayoutProjection],
   )
 
   const projectNodeDrag = useCallback(
@@ -272,11 +250,11 @@ export function useWorkspaceCanvasNodeDragSession({
       const nextDraggedPositionById = desiredDraggedPositionById
       const interaction = projectCanvasInteractionLayout(
         currentNodes,
-        spacesRef.current,
+        readDocument().spaces,
         readCanvasInteractionState(workspaceId),
       )
       let pendingReleasePositionById: Map<string, { x: number; y: number }> | null = null
-      if (draggedNodeIds.length > 0 && magneticSnappingEnabledRef.current) {
+      if (draggedNodeIds.length > 0 && readInteraction().magneticSnappingEnabled) {
         const snappedNodes = interaction.nodes.map(node => {
           const desired = desiredDraggedPositionById.get(node.id)
           return desired ? { ...node, position: desired } : node
@@ -298,7 +276,7 @@ export function useWorkspaceCanvasNodeDragSession({
             enableGrid: true,
             enableObject: true,
           })
-          setResolvedSnapGuides(setSnapGuides, snapped.guides.length > 0 ? snapped.guides : null)
+          setSnapGuides(snapped.guides.length > 0 ? snapped.guides : null)
 
           if (snapped.dx !== 0 || snapped.dy !== 0) {
             pendingReleasePositionById = new Map(
@@ -319,10 +297,10 @@ export function useWorkspaceCanvasNodeDragSession({
             )
           }
         } else {
-          setResolvedSnapGuides(setSnapGuides, null)
+          setSnapGuides(null)
         }
       } else {
-        setResolvedSnapGuides(setSnapGuides, null)
+        setSnapGuides(null)
       }
 
       pendingReleasePositionByIdRef.current = pendingReleasePositionById
@@ -392,13 +370,7 @@ export function useWorkspaceCanvasNodeDragSession({
         shouldResolveSecondary ? 'live' : 'primary',
       )
     },
-    [
-      magneticSnappingEnabledRef,
-      resolveDragLayoutProjection,
-      setSnapGuides,
-      spacesRef,
-      workspaceId,
-    ],
+    [readDocument, readInteraction, resolveDragLayoutProjection, setSnapGuides, workspaceId],
   )
 
   const applyPendingReleaseProjection = useCallback(
@@ -443,37 +415,28 @@ export function useWorkspaceCanvasNodeDragSession({
     [resolveDragLayoutProjection],
   )
 
-  const endNodeDragSession = useCallback(() => {
-    if (dragSpaceDominantRef.current && committableSpaceFramePreviewRef.current) {
-      const rectOverrideById = committableSpaceFramePreviewRef.current
-      const previousSpaces = spacesRef.current
-      let hasSpaceChange = false
-      const nextSpaces = previousSpaces.map(space => {
-        const rect = rectOverrideById.get(space.id) ?? null
-        if (!rect) {
-          return space
-        }
+  const captureDragStartSpaceSelection = useCallback(() => {
+    dragStartSpaceIdsRef.current = readSelection().spaceIds
+  }, [readSelection])
 
-        if (space.rect && areSpaceRectsEqual(space.rect, rect)) {
-          return space
-        }
+  const getDragStartSpaceSelection = useCallback(() => dragStartSpaceIdsRef.current, [])
 
-        hasSpaceChange = true
-        return { ...space, rect: { ...rect } }
-      })
+  const clearDragStartSpaceSelection = useCallback(() => {
+    dragStartSpaceIdsRef.current = null
+  }, [])
 
-      if (hasSpaceChange) {
-        spacesRef.current = nextSpaces
-        onSpacesChange(nextSpaces)
-        onRequestPersistFlush?.()
-      }
-    }
+  // Ends the session and hands back what its release should write besides the windows: the Space
+  // frames of a Space-dominant drag, or null. It writes nothing itself: the release writes the
+  // windows and the frames in one commit, and an aborted gesture writes none of it.
+  const endNodeDragSession = useCallback((): ReadonlyMap<string, WorkspaceSpaceRect> | null => {
+    const spaceRects = dragSpaceDominantRef.current ? committableSpaceFramePreviewRef.current : null
 
     dragBaselinePositionByIdRef.current = null
     dragBaselineSpaceRectByIdRef.current = null
     dragSpaceDominantRef.current = false
     clearNodeDragProjection()
-  }, [clearNodeDragProjection, onRequestPersistFlush, onSpacesChange, spacesRef])
+    return spaceRects
+  }, [clearNodeDragProjection])
 
   useEffect(() => {
     nodeDragPointerAnchorRef.current = null
@@ -485,7 +448,6 @@ export function useWorkspaceCanvasNodeDragSession({
 
   return {
     nodeDragPointerAnchorRef,
-    nodeSpaceFramePreview,
     dragBaselinePositionByIdRef,
     dragBaselineSpaceRectByIdRef,
     beginNodeDragSession,
@@ -493,5 +455,8 @@ export function useWorkspaceCanvasNodeDragSession({
     applyPendingReleaseProjection,
     endNodeDragSession,
     clearNodeDragProjection,
+    captureDragStartSpaceSelection,
+    getDragStartSpaceSelection,
+    clearDragStartSpaceSelection,
   }
 }

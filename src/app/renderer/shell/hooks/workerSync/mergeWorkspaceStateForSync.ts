@@ -1,3 +1,5 @@
+import { isRetiredManagedNode } from '@contexts/workspace/presentation/renderer/utils/persistence/publicationState'
+import { projectOwnedManagedClaudeNode } from '@shared/sync/managedClaudeResumeProjection'
 import { rebaseGuardedSpaceMembershipForSync } from './rebaseGuardedSpaceMembershipForSync'
 import { rebaseGuardedNodesForSync } from './rebaseGuardedNodesForSync'
 import type { Node } from '@xyflow/react'
@@ -10,7 +12,7 @@ import type {
 import { toRuntimeNodes } from '@contexts/workspace/presentation/renderer/utils/nodeTransform'
 import { isNodeGuardedFromSyncOverwrite } from '@contexts/workspace/presentation/renderer/utils/syncNodeGuards'
 import { repairRuntimeNodeFrame } from '../runtimeNodeFrameRepair'
-import { mergeRuntimeSessionBinding } from './runtimeSessionBinding'
+import { mergeRuntimeSessionBinding, resolvedRuntimeSessionId } from './runtimeSessionBinding'
 import {
   areSpaceArchiveRecordsEquivalent,
   areStringArraysEqual,
@@ -28,11 +30,6 @@ function mergeRuntimeNode(
 ): Node<TerminalNodeData> {
   if (!existingNode) {
     return persistedNode
-  }
-
-  const isGuarded = isNodeGuardedFromSyncOverwrite(persistedNode.id)
-  if (!hasAcceptedBase && isGuarded) {
-    return existingNode
   }
 
   const isDragging = existingNode.dragging === true
@@ -72,14 +69,21 @@ function mergeRuntimeNode(
             lastError: existingNode.data.lastError,
           }
         : {}),
-      agent:
-        kind === 'agent' && !(hasAcceptedBase && isGuarded)
-          ? (existingNode.data.agent ?? persistedNode.data.agent)
-          : persistedNode.data.agent,
-      ...mergeRuntimeSessionBinding(persistedNode.data, existingNode.data),
+      ...mergeRuntimeSessionBinding(persistedNode.data, existingNode.data, {
+        preserveUnacknowledgedAgentBinding: !hasAcceptedBase,
+      }),
     },
   }
 
+  nextNode.data = projectOwnedManagedClaudeNode(persistedNode.data, nextNode.data)
+  if (nextNode.data.runtimeSessionBinding?.phase === 'preparing') {
+    nextNode.data.sessionId = existingNode.data.sessionId
+  }
+  const runtimeSessionId = resolvedRuntimeSessionId(nextNode.data)
+  nextNode.data.agentRuntimeObservation =
+    runtimeSessionId && runtimeSessionId === resolvedRuntimeSessionId(existingNode.data)
+      ? (existingNode.data.agentRuntimeObservation ?? null)
+      : null
   return isNodeEquivalent(nextNode, existingNode) ? existingNode : nextNode
 }
 
@@ -110,6 +114,7 @@ export function toShellWorkspaceStateForSync(
 
   const extraRuntimeNodes = existingNodes.filter(
     node =>
+      !isRetiredManagedNode(node.id) &&
       !persistedNodeIds.has(node.id) &&
       !baseNodeIds.has(node.id) &&
       isNodeGuardedFromSyncOverwrite(node.id),

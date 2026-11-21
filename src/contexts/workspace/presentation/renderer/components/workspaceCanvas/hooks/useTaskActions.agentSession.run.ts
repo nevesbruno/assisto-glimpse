@@ -1,3 +1,5 @@
+import { assertProviderInitialPrompt } from '@contexts/agent/domain/providerInitialPromptPolicy'
+import { readManagedClaudeExecutionContext } from '../../../utils/managedClaudeLifecycle'
 import {
   resolveAgentModel,
   resolveSelectableAgentProvider,
@@ -17,6 +19,7 @@ import {
   type TaskActionContext,
 } from './useTaskActions.agentSession.shared'
 import { resolveDefaultAgentLaunchGeometry } from './agentLaunchGeometry'
+import type { AgentNodeLaunchOverrides } from './useAgentNodeLifecycle.support'
 import {
   buildMergedAgentLaunchEnv,
   launchWorkspaceAgentSession,
@@ -31,6 +34,8 @@ function reuseLinkedAgentForTask({
   requirement,
   taskDirectory,
   context,
+  managed,
+  managedDirectory,
 }: {
   taskNodeId: string
   linkedAgentNodeId: string
@@ -38,10 +43,12 @@ function reuseLinkedAgentForTask({
   requirement: string
   taskDirectory: string
   context: TaskActionContext
-}): boolean {
-  const linkedAgentNode = context.nodesRef.current.find(node => node.id === linkedAgentNodeId)
+  managed: boolean
+  managedDirectory?: string | null
+}): AgentNodeLaunchOverrides | null {
+  const linkedAgentNode = context.readDocument().nodes.find(node => node.id === linkedAgentNodeId)
   if (!linkedAgentNode || linkedAgentNode.data.kind !== 'agent' || !linkedAgentNode.data.agent) {
-    return false
+    return null
   }
 
   assignAgentNodeToTaskSpace({
@@ -52,67 +59,81 @@ function reuseLinkedAgentForTask({
   })
 
   const now = new Date().toISOString()
+  const agentDirectory = managed
+    ? managedDirectory!
+    : linkedAgentNode.data.agent.directoryMode === 'workspace'
+      ? taskDirectory
+      : linkedAgentNode.data.agent.executionDirectory
 
-  context.setNodes(prevNodes =>
-    prevNodes.map(node => {
-      if (node.id === linkedAgentNodeId && node.data.kind === 'agent' && node.data.agent) {
-        const agentDirectory =
-          node.data.agent.directoryMode === 'workspace'
-            ? taskDirectory
-            : node.data.agent.executionDirectory
-
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            title:
-              node.data.titlePinnedByUser === true
-                ? node.data.title
-                : context.buildAgentNodeTitle(node.data.agent.provider, taskTitle),
-            agent: {
-              ...node.data.agent,
-              prompt: requirement,
-              taskId: taskNodeId,
-              executionDirectory: agentDirectory,
-              expectedDirectory: agentDirectory,
-              launchMode: 'new',
-              ...clearResumeSessionBinding(),
+  // The flush rides on this write: the task and its agent are published together.
+  context.setNodes(
+    prevNodes =>
+      prevNodes.map(node => {
+        if (node.id === linkedAgentNodeId && node.data.kind === 'agent' && node.data.agent) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              title:
+                node.data.titlePinnedByUser === true
+                  ? node.data.title
+                  : context.buildAgentNodeTitle(node.data.agent.provider, taskTitle),
+              agent: {
+                ...node.data.agent,
+                taskId: taskNodeId,
+                // Preserve the adoption image until the launch succeeds. Requested
+                // prompt/directory belong to the launch, not preparatory publication.
+                ...(node.data.agent.provider === 'claude-code'
+                  ? {}
+                  : {
+                      prompt: requirement,
+                      executionDirectory: agentDirectory,
+                      expectedDirectory: agentDirectory,
+                    }),
+                launchMode: 'new',
+                ...(!managed && node.data.agent.provider !== 'claude-code'
+                  ? clearResumeSessionBinding()
+                  : {}),
+              },
+              lastError: null,
             },
-            lastError: null,
-          },
+          }
         }
-      }
 
-      if (node.id === taskNodeId && node.data.kind === 'task' && node.data.task) {
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            lastError: null,
-            task: {
-              ...node.data.task,
-              status: 'doing',
-              linkedAgentNodeId,
-              lastRunAt: now,
-              updatedAt: now,
+        if (node.id === taskNodeId && node.data.kind === 'task' && node.data.task) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              lastError: null,
+              task: {
+                ...node.data.task,
+                status: 'doing',
+                linkedAgentNodeId,
+                lastRunAt: now,
+                updatedAt: now,
+              },
             },
-          },
+          }
         }
-      }
 
-      return node
-    }),
+        return node
+      }),
+    { flush: true },
   )
-  context.onRequestPersistFlush?.()
 
-  return true
+  return {
+    prompt: requirement,
+    executionDirectory: agentDirectory,
+    expectedDirectory: agentDirectory,
+  }
 }
 
 export async function runTaskAgentAction(
   taskNodeId: string,
   context: TaskActionContext,
 ): Promise<void> {
-  const taskNode = findTaskNode(taskNodeId, context.nodesRef)
+  const taskNode = findTaskNode(taskNodeId, context.readDocument)
   if (!taskNode) {
     return
   }
@@ -127,12 +148,47 @@ export async function runTaskAgentAction(
     return
   }
 
-  const taskSpace = findTaskSpace(taskNodeId, context.spacesRef)
+  const preflight = () => {
+    // Read again each time it runs: the second run follows an await.
+    const linked = context
+      .readDocument()
+      .nodes.find(
+        node => node.id === taskNode.data.task.linkedAgentNodeId && node.data.kind === 'agent',
+      )
+    try {
+      assertProviderInitialPrompt(
+        linked?.data.agent?.provider ??
+          resolveSelectableAgentProvider(context.agentSettings.defaultProvider),
+        requirement,
+      )
+      return true
+    } catch (error) {
+      setTaskLastError({ taskNodeId, message: toErrorMessage(error), setNodes: context.setNodes })
+      return false
+    }
+  }
+  if (!preflight()) {
+    return
+  }
+
+  const taskSpace = findTaskSpace(taskNodeId, context.readDocument)
   let mountId = taskSpace?.targetMountId ?? null
   let taskDirectory =
     taskSpace && taskSpace.directoryPath.trim().length > 0
       ? taskSpace.directoryPath.trim()
       : context.workspacePath
+
+  const linkedAgentNodeId = taskNode.data.task.linkedAgentNodeId
+  const linked = context.readDocument().nodes.find(node => node.id === linkedAgentNodeId)
+  let owned
+  try {
+    owned = linkedAgentNodeId
+      ? await readManagedClaudeExecutionContext(linkedAgentNodeId, linked?.data.agent?.provider)
+      : null
+  } catch (error) {
+    setTaskLastError({ taskNodeId, message: toErrorMessage(error), setNodes: context.setNodes })
+    return
+  }
 
   const initialBinding = await resolveWorkspaceAgentLaunchBinding({
     workspaceId: context.workspaceId,
@@ -140,16 +196,26 @@ export async function runTaskAgentAction(
     currentMountId: mountId,
     executionDirectory: taskDirectory,
     targetSpace: taskSpace,
-    spacesRef: context.spacesRef,
-    onSpacesChange: context.onSpacesChange,
-    onRequestPersistFlush: context.onRequestPersistFlush,
+    updateSpaces: owned ? undefined : context.updateSpaces,
   })
   mountId = initialBinding.mountId
   taskDirectory = initialBinding.executionDirectory
-  const linkedAgentNodeId = taskNode.data.task.linkedAgentNodeId
-
   if (linkedAgentNodeId) {
+    // Binding resolution awaited above: inspect the current provider again before publication.
+    if (!preflight()) {
+      return
+    }
+    if (owned && taskDirectory !== owned.executionDirectory) {
+      setTaskLastError({
+        taskNodeId,
+        message: context.t('messages.managedAgentDirectoryConflict'),
+        setNodes: context.setNodes,
+      })
+      return
+    }
     const reused = reuseLinkedAgentForTask({
+      managed: Boolean(owned),
+      managedDirectory: owned?.executionDirectory,
       taskNodeId,
       linkedAgentNodeId,
       taskTitle: taskNode.data.title,
@@ -159,15 +225,15 @@ export async function runTaskAgentAction(
     })
 
     if (reused) {
-      await context.launchAgentInNode(linkedAgentNodeId, 'new')
+      await context.launchAgentInNode(linkedAgentNodeId, 'new', reused)
       return
     }
 
     clearStaleTaskLinkedAgent({
       taskNodeId,
       setNodes: context.setNodes,
+      flush: true,
     })
-    context.onRequestPersistFlush?.()
   }
 
   const provider = resolveSelectableAgentProvider(context.agentSettings.defaultProvider)
@@ -209,9 +275,7 @@ export async function runTaskAgentAction(
           currentMountId: null,
           executionDirectory: taskDirectory,
           targetSpace: taskSpace,
-          spacesRef: context.spacesRef,
-          onSpacesChange: context.onSpacesChange,
-          onRequestPersistFlush: context.onRequestPersistFlush,
+          updateSpaces: context.updateSpaces,
         })
         return nextBinding.mountId && nextBinding.mountId !== failedMountId ? nextBinding : null
       },
@@ -220,6 +284,9 @@ export async function runTaskAgentAction(
     const createdAgentNode = await context.createNodeForSession({
       nodeId: canvasNodeId,
       sessionId: launched.sessionId,
+      ...(launched.managedClaudeLifecycle
+        ? { managedClaudeLifecycle: launched.managedClaudeLifecycle }
+        : {}),
       profileId: launched.profileId,
       runtimeKind: launched.runtimeKind,
       terminalGeometry: launchGeometry.terminalGeometry,
@@ -263,34 +330,35 @@ export async function runTaskAgentAction(
     })
 
     const now = new Date().toISOString()
-    context.setNodes(prevNodes =>
-      prevNodes.map(node => {
-        if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
-          return node
-        }
+    context.setNodes(
+      prevNodes =>
+        prevNodes.map(node => {
+          if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
+            return node
+          }
 
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            task: {
-              ...node.data.task,
-              status: 'doing',
-              linkedAgentNodeId: createdAgentNode.id,
-              lastRunAt: now,
-              updatedAt: now,
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              task: {
+                ...node.data.task,
+                status: 'doing',
+                linkedAgentNodeId: createdAgentNode.id,
+                lastRunAt: now,
+                updatedAt: now,
+              },
             },
-          },
-        }
-      }),
+          }
+        }),
+      { flush: true },
     )
-    context.onRequestPersistFlush?.()
   } catch (error) {
     setTaskLastError({
       taskNodeId,
       message: context.t('messages.agentLaunchFailed', { message: toErrorMessage(error) }),
       setNodes: context.setNodes,
+      flush: true,
     })
-    context.onRequestPersistFlush?.()
   }
 }

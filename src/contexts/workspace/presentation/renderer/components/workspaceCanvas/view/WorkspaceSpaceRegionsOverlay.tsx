@@ -40,13 +40,17 @@ import {
 } from './WorkspaceSpaceRegionsOverlay.pullRequests'
 import { useWorktreeInfoByPath } from '../../../worktreeInfo/useWorktreeInfo'
 import type { CanvasLod } from './canvasLod'
+import {
+  useCanvasSelection,
+  useCanvasUi,
+  useCanvasUiCommands,
+} from '../../../store/canvasStoreContext'
 
 interface WorkspaceSpaceRegionsOverlayProps {
   workspacePath: string
   spaceVisuals: SpaceVisual[]
   busyOperationBySpaceId?: ReadonlyMap<string, string>
   spaceFramePreview: ReadonlyMap<string, WorkspaceSpaceRect> | null
-  selectedSpaceIds: string[]
   openExplorerSpaceId: string | null
   toggleExplorer: (spaceId: string) => void
   handleSpaceDragHandlePointerDown: (
@@ -54,12 +58,7 @@ interface WorkspaceSpaceRegionsOverlayProps {
     spaceId: string,
     options?: { mode?: 'auto' | 'region' },
   ) => void
-  editingSpaceId: string | null
-  spaceRenameInputRef: React.RefObject<HTMLInputElement | null>
-  spaceRenameDraft: string
-  setSpaceRenameDraft: React.Dispatch<React.SetStateAction<string>>
   commitSpaceRename: (spaceId: string) => void
-  cancelSpaceRename: () => void
   activateSpaceTitle: (spaceId: string, lod: CanvasLod) => void
   onOpenSpaceMenu?: (spaceId: string, anchor: { x: number; y: number }) => void
 }
@@ -69,20 +68,18 @@ export function WorkspaceSpaceRegionsOverlay({
   spaceVisuals,
   busyOperationBySpaceId = new Map(),
   spaceFramePreview,
-  selectedSpaceIds,
   openExplorerSpaceId,
   toggleExplorer,
   handleSpaceDragHandlePointerDown,
-  editingSpaceId,
-  spaceRenameInputRef,
-  spaceRenameDraft,
-  setSpaceRenameDraft,
   commitSpaceRename,
-  cancelSpaceRename,
   activateSpaceTitle,
   onOpenSpaceMenu,
 }: WorkspaceSpaceRegionsOverlayProps): React.JSX.Element {
   const { t } = useTranslation()
+  const ui = useCanvasUiCommands()
+  const editingSpaceId = useCanvasUi(state => state.spaceRename?.spaceId ?? null)
+  const spaceRenameDraft = useCanvasUi(state => state.spaceRename?.draft ?? '')
+  const selectedSpaceIds = useCanvasSelection(selection => selection.spaceIds)
   const reactFlow = useReactFlow()
   const isDragSurfaceSelectionMode = useStore(selectDragSurfaceSelectionMode)
   const selectedSpaceIdSet = React.useMemo(() => new Set(selectedSpaceIds), [selectedSpaceIds])
@@ -364,11 +361,10 @@ export function WorkspaceSpaceRegionsOverlay({
                   : (busyOperationBySpaceId.get(space.id) ?? null)
               }
               editingSpaceId={editingSpaceId}
-              spaceRenameInputRef={spaceRenameInputRef}
               spaceRenameDraft={spaceRenameDraft}
-              setSpaceRenameDraft={setSpaceRenameDraft}
+              onSpaceRenameDraftChange={ui.setSpaceRenameDraft}
               commitSpaceRename={commitSpaceRename}
-              cancelSpaceRename={cancelSpaceRename}
+              cancelSpaceRename={ui.cancelSpaceRename}
               activateSpaceTitle={activateSpaceTitle}
               handleSpaceDragHandlePointerDown={handleSpaceDragHandlePointerDown}
               updateHandleCursor={updateHandleCursor}

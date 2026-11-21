@@ -277,8 +277,11 @@ export function installBrowserOpenCoveApi(): void {
           }
         }
 
+        const onOpen = () => listener({ type: 'resync_required', revision: 0 })
+        source.addEventListener('open', onOpen)
         source.addEventListener('opencove.sync', handler as EventListener)
         return () => {
+          source.removeEventListener('open', onOpen)
           source.removeEventListener('opencove.sync', handler as EventListener)
           source.close()
         }
@@ -427,9 +430,10 @@ export function installBrowserOpenCoveApi(): void {
       install: async () => unsupportedCliStatus(),
       uninstall: async () => unsupportedCliStatus(),
     },
-  } as Window['opencoveApi']
+  } as unknown as Window['opencoveApi']
 
   window.opencoveApi = api
+  window.dispatchEvent(new Event('opencove:api-installed'))
 }
 
 function shouldEnableBrowserTerminalTestApi(): boolean {

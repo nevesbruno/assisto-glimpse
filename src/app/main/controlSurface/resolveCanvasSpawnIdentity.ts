@@ -46,17 +46,18 @@ async function resolveRequestedIdentity(
     }
     const identity = record(input.workerSpawnIdentity)
     if (
-      !['projectId', 'nodeId'].every(
-        key => typeof identity[key] === 'string' && identity[key].length > 0,
-      ) ||
+      typeof identity.projectId !== 'string' ||
+      !identity.projectId ||
+      (identity.nodeId !== null && (typeof identity.nodeId !== 'string' || !identity.nodeId)) ||
       typeof identity.spaceId !== 'string'
     ) {
       throw createAppError('common.invalid_input')
     }
     return {
+      delegated: true,
       projectId: identity.projectId as string,
       spaceId: identity.spaceId as string,
-      nodeId: identity.nodeId as string,
+      nodeId: identity.nodeId as string | null,
     }
   }
   if (
@@ -71,6 +72,7 @@ async function resolveRequestedIdentity(
   if (nodeId && ctx.requestAuth?.kind === 'session-grant') {
     throw createAppError('common.forbidden')
   }
+  // Unscoped non-canvas spawns have no project/Space authority to attach.
   if (!nodeId && !input.workspaceId && !input.spaceId) {
     return undefined
   }
@@ -79,15 +81,15 @@ async function resolveRequestedIdentity(
   const existing = nodeId
     ? workspaces.find(workspace => workspace.nodes.some(node => node.id === nodeId))
     : undefined
-  if (existing) {
-    const space = existing.spaces.find(candidate => candidate.nodeIds.includes(nodeId!))
+  if (existing && nodeId) {
+    const space = existing.spaces.find(candidate => candidate.nodeIds.includes(nodeId))
     if (
       (input.workspaceId && input.workspaceId !== existing.id) ||
       (input.spaceId && input.spaceId !== space?.id)
     ) {
       throw createAppError('common.invalid_input')
     }
-    return { projectId: existing.id, spaceId: space?.id ?? '', nodeId: nodeId! }
+    return { projectId: existing.id, spaceId: space?.id ?? '', nodeId }
   }
   const workspace = workspaces.find(candidate =>
     input.workspaceId
@@ -100,7 +102,6 @@ async function resolveRequestedIdentity(
     if (nodeId || input.spaceId) {
       throw createAppError('common.invalid_input')
     }
-    // Legacy non-canvas PTY calls carry no canvas identity.
     return undefined
   }
   const space =
@@ -110,5 +111,5 @@ async function resolveRequestedIdentity(
   if (input.spaceId && !space) {
     throw createAppError('common.invalid_input')
   }
-  return { projectId: workspace.id, spaceId: space?.id ?? '', nodeId: nodeId ?? randomUUID() }
+  return { projectId: workspace.id, spaceId: space?.id ?? '', nodeId: nodeId ?? null }
 }

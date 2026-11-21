@@ -5,42 +5,60 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useWorkspaceCanvasNodesStore } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useNodesStore'
 import { useWorkspaceCanvasNodeDeleteConfirmation } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useNodeDeleteConfirmation'
 import { subscribeWorkspaceNodesClosed } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/nodeClosureEvents'
+import { CanvasStoreTestProvider } from '../../support/canvasStoreTestHarness'
+import { useAppStore } from '../../../src/app/renderer/shell/store/useAppStore'
+import {
+  readWorkspaceDocument,
+  registerWorkspaceDocumentPersistFlush,
+} from '../../../src/contexts/workspace/presentation/renderer/store/workspaceDocumentCommands'
+import {
+  useCanvasUiCommands,
+  useReadCanvasUi,
+} from '../../../src/contexts/workspace/presentation/renderer/store/canvasStoreContext'
 import { pixelNode } from './workspacePixelLayer.fixtures'
+import {
+  seedWorkspaceCanvasStore,
+  useWorkspaceCanvasStoreNodes,
+} from '../../support/workspaceCanvasStoreHarness'
 
 const mocks = vi.hoisted(() => ({ cleanup: vi.fn() }))
 vi.mock('../../../src/contexts/workspace/presentation/renderer/utils/nodeRuntimeCleanup', () => ({
   cleanupNodeRuntimeArtifacts: mocks.cleanup,
 }))
 
-function renderStore(
-  nodes = [pixelNode()],
-  onNodesChange = vi.fn(),
-  onRequestPersistFlush = vi.fn(),
-) {
+const disposers: Array<() => void> = []
+
+const documentNodes = () => readWorkspaceDocument('workspace-1')?.nodes
+
+function renderStore(nodes = [pixelNode()], onStoreWrite = vi.fn(), onFlush = vi.fn()) {
   const requestNodeDeleteRef = { current: (_nodeIds: string[]) => undefined }
+  seedWorkspaceCanvasStore({ nodes })
+  // The store flushes through the persist flush the shell registered with the document module.
+  disposers.push(registerWorkspaceDocumentPersistFlush(onFlush))
+  // The write of the closure to the app store, which the canvas's node store no longer announces.
+  disposers.push(useAppStore.subscribe(() => onStoreWrite()))
   return renderHook(
-    ({ currentNodes }) => {
+    () => {
       const store = useWorkspaceCanvasNodesStore({
-        nodes: currentNodes,
-        spacesRef: { current: [] },
-        onNodesChange,
-        onSpacesChange: vi.fn(),
-        onRequestPersistFlush,
+        workspaceId: 'workspace-1',
+        workspacePath: '',
+        nodes: useWorkspaceCanvasStoreNodes(),
         standardWindowSizeBucket: 'regular',
         browserDefaultMode: 'iframe',
       })
       const confirmation = useWorkspaceCanvasNodeDeleteConfirmation({
-        nodesRef: store.nodesRef,
-        spacesRef: { current: [] },
         closeNode: store.closeNode,
         requestNodeDeleteRef,
       })
-      return { ...store, confirmation, requestNodeDeleteRef }
+      const readUi = useReadCanvasUi()
+      const ui = useCanvasUiCommands()
+      return { ...store, confirmation, requestNodeDeleteRef, readUi, ui }
     },
     {
-      initialProps: { currentNodes: nodes },
       wrapper: ({ children }): React.JSX.Element => (
-        <ReactFlowProvider>{children}</ReactFlowProvider>
+        <ReactFlowProvider>
+          <CanvasStoreTestProvider workspaceId="workspace-1">{children}</CanvasStoreTestProvider>
+        </ReactFlowProvider>
       ),
     },
   )
@@ -54,6 +72,9 @@ describe('node store successful closure', () => {
   })
   afterEach(() => {
     unsubscribe()
+    while (disposers.length > 0) {
+      disposers.pop()?.()
+    }
     cleanup()
     vi.restoreAllMocks()
   })
@@ -82,7 +103,7 @@ describe('node store successful closure', () => {
     )
     const closed = vi.fn((ids: string[]) => {
       expect(ids).toEqual(['terminal-1'])
-      expect(view.result.current.nodesRef.current).toEqual([])
+      expect(documentNodes()).toEqual([])
       order.push('closed')
     })
     unsubscribe = subscribeWorkspaceNodesClosed(closed)
@@ -137,7 +158,7 @@ describe('node store successful closure', () => {
         release()
         await closing
       })
-      expect(view.result.current.nodesRef.current).toEqual([])
+      expect(documentNodes()).toEqual([])
       expect(closed).toHaveBeenCalledExactlyOnceWith([node.id])
     },
   )
@@ -159,7 +180,7 @@ describe('node store successful closure', () => {
     const closed = vi.fn()
     unsubscribe = subscribeWorkspaceNodesClosed(closed)
     const closing = view.result.current.closeNode('terminal-1')
-    view.rerender({ currentNodes: [] })
+    act(() => seedWorkspaceCanvasStore({ nodes: [] }))
     expect(closed).not.toHaveBeenCalled()
     await act(async () => {
       release()
@@ -175,10 +196,10 @@ describe('node store successful closure', () => {
     unsubscribe = subscribeWorkspaceNodesClosed(closed)
     await act(() => view.result.current.closeNode('missing'))
     act(() => view.result.current.requestNodeDeleteRef.current([note.id]))
-    expect(view.result.current.confirmation.nodeDeleteConfirmation).not.toBeNull()
-    act(() => view.result.current.confirmation.setNodeDeleteConfirmation(null))
+    expect(view.result.current.readUi().nodeDeleteConfirmation).not.toBeNull()
+    act(() => view.result.current.ui.closeDialog('nodeDeleteConfirmation'))
     await act(() => view.result.current.confirmation.confirmNodeDelete())
-    view.rerender({ currentNodes: [] })
+    act(() => seedWorkspaceCanvasStore({ nodes: [] }))
     expect(closed).not.toHaveBeenCalled()
   })
 })

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 import { EventEmitter } from 'node:events'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { connect } from 'node:net'
@@ -80,7 +81,10 @@ it.skipIf(process.platform === 'win32')(
     const metadata: TerminalSessionMetadataEvent[] = []
     registry.onMetadata(event => metadata.push(event))
     const provider = new CodexAgentProviderContribution({
+      artifactRoot: createTestAgentLaunchArtifactRoot(),
       channel: {
+        async start() {},
+        getInstallState: () => 'installed',
         reserveSpawn: async () => ({
           usesHook: true,
           installState: 'installed',
@@ -100,14 +104,14 @@ it.skipIf(process.platform === 'win32')(
       resolveCodexReuseRunningAppServer: readPolicy,
       createHttpServer: http.createHttpServer,
     })
-    const terminal = await gateway.reserveTerminal()
+    const terminal = await gateway.reserveTerminal({ residentContext: 'canvas' })
     terminal.commit('terminal-codex')
     try {
       const isolated = await http.post(terminal.token, 'isolated')
       expect(isolated.status).toBe(200)
       expect(isolated.args).toContain('--config')
       expect(plan).toHaveBeenLastCalledWith(
-        expect.objectContaining({ codexReuseRunningAppServer: false }),
+        expect.objectContaining({ codexReuseRunningAppServer: false, residentContext: 'canvas' }),
       )
       expect(connect).not.toHaveBeenCalled()
       expect(

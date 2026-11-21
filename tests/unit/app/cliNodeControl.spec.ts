@@ -44,6 +44,26 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it.each(['task-1', undefined])('maps --task only when explicit: %s', async taskNodeId => {
+  const requests = stubInvokeRequests()
+  expect(
+    await invokeNodeArgs([
+      'node',
+      'create',
+      'agent',
+      '--space',
+      'space-1',
+      ...(taskNodeId === undefined ? [] : ['--task', taskNodeId]),
+    ]),
+  ).toBe(true)
+  const data = requests.find(request => request.id === 'node.create')?.payload.data
+  if (taskNodeId === undefined) {
+    expect(data).not.toHaveProperty('taskNodeId')
+  } else {
+    expect(data).toMatchObject({ taskNodeId })
+  }
+})
+
 describe('CLI node control commands', () => {
   it('omits website profile fields unless the update command explicitly provides them', async () => {
     const requests = stubInvokeRequests()
@@ -98,4 +118,88 @@ describe('CLI node control commands', () => {
       },
     })
   })
+})
+
+it.each(['agent', 'terminal'])(
+  'renames a %s without sending data or launch options',
+  async kind => {
+    const requests = stubInvokeRequests()
+    expect(
+      await invokeNodeArgs(['node', 'update', kind, '--node', 'node-1', '--title', 'Lead']),
+    ).toBe(true)
+    expect(requests[0]).toMatchObject({
+      id: 'node.update',
+      payload: { kind, nodeId: 'node-1', title: 'Lead' },
+    })
+    expect(requests[0].payload).not.toHaveProperty('data')
+  },
+)
+
+it.each([
+  ['agent', '--prompt', 'unexpected'],
+  ['agent', '--full-access', 'true'],
+  ['terminal', '--command', 'pwd'],
+  ['agent', '--title', '   '],
+])(
+  'rejects unsupported or blank rename options before connecting: %j',
+  async (kind, option, value) => {
+    const requests = stubInvokeRequests()
+    expect(await invokeNodeArgs(['node', 'update', kind, '--node', 'node-1', option, value])).toBe(
+      false,
+    )
+    expect(requests).toHaveLength(0)
+  },
+)
+
+it('keeps a literal provider-prefixed name when renaming through the CLI', async () => {
+  const requests = stubInvokeRequests()
+  expect(
+    await invokeNodeArgs([
+      'node',
+      'update',
+      'agent',
+      '--node',
+      'node-1',
+      '--title',
+      'codex · Lead',
+    ]),
+  ).toBe(true)
+  expect(requests[0]).toMatchObject({ id: 'node.update', payload: { title: 'codex · Lead' } })
+})
+
+it.each([true, false, undefined])('maps agent Full Access=%s only when explicit', async value => {
+  const requests = stubInvokeRequests()
+  expect(
+    await invokeNodeArgs([
+      'node',
+      'create',
+      'agent',
+      '--space',
+      'space-1',
+      ...(value === undefined ? [] : ['--full-access', String(value)]),
+    ]),
+  ).toBe(true)
+  const data = requests.find(request => request.id === 'node.create')?.payload.data
+  if (value === undefined) {
+    expect(data).not.toHaveProperty('agentFullAccess')
+  } else {
+    expect(data).toMatchObject({ agentFullAccess: value })
+  }
+})
+it.each(['yes', '1', 'TRUE', 'null'])('rejects --full-access %s as a usage error', async value => {
+  const requests = stubInvokeRequests()
+  const code = await run(
+    ['node', 'create', 'agent', '--space', 'space-1', '--full-access', value],
+    {
+      stdout: { write() {} },
+      stderr: { write() {} },
+      env: {},
+      fetch,
+      now: Date.now,
+      readTextFile: async () => '',
+      readStdinText: async () => '',
+    },
+  )
+  expect(code).toBe(2)
+  expect(requests).toHaveLength(0)
 })

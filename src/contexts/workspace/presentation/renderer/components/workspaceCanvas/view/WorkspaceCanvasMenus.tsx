@@ -1,16 +1,33 @@
 import React from 'react'
 import type { WorkspaceCanvasViewProps } from '../WorkspaceCanvasView.types'
+import type { CanvasInteractionState } from '../../../store/canvasStore.interaction'
+import {
+  useCanvasInteraction,
+  useCanvasInteractionCommands,
+  useCanvasUi,
+  useCanvasUiCommands,
+} from '../../../store/canvasStoreContext'
+import { useWorkspaceCanvasMenuDismissals } from './useCanvasMenuDismissals'
+import { useSpacePathOpeners } from './useSpacePathOpeners'
+import {
+  CLOSED_CANVAS_ARRANGE_FLAGS,
+  resolveCanvasArrangeFlags,
+  useWorkspaceCanvasSpaceMenuState,
+} from '../hooks/useCanvasSpaceMenuState'
 import { WorkspaceContextMenu } from './WorkspaceContextMenu'
 import { WorkspaceSpaceActionMenu } from './WorkspaceSpaceActionMenu'
 
+const selectMagneticSnappingEnabled = (interaction: CanvasInteractionState) =>
+  interaction.magneticSnappingEnabled
+
 export function WorkspaceCanvasMenus({
-  contextMenu,
-  closeContextMenu,
+  nodes,
+  workspacePath,
   createTerminalNode,
   createNoteNodeFromContextMenu,
   createWebsiteNodeFromContextMenu,
   createPluginNodeFromContextMenu,
-  openTaskCreator,
+  createTaskFromContextMenu,
   openRoleCreator,
   openAgentLauncher,
   openAgentLauncherForProvider,
@@ -22,11 +39,6 @@ export function WorkspaceCanvasMenus({
   insertQuickPhrase,
   openQuickMenuSettings,
   spaces,
-  magneticSnappingEnabled,
-  onToggleMagneticSnapping,
-  canArrangeAll,
-  canArrangeCanvas,
-  canArrangeActiveSpace,
   arrangeAll,
   arrangeCanvas,
   arrangeInSpace,
@@ -38,11 +50,6 @@ export function WorkspaceCanvasMenus({
   isConvertSelectedNoteToTaskDisabled,
   convertSelectedNoteToTask,
   setSelectedNodeLabelColorOverride,
-  spaceActionMenu,
-  availablePathOpeners,
-  activeMenuSpace,
-  canCreateWorktreeForActiveMenuSpace,
-  closeSpaceActionMenu,
   setSpaceLabelColor,
   openSpaceCreateWorktree,
   openSpaceArchive,
@@ -52,13 +59,13 @@ export function WorkspaceCanvasMenus({
   onChangePreserveWindowSizesOnArrange,
 }: Pick<
   WorkspaceCanvasViewProps,
-  | 'contextMenu'
-  | 'closeContextMenu'
+  | 'nodes'
+  | 'workspacePath'
   | 'createTerminalNode'
   | 'createNoteNodeFromContextMenu'
   | 'createWebsiteNodeFromContextMenu'
   | 'createPluginNodeFromContextMenu'
-  | 'openTaskCreator'
+  | 'createTaskFromContextMenu'
   | 'openRoleCreator'
   | 'openAgentLauncher'
   | 'openAgentLauncherForProvider'
@@ -70,8 +77,6 @@ export function WorkspaceCanvasMenus({
   | 'insertQuickPhrase'
   | 'openQuickMenuSettings'
   | 'spaces'
-  | 'magneticSnappingEnabled'
-  | 'onToggleMagneticSnapping'
   | 'arrangeAll'
   | 'arrangeCanvas'
   | 'arrangeInSpace'
@@ -83,9 +88,6 @@ export function WorkspaceCanvasMenus({
   | 'isConvertSelectedNoteToTaskDisabled'
   | 'convertSelectedNoteToTask'
   | 'setSelectedNodeLabelColorOverride'
-  | 'spaceActionMenu'
-  | 'availablePathOpeners'
-  | 'closeSpaceActionMenu'
   | 'setSpaceLabelColor'
   | 'openSpaceCreateWorktree'
   | 'openSpaceArchive'
@@ -93,13 +95,27 @@ export function WorkspaceCanvasMenus({
   | 'openSpacePath'
   | 'agentSettings'
   | 'onChangePreserveWindowSizesOnArrange'
-> & {
-  activeMenuSpace: WorkspaceCanvasViewProps['spaces'][number] | null
-  canCreateWorktreeForActiveMenuSpace: boolean
-  canArrangeAll: boolean
-  canArrangeCanvas: boolean
-  canArrangeActiveSpace: boolean
-}): React.JSX.Element {
+>): React.JSX.Element {
+  // The menus' leaf owns the subscriptions: opening a menu re-renders this component only.
+  const contextMenu = useCanvasUi(state => state.contextMenu)
+  const spaceActionMenu = useCanvasUi(state => state.spaceActionMenu)
+  const ui = useCanvasUiCommands()
+  const magneticSnappingEnabled = useCanvasInteraction(selectMagneticSnappingEnabled)
+  const { toggleMagneticSnapping } = useCanvasInteractionCommands()
+  const availablePathOpeners = useSpacePathOpeners(spaceActionMenu)
+  useWorkspaceCanvasMenuDismissals()
+
+  const { activeMenuSpace, canCreateWorktreeForActiveMenuSpace } = useWorkspaceCanvasSpaceMenuState(
+    { spaceActionMenu, spaces, workspacePath },
+  )
+  const isAnyMenuOpen = contextMenu !== null || spaceActionMenu !== null
+  const { canArrangeAll, canArrangeCanvas, canArrangeActiveSpace } = React.useMemo(
+    () =>
+      isAnyMenuOpen
+        ? resolveCanvasArrangeFlags(nodes, spaces, activeMenuSpace)
+        : CLOSED_CANVAS_ARRANGE_FLAGS,
+    [activeMenuSpace, isAnyMenuOpen, nodes, spaces],
+  )
   const arrangePreserveWindowSizes = agentSettings.preserveWindowSizesOnArrange
   const arrangeStyle = React.useMemo(
     () => ({ alignCanonicalSizes: !arrangePreserveWindowSizes }),
@@ -110,13 +126,13 @@ export function WorkspaceCanvasMenus({
     <>
       <WorkspaceContextMenu
         contextMenu={contextMenu}
-        closeContextMenu={closeContextMenu}
+        closeContextMenu={ui.closeMenus}
         createTerminalNode={createTerminalNode}
         createNoteNodeFromContextMenu={createNoteNodeFromContextMenu}
         createWebsiteNodeFromContextMenu={createWebsiteNodeFromContextMenu}
         createPluginNodeFromContextMenu={createPluginNodeFromContextMenu}
         websiteWindowsEnabled={agentSettings.websiteWindowPolicy.enabled}
-        openTaskCreator={openTaskCreator}
+        createTaskFromContextMenu={createTaskFromContextMenu}
         openRoleCreator={openRoleCreator}
         openAgentLauncher={openAgentLauncher}
         agentProviderOrder={agentSettings.agentProviderOrder}
@@ -134,7 +150,7 @@ export function WorkspaceCanvasMenus({
         keybindings={agentSettings.keybindings}
         spaces={spaces}
         magneticSnappingEnabled={magneticSnappingEnabled}
-        onToggleMagneticSnapping={onToggleMagneticSnapping}
+        onToggleMagneticSnapping={toggleMagneticSnapping}
         arrangePreserveWindowSizes={arrangePreserveWindowSizes}
         onChangeArrangePreserveWindowSizes={onChangePreserveWindowSizesOnArrange}
         canArrangeAll={canArrangeAll}
@@ -158,7 +174,7 @@ export function WorkspaceCanvasMenus({
         canCreateWorktree={canCreateWorktreeForActiveMenuSpace}
         canArchive={activeMenuSpace !== null}
         currentLabelColor={activeMenuSpace?.labelColor ?? null}
-        closeMenu={closeSpaceActionMenu}
+        closeMenu={ui.closeSpaceActionMenu}
         setSpaceLabelColor={setSpaceLabelColor}
         preserveWindowSizes={arrangePreserveWindowSizes}
         onChangePreserveWindowSizes={onChangePreserveWindowSizesOnArrange}

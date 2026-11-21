@@ -1,4 +1,77 @@
 export const zhCNMessages = {
+  taskAgentAccess: '只能为你当前的 Agent 或由你启动的 Agent 领取、释放任务。',
+  taskAgentAccessHint: '请选择你当前的 Agent 或由你启动的 Agent，或请用户分配任务。',
+  taskAlreadyClaimed: '此任务已由 {{holder}} 领取。',
+  taskAlreadyClaimedHint: '请选择其他任务，或请当前领取者或用户释放此任务。',
+  initialPromptCommandToken: '启动提示 {{token}} 只有一个词，可能会被智能体识别为命令。',
+  initialPromptCommandTokenHint:
+    '请用一句话描述任务目标，例如“解释如何在这个项目中使用 {{token}}”。已保留你的文本。',
+  initialPromptCommandPrefix: '这段提示以智能体控制指令 {{token}} 开头。',
+  initialPromptCommandPrefixHint: '请用句子询问该指令，例如“解释 {{token}} 的作用”。',
+  initialPromptExitWord: '提示 {{token}} 是智能体的退出指令。',
+  initialPromptExitWordHint: '请描述你想了解的退出行为，例如“解释什么时候应该使用 {{token}}”。',
+  initialPromptFileReference: '这段提示包含文件引用 {{token}}，但尚未确认是否有权读取该文件。',
+  initialPromptFileReferenceHint:
+    '请先用 opencove fs read --uri file:///workspace/README.md --fields content 读取已批准的文件（将 URI 替换为该文件的绝对 URI），再把 content 中的内容粘贴到提示中，例如“解释以下文件内容：……”。',
+  initialPromptSkillReference: '这段 Codex 提示包含技能引用 {{token}}。',
+  initialPromptSkillReferenceHint: '请直接粘贴希望遵循的步骤，例如“请按以下步骤审查这个项目：……”。',
+  initialPromptLeadingDash: '启动提示以 {{token}} 开头，可能会被这个智能体识别为命令行选项。',
+  initialPromptLeadingDashHint: '请用句子询问该选项，例如“解释 {{token}} 的作用”。已保留你的文本。',
+  initialPromptNul: '这段提示包含空字符 {{token}}。',
+  initialPromptNulHint: '请删除空字符，保留其余请求内容，例如“解释这个项目”。已保留你的文本。',
+  initialPromptContainsNul: '提示中包含空字符。请删除空字符后重试。已保留你的文本。',
+  invalidSpawnArguments: '启动设置中包含空字符。请删除空字符后重试。',
+  wslArgumentsUnsupported:
+    'WSL 无法使用这些启动设置。请选择名称不含空格或引号的发行版，并使用不含引号的路径。',
+  invalidSpawnEnvironment: '启动环境中包含空字符。请删除环境变量名称和值中的空字符后重试。',
+  initialPromptUnsupported:
+    '这段提示可能会被识别为智能体命令，无法用于启动对话。请换一种方式描述任务，或打开空白会话后手动输入命令。已保留你的文本。',
+  agentSpawnDepth: '此运行时将超出 Agent 创建链的最大深度 3。',
+  agentSpawnDepthHint: '请让用户启动一个新的 Agent。',
+  agentSpawnConcurrency: '此 Agent 创建树中，由 Agent 创建且正在运行或启动的运行时已达到上限 6。',
+  agentSpawnConcurrencyHint:
+    '请等待此树中的一个会话退出，或停止其中一个 Agent 或终端。完成一轮任务不会释放名额。也可以让用户启动一个新的 Agent。',
+  agentSpawnRoute: 'Agent 会话不能通过此操作启动运行时。',
+  agentSpawnRouteHint: '请使用 "opencove node create agent" 或 "opencove node create terminal"。',
+  agentSpawnCaller: '此会话没有画布节点，无法创建 Agent 或终端运行时。',
+  agentSpawnCallerHint:
+    '请让用户在画布上启动一个 Agent，再从该 Agent 使用 "opencove node create"。',
+  agentSpawnBinding: '此会话已不是其画布节点的当前运行时。',
+  agentSpawnBindingHint: '请使用该节点的当前会话，或让用户启动一个新的 Agent。',
+  agentSpawnRemote: '暂不支持 Agent 跨 Worker 创建运行时。',
+  agentSpawnRemoteHint: '请让用户在目标 Worker 上启动 Agent。',
+  agentSpawnAccounting: 'OpenCove 无法确认此 Agent 创建树中的运行时状态。',
+  agentSpawnAccountingHint: '请让用户检查相关运行时，并在画布上启动一个新的 Agent 以继续委派。',
+  agentSpawnCapability: '此 Worker 不支持受限的 Agent 创建功能。',
+  agentSpawnCapabilityHint: '请更新 Worker，再从 Agent 会话创建运行时。',
+  managedAgentClearSaveUnconfirmed:
+    '尚未确认最新 Claude 对话是否已保存。请先重试恢复，再关闭此智能体。',
+  managedAgentWorkerUpgradeRequired:
+    '请升级并重启当前连接的 Worker 后再操作 Claude 智能体。仅更新此窗口无法解决此问题。',
+  managedAgentClientUpgradeRequired: '请更新 OpenCove 并重新加载此窗口，然后再操作此智能体。',
+  managedAgentWritesDisabled:
+    'Claude 智能体重启及新恢复目标的保存已暂停。已保存的目标仍受保护，请联系 Worker 管理员恢复更新。',
+  workerConnectionRetry: '重试连接',
+  // @compat managed-claude-worker-support
+  managedAgentLegacyWorker:
+    '当前 Worker 使用旧版 Claude 会话，工作区仍可正常使用。请升级并重启 Worker，以启用托管会话恢复。',
+  managedAgentChanged: '此智能体已发生变更，请刷新工作区后重试。',
+  managedAgentDirectoryConflict: '此 Agent 属于其他目录。请保留当前目录，或启动新的 Agent。',
+  managedAgentLaunchUncertain: '暂时无法确认 Agent 是否已启动。请先检查会话状态，再重试。',
+  managedAgentResumeUnavailable: '此会话暂时无法恢复。请选择已保存的会话，或开始新会话。',
+  nodeNoParent: '此节点由用户启动，没有父级 Agent。',
+  nodeNoParentHint: '运行“opencove agent list”选择接收方，或直接向用户汇报。',
+  nodeParentDeleted: '创建此节点的 Agent 已被删除。',
+  nodeParentDeletedHint: '运行“opencove agent list”选择其他接收方，或将结果写入共享便签。',
+  nodeParentIdentityMismatch: '当前终端的身份与其 OpenCove 会话不一致。',
+  nodeParentIdentityMismatchHint:
+    '请新建一个 OpenCove 终端，运行“opencove whoami”确认身份后再选择接收方。',
+  nodeParentIdentityRequired: '@parent 只能在 OpenCove 终端内使用。',
+  nodeParentIdentityRequiredHint:
+    '请在 OpenCove 中运行此命令，或运行“opencove node list”获取节点 ID，用它替换 @parent。',
+  nodeParentUnavailable: '无法确定父节点。',
+  nodeParentUnavailableHint:
+    '运行“opencove node get --node @self”查看创建关系，再运行“opencove node list”选择接收方。',
   agentLaunchFailed: 'Agent 启动失败：{{message}}',
   agentResumeFailed: 'Agent 继续失败：{{message}}',
   terminalAgentReexecFailed: '无法在此终端中重新启动 Agent：{{message}}',
@@ -10,7 +83,6 @@ export const zhCNMessages = {
   taskTitleGenerateFailed: '自动生成失败：{{message}}',
   taskCreateFailed: '创建任务失败：{{message}}',
   taskUpdateFailed: '更新任务失败：{{message}}',
-  taskNodePlacementFailed: '任务节点无法放置，请先整理画布后重试。',
   taskTitleOrAutoGenerateRequired: '请输入任务名称或开启自动生成。',
   taskTitleRequired: '请输入任务名称。',
   taskPromptTemplateNameRequired: '模板名称不能为空。',

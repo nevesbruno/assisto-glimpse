@@ -1,3 +1,4 @@
+import { tracksClaudeConversations } from '../../../../shared/contracts/agentProviderDescriptors'
 import type { SessionFileAccess } from './ClaudeTranscriptAccess'
 import { ClaudeTranscriptCheckpoint } from './ClaudeTranscriptCheckpoint'
 import type { ClaudeTranscriptObservation } from '../../../../shared/runtime/agentHook/claudeTranscript'
@@ -6,16 +7,20 @@ import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
 import { StringDecoder } from 'node:string_decoder'
 import type { AgentProviderId, TerminalSessionState } from '@shared/contracts/dto'
-import { detectTurnStateFromSessionLine } from './SessionTurnStateDetector'
+import {
+  SessionTurnStateProjection,
+  type SessionFileStateOptions,
+} from './SessionTurnStateProjection'
 
 interface SessionTurnStateWatcherOptions {
   provider: AgentProviderId
   sessionId: string
   filePath: string
+  initialRead?: 'baseline' | 'live'
   onState: (
     sessionId: string,
     state: TerminalSessionState,
-    options?: { hookEventName?: string },
+    options?: SessionFileStateOptions,
   ) => void
   onClaudeTranscript?: (
     record: Omit<ClaudeTranscriptObservation, 'sessionId' | 'providerSessionId' | 'generation'>,
@@ -141,13 +146,8 @@ function scanJsonRecordCandidates(text: string): {
 
 export class SessionTurnStateWatcher {
   private readonly provider: AgentProviderId
-  private readonly sessionId: string
   private readonly filePath: string
-  private readonly onState: (
-    sessionId: string,
-    state: TerminalSessionState,
-    options?: { hookEventName?: string },
-  ) => void
+  private readonly stateProjection: SessionTurnStateProjection
   private readonly onError?: (error: unknown) => void
 
   private checkpoint = new ClaudeTranscriptCheckpoint()
@@ -171,13 +171,14 @@ export class SessionTurnStateWatcher {
   private disposed = false
   private processing = false
   private hasPendingRead = false
-  private lastState: TerminalSessionState | null = null
 
   public constructor(options: SessionTurnStateWatcherOptions) {
     this.provider = options.provider
-    this.sessionId = options.sessionId
     this.filePath = options.filePath
-    this.onState = options.onState
+    this.readingBaseline = options.initialRead !== 'live'
+    this.stateProjection = new SessionTurnStateProjection(options.provider, (state, metadata) =>
+      options.onState(options.sessionId, state, metadata),
+    )
     this.fileAccess = options.fileAccess
     this.emitCheckpoint = options.checkpoint === true
     this.shouldPoll = options.shouldPoll
@@ -233,6 +234,8 @@ export class SessionTurnStateWatcher {
     }
 
     this.disposed = true
+    this.checkpoint.dispose()
+    this.stateProjection.reset()
     if (this.poll) {
       clearInterval(this.poll)
     }
@@ -255,7 +258,7 @@ export class SessionTurnStateWatcher {
     // Renderer may optimistically broadcast `working` on explicit submit before the
     // durable session file appends the next turn's final state. Reset the watcher-side
     // state so a subsequent durable `standby` record is not suppressed as a duplicate.
-    this.lastState = 'working'
+    this.stateProjection.noteInteraction()
   }
 
   private scheduleRead(): void {
@@ -277,7 +280,6 @@ export class SessionTurnStateWatcher {
       do {
         this.hasPendingRead = false
         try {
-          // eslint-disable-next-line no-await-in-loop -- the owner must serialize filesystem reads
           await this.readFileDelta()
         } catch (error) {
           if (!this.disposed && !isFileMissingError(error)) {
@@ -316,9 +318,11 @@ export class SessionTurnStateWatcher {
       if (replaced || rewritten || stats.size < this.offset) {
         this.offset = 0
         this.readingBaseline = true
+        this.stateProjection.reset()
         this.remainder = ''
         this.recordPosition = 0
         this.fileEpoch++
+        this.checkpoint.dispose()
         this.checkpoint = new ClaudeTranscriptCheckpoint()
         this.onClaudeTranscript?.({
           fileIdentity: `${identity}:${this.fileEpoch}`,
@@ -351,7 +355,6 @@ export class SessionTurnStateWatcher {
       while (position < end && !this.disposed) {
         const bytesToRead = Math.min(READ_CHUNK_BYTES, end - position)
         const buffer = Buffer.allocUnsafe(bytesToRead)
-        // eslint-disable-next-line no-await-in-loop
         const { bytesRead } = await handle.read(buffer, 0, bytesToRead, position)
         if (bytesRead <= 0) {
           break
@@ -371,7 +374,7 @@ export class SessionTurnStateWatcher {
 
       this.offset = position
       this.flushRemainderIfComplete()
-      const complete = !this.emitCheckpoint || (await handle.stat()).size === position
+      const complete = (await handle.stat()).size === position
       if (!complete) {
         this.hasPendingRead = true
       }
@@ -383,7 +386,11 @@ export class SessionTurnStateWatcher {
           record: this.checkpoint.read(this.remainder.length === 0),
         })
       }
-      this.partialBaseline = this.readingBaseline && this.remainder.length > 0
+      this.partialBaseline =
+        (this.readingBaseline || this.partialBaseline) && this.remainder.length > 0
+      if (complete && this.remainder.length === 0 && !this.disposed) {
+        this.stateProjection.flushBaseline()
+      }
       this.readingBaseline = false
     } finally {
       await handle.close()
@@ -429,11 +436,16 @@ export class SessionTurnStateWatcher {
   }
 
   private consumeLine(line: string): void {
+    if (this.disposed) {
+      return
+    }
     const baseline = this.readingBaseline || this.partialBaseline
     this.partialBaseline = false
-    if (this.provider === 'claude-code') {
-      const record = parseClaudeTranscript(line)
-      this.checkpoint.observe(record)
+    const record = tracksClaudeConversations(this.provider)
+      ? parseClaudeTranscript(line)
+      : undefined
+    if (tracksClaudeConversations(this.provider)) {
+      this.checkpoint.observe(record, line)
       this.onClaudeTranscript?.({
         fileIdentity: `${this.fileIdentity}:${this.fileEpoch}`,
         position: ++this.recordPosition,
@@ -442,28 +454,8 @@ export class SessionTurnStateWatcher {
         record,
       })
     }
-    const state = detectTurnStateFromSessionLine(this.provider, line)
-    let hookEventName: string | undefined
-    if (!this.readingBaseline && this.provider === 'codex') {
-      try {
-        const record = JSON.parse(line)
-        const name = record?.type === 'event_msg' ? record?.payload?.type : undefined
-        if (name === 'task_started' || name === 'task_complete' || name === 'turn_aborted') {
-          hookEventName = name
-        }
-      } catch {
-        /* The state detector rejects malformed records. */
-      }
-    }
-    if (!state || (state === this.lastState && !hookEventName)) {
-      return
-    }
-
-    this.lastState = state
-    if (hookEventName) {
-      this.onState(this.sessionId, state, { hookEventName })
-    } else {
-      this.onState(this.sessionId, state)
+    if (!this.disposed) {
+      this.stateProjection.observe(line, baseline, record)
     }
   }
 }

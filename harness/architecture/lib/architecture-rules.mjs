@@ -1,4 +1,13 @@
-import { existsSync } from 'node:fs'
+import { assertArchitectureChecksConfig } from './architecture-config-validation.mjs'
+import { sqliteTransactionViolations } from './sqlite-transaction-rules.mjs'
+import { rendererBridgeViolations } from './renderer-bridge-rules.mjs'
+import {
+  assertContextConfig,
+  classifyEdgeContexts,
+  findContextViolations,
+} from './context-rules.mjs'
+import { assertVariantConfig, findVariantViolations, loadVariantSets } from './variant-rules.mjs'
+import { statSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, extname, join, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,7 +25,7 @@ function normalizePath(pathname) {
   return pathname.replaceAll('\\', '/')
 }
 
-function toRelativeProjectPath(root, pathname) {
+export function toRelativeProjectPath(root, pathname) {
   return normalizePath(relative(root, pathname))
 }
 
@@ -50,7 +59,7 @@ function matchesAnyPattern(pathname, patterns = []) {
   return patterns.some(pattern => matchesPattern(pathname, pattern))
 }
 
-async function collectSourceFiles(root, config) {
+export async function collectSourceFiles(root, config) {
   const sourceRoot = resolve(root, config.sourceRoot ?? 'src')
   const includeExtensions = new Set(config.includeExtensions ?? RUNTIME_EXTENSIONS)
   const exclude = config.exclude ?? []
@@ -78,16 +87,24 @@ async function collectSourceFiles(root, config) {
   return files.sort()
 }
 
+function isFile(candidate) {
+  try {
+    return statSync(candidate).isFile()
+  } catch {
+    return false
+  }
+}
+
 function resolveWithCandidates(pathBase) {
   const candidates = [
     pathBase,
     ...RUNTIME_EXTENSIONS.map(extension => `${pathBase}${extension}`),
     ...RUNTIME_EXTENSIONS.map(extension => join(pathBase, `index${extension}`)),
   ]
-  return candidates.find(candidate => existsSync(candidate)) ?? null
+  return candidates.find(isFile) ?? null
 }
 
-function resolveInternalSpecifier(root, fromFile, specifier, config) {
+export function resolveInternalSpecifier(root, fromFile, specifier, config) {
   if (specifier.startsWith('.')) {
     return resolveWithCandidates(resolve(dirname(fromFile), specifier))
   }
@@ -102,7 +119,7 @@ function resolveInternalSpecifier(root, fromFile, specifier, config) {
   return null
 }
 
-function classifyLayer(relativePath, config) {
+export function classifyLayer(relativePath, config) {
   for (const layer of config.layers ?? []) {
     if (matchesAnyPattern(relativePath, layer.patterns)) {
       return layer.name
@@ -267,7 +284,11 @@ function findTextViolations(sourceByFile, relativeByAbsolute, config) {
 }
 
 export async function loadArchitectureConfig(configPath = defaultArchitectureRulesPath) {
-  return JSON.parse(await readFile(configPath, 'utf8'))
+  const config = JSON.parse(await readFile(configPath, 'utf8'))
+  assertArchitectureChecksConfig(config)
+  assertContextConfig(config)
+  assertVariantConfig(config)
+  return config
 }
 
 export async function runArchitectureAudit(options = {}) {
@@ -278,6 +299,7 @@ export async function runArchitectureAudit(options = {}) {
   const sourceByFile = new Map()
   const edgesByFile = new Map()
   const allowedLayers = buildAllowedLayerMap(config)
+  const variants = await loadVariantSets({ root, config })
   const violations = []
 
   const fileAnalyses = await Promise.all(
@@ -295,9 +317,18 @@ export async function runArchitectureAudit(options = {}) {
           toRelativePath,
           fromLayer,
           toLayer: toRelativePath ? classifyLayer(toRelativePath, config) : null,
+          ...classifyEdgeContexts(relativePath, toRelativePath, config.contexts),
         }
       })
-      const fileViolations = []
+      const fileViolations = rendererBridgeViolations(
+        relativePath,
+        source,
+        config.checks?.rendererBridge,
+      )
+
+      fileViolations.push(
+        ...sqliteTransactionViolations(relativePath, source, config.checks?.sqliteTransactions),
+      )
 
       for (const rule of config.checks?.forbiddenImportSpecifiers ?? []) {
         if (
@@ -357,6 +388,35 @@ export async function runArchitectureAudit(options = {}) {
           }
         }
       }
+
+      fileViolations.push(
+        ...findContextViolations({
+          relativePath,
+          filePath,
+          source,
+          edges,
+          config,
+          resolveTarget: specifier => {
+            const target = resolveInternalSpecifier(root, filePath, specifier, config)
+            return target ? toRelativeProjectPath(root, target) : null
+          },
+        }),
+      )
+
+      fileViolations.push(
+        ...findVariantViolations({
+          relativePath,
+          filePath,
+          source,
+          config,
+          variants,
+          matches: matchesAnyPattern,
+          resolveTarget: specifier => {
+            const target = resolveInternalSpecifier(root, filePath, specifier, config)
+            return target ? toRelativeProjectPath(root, target) : null
+          },
+        }),
+      )
 
       return {
         filePath,

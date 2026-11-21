@@ -1,11 +1,17 @@
-import { useRef, useState } from 'react'
-import { act, fireEvent, renderHook } from '@testing-library/react'
-import { ReactFlowProvider, useReactFlow, type Node } from '@xyflow/react'
+import type * as React from 'react'
+import { act, fireEvent } from '@testing-library/react'
+import { useReactFlow, type Node } from '@xyflow/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useWorkspaceCanvasSpaceDrag } from '@contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useSpaceDrag'
+import { useReadCanvasInteraction } from '@contexts/workspace/presentation/renderer/store/canvasStoreContext'
 import { useCanvasCollapseStore } from '@contexts/workspace/presentation/renderer/store/useCanvasCollapseStore'
 import type { TerminalNodeData } from '@contexts/workspace/presentation/renderer/types'
 import { createNode, createSpace } from './workspaceNodeProjection.testUtils'
+import {
+  createCanvasDocumentHarness,
+  renderCanvasNodeStore,
+  type CanvasNodeStoreContext,
+} from '../../support/canvasDocumentHarness'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -28,48 +34,27 @@ function renderNestedResize() {
       nodeIds: ['terminal'],
     }),
   ]
-  const persist = vi.fn()
-  const setSnapGuides = vi.fn()
-  const hook = renderHook(
-    () => {
-      const flow = useReactFlow<Node<TerminalNodeData>>()
-      const nodesRef = useRef([node])
-      const spacesRef = useRef(spaces)
-      const selectedNodeIdsRef = useRef<string[]>([])
-      const selectedSpaceIdsRef = useRef<string[]>([])
-      const [, setSpaces] = useState(spaces)
-      const drag = useWorkspaceCanvasSpaceDrag({
-        workspaceId: 'workspace',
-        reactFlow: {
-          ...flow,
-          screenToFlowPosition: point => point,
-          getZoom: () => 1,
-        },
-        nodesRef,
-        spacesRef,
-        selectedNodeIdsRef,
-        selectedSpaceIdsRef,
-        setNodes: update => {
-          nodesRef.current = update(nodesRef.current)
-        },
-        onSpacesChange: next => {
-          spacesRef.current = next
-          setSpaces(next)
-        },
-        setSelectedNodeIds: () => {},
-        setSelectedSpaceIds: () => {},
-        magneticSnappingEnabledRef: { current: false },
-        setSnapGuides,
-        onRequestPersistFlush: persist,
-        setContextMenu: () => {},
-        cancelSpaceRename: () => {},
-        setEmptySelectionPrompt: () => {},
-      })
-      return { ...drag, spaces: spacesRef.current, nodes: nodesRef.current }
-    },
-    { wrapper: ReactFlowProvider },
-  )
-  return { ...hook, persist }
+  const harness = createCanvasDocumentHarness({ workspaceId: 'workspace', nodes: [node], spaces })
+  function useDragUnderTest({ workspaceId, nodeStore }: CanvasNodeStoreContext) {
+    const flow = useReactFlow<Node<TerminalNodeData>>()
+    const drag = useWorkspaceCanvasSpaceDrag({
+      workspaceId,
+      reactFlow: {
+        ...flow,
+        screenToFlowPosition: point => point,
+        getZoom: () => 1,
+      },
+      setNodes: nodeStore.setNodes,
+      updateCanvasDocument: nodeStore.updateCanvasDocument,
+    })
+    return {
+      ...drag,
+      ...harness.readStoreDocument(),
+      readInteraction: useReadCanvasInteraction(),
+    }
+  }
+  const hook = renderCanvasNodeStore(harness, { extend: useDragUnderTest })
+  return { ...hook, persist: harness.flush }
 }
 
 describe('nested compact Space resize lifecycle', () => {
@@ -105,9 +90,9 @@ describe('nested compact Space resize lifecycle', () => {
         fireEvent.pointerMove(window, { pointerId: 7, clientX: end.x, clientY: end.y, buttons: 1 })
         vi.advanceTimersByTime(20)
       })
-      const preview = result.current.spaceFramePreview?.get(spaceId)
+      const preview = result.current.readInteraction().spaceDragFramePreview?.get(spaceId)
       act(() => fireEvent.pointerUp(window, { pointerId: 7, clientX: end.x, clientY: end.y }))
-      expect(result.current.spaceFramePreview).toBeNull()
+      expect(result.current.readInteraction().spaceDragFramePreview).toBeNull()
       expect(result.current.spaces.find(space => space.id === spaceId)?.rect).toEqual(preview)
       return preview
     }

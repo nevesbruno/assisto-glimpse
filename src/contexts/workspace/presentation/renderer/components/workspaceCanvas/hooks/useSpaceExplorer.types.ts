@@ -18,14 +18,8 @@ export type WorkspaceCanvasSpaceExplorerArgs = {
   workspaceId: string
   canvasRef: React.RefObject<HTMLDivElement | null>
   spaces: WorkspaceSpaceState[]
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  nodesRef: React.MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: (
-    updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-    options?: { syncLayout?: boolean },
-  ) => void
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  setNodes: UseWorkspaceCanvasNodesStoreResult['setNodes']
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
   reactFlow: ReactFlowInstance<Node<TerminalNodeData>, Edge>
   nodeDragSession: WorkspaceCanvasNodeDragSession
   finalizeDraggedNodeDrop: (input: {

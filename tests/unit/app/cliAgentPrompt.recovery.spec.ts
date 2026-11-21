@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { runWithTargetFixtures as run } from './cliTargetFixtures.helpers'
 import type { CliIo } from '../../../src/app/cli/core/io'
 import { createAppError } from '../../../src/shared/errors/appError'
+import { completedPromptFixture } from './cliAgentPromptWait.helpers'
 import { agentPromptCommand } from '../../../src/app/cli/commands/agent'
 
 function fixture(tty: boolean, error?: unknown) {
@@ -124,7 +125,6 @@ it.each([false, true])(
         return new Response('{}')
       })
       // These are sequential invocations with independent output/signal owners.
-      // eslint-disable-next-line no-await-in-loop
       expect(await run(args, f.io)).toBe(item.exit)
       expect(f.fetch).toHaveBeenCalledTimes(1)
       expect(f.text()).toContain(item.message)
@@ -179,7 +179,11 @@ it.each([false, true])(
       ['agent.blocked', 'waiting', 'waiting for input'],
       ['agent.busy', 'working', 'still working'],
       ['agent.busy', 'delivery_in_progress', 'Another prompt delivery'],
-      ['agent.state_unknown', 'readiness_unobserved', 'not observed this agent finish a turn'],
+      [
+        'agent.state_unknown',
+        'readiness_unobserved',
+        'cannot confirm that the agent is ready for a prompt',
+      ],
       ['agent.state_unknown', 'observation_degraded', 'cannot reliably observe'],
       ['agent.not_running', 'not_running', 'No running agent'],
       ['agent.not_running', 'caller_revoked', 'lost authorization'],
@@ -218,7 +222,6 @@ it.each([false, true])(
         ...(code === 'agent.blocked' ? { blockedReason: null } : {}),
       }
       const f = fixture(tty, createAppError(code, { details }).toDescriptor())
-      // eslint-disable-next-line no-await-in-loop
       expect(await run(args, f.io)).toBe(code === 'agent.prompt_timeout' ? 124 : 1)
       expect(f.text()).toContain(text)
       if (reason === 'executable_override_unverified') {
@@ -282,7 +285,16 @@ it('every printed command example includes a usable text source and projection o
       .match(/"[^"]*"|'[^']*'|\S+/g)!
       .slice(1)
       .map(word => word.replace(/^['"]|['"]$/g, ''))
-    // eslint-disable-next-line no-await-in-loop
+    if (words.includes('--wait')) {
+      const combined = completedPromptFixture()
+      expect(await run(words, combined.io), command).toBe(0)
+      expect(JSON.parse(combined.out())).toMatchObject({
+        outcome: 'completed',
+        reply: { message: 'Fast reply' },
+      })
+      expect(combined.requests.filter(r => r.id === 'agent.prompt')).toHaveLength(1)
+      continue
+    }
     expect(await run(words, f.io), command).toBe(0)
     expect(f.fetch).toHaveBeenCalledTimes(1)
     if (words.includes('--fields')) {
@@ -307,7 +319,6 @@ it.each([false, true])(
       },
     ]) {
       const f = fixture(tty, createAppError('common.invalid_input', { details }).toDescriptor())
-      // eslint-disable-next-line no-await-in-loop
       expect(await run(args, f.io)).toBe(2)
       expect(f.text()).toContain(
         details
@@ -326,9 +337,11 @@ it.each([401, 403])('authorization refusal %s is explicit and preserves exit 4',
   f.fetch.mockImplementation(async () => new Response('{}', { status }))
   expect(await run(args, f.io)).toBe(4)
   expect(f.error()).toMatchObject({
-    code: 'context.unauthorized',
-    message: 'OpenCove refused authorization for this request.',
-    hint: 'Check the endpoint and credentials before retrying.',
+    code: status === 401 ? 'context.unauthorized' : 'common.forbidden',
+    message:
+      status === 401
+        ? 'The control token is invalid or has been revoked.'
+        : 'This credential does not permit the operation.',
   })
   expect(f.error().details).toBeUndefined()
 })

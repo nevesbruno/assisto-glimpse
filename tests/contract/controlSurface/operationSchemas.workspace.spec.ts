@@ -10,7 +10,7 @@ const documented: Record<string, [string[], string[]]> = {
   'canvas.focus': [['target'], ['target']],
   'node.delete': [['nodeId'], ['nodeId']],
   'node.get': [['nodeId'], ['nodeId']],
-  'node.list': [['space', 'projectId', 'kind'], []],
+  'node.list': [['space', 'projectId', 'kind', 'spawnedByNodeId'], []],
   'node.update': [
     ['kind', 'nodeId', 'title', 'frame', 'data'],
     ['kind', 'nodeId'],
@@ -44,9 +44,15 @@ function exported(id: string): JsonSchema {
 for (const [id, [properties, required]] of Object.entries(documented)) {
   it(`${id} exports documented properties and required fields`, () => {
     const shapes = objectShapes(exported(id))
-    expect(shapes).toHaveLength(id === 'node.update' ? 3 : 1)
-    expect(Object.keys(shapes[0].properties ?? {}).sort()).toEqual([...properties].sort())
-    expect([...(shapes[0].required ?? [])].sort()).toEqual([...required].sort())
+    expect(shapes).toHaveLength(id === 'node.update' ? 5 : 1)
+    if (id === 'node.update') {
+      // Agent and terminal updates rename or move only; they never accept kind data.
+      const titleOnly = shapes.filter(shape => !('data' in (shape.properties ?? {})))
+      expect(titleOnly).toHaveLength(2)
+    }
+    const primary = shapes.find(shape => 'data' in (shape.properties ?? {})) ?? shapes[0]
+    expect(Object.keys(primary.properties ?? {}).sort()).toEqual([...properties].sort())
+    expect([...(primary.required ?? [])].sort()).toEqual([...required].sort())
   })
 }
 it('documents nested focus locators and update frame fields', () => {
@@ -87,6 +93,7 @@ it('does not let a returning legacy hook bypass wire rejection', () => {
     errors: [],
     normalize: wire => wire.id,
     legacyNormalize: () => 'must not admit invalid wire',
+    compat: 'control-surface-legacy-validation',
   })
   registerOperation(surface, operation, {
     handle: () => undefined,

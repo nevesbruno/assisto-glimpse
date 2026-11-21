@@ -7,22 +7,11 @@ import {
   type DetectedCanvasInputMode,
 } from '../../../utils/inputModality'
 import { isEditableDomTarget } from '../domTargets'
-import type {
-  ContextMenuState,
-  EmptySelectionPromptState,
-  SelectionDraftState,
-  TrackpadGestureLockState,
-} from '../types'
+import type { SelectionDraftState, TrackpadGestureLockState } from '../types'
+import { useReadCanvasSelection } from '../../../store/canvasStoreContext'
 
 interface UseWorkspaceCanvasLifecycleParams {
   workspaceId: string
-  persistedMinimapVisible: boolean
-  setIsMinimapVisible: React.Dispatch<React.SetStateAction<boolean>>
-  setSelectedNodeIds: React.Dispatch<React.SetStateAction<string[]>>
-  setSelectedSpaceIds: React.Dispatch<React.SetStateAction<string[]>>
-  setContextMenu: React.Dispatch<React.SetStateAction<ContextMenuState | null>>
-  setEmptySelectionPrompt: React.Dispatch<React.SetStateAction<EmptySelectionPromptState | null>>
-  cancelSpaceRename: () => void
   selectionDraftRef: React.MutableRefObject<SelectionDraftState | null>
   trackpadGestureLockRef: React.MutableRefObject<TrackpadGestureLockState | null>
   setIsCanvasWheelGestureCaptureActive: React.Dispatch<React.SetStateAction<boolean>>
@@ -34,21 +23,13 @@ interface UseWorkspaceCanvasLifecycleParams {
   setDetectedCanvasInputMode: React.Dispatch<React.SetStateAction<DetectedCanvasInputMode>>
   isShiftPressedRef: React.MutableRefObject<boolean>
   setIsShiftPressed: React.Dispatch<React.SetStateAction<boolean>>
-  selectedNodeIdsRef: React.MutableRefObject<string[]>
-  requestNodeDeleteRef: React.MutableRefObject<(nodeIds: string[]) => void>
+  requestNodeDeleteRef: React.MutableRefObject<(nodeIds: readonly string[]) => void>
   focusNodeTargetZoom: number
   isFocusNodeTargetZoomPreviewing: boolean
 }
 
 export function useWorkspaceCanvasLifecycle({
   workspaceId,
-  persistedMinimapVisible,
-  setIsMinimapVisible,
-  setSelectedNodeIds,
-  setSelectedSpaceIds,
-  setContextMenu,
-  setEmptySelectionPrompt,
-  cancelSpaceRename,
   selectionDraftRef,
   trackpadGestureLockRef,
   setIsCanvasWheelGestureCaptureActive,
@@ -60,38 +41,19 @@ export function useWorkspaceCanvasLifecycle({
   setDetectedCanvasInputMode,
   isShiftPressedRef,
   setIsShiftPressed,
-  selectedNodeIdsRef,
   requestNodeDeleteRef,
   focusNodeTargetZoom,
   isFocusNodeTargetZoomPreviewing,
 }: UseWorkspaceCanvasLifecycleParams): void {
+  const readSelection = useReadCanvasSelection()
   const previewSequenceRef = useRef(0)
   const viewportBeforePreviewRef = useRef<Viewport | null>(null)
 
   useEffect(() => {
-    setIsMinimapVisible(persistedMinimapVisible)
-  }, [persistedMinimapVisible, setIsMinimapVisible, workspaceId])
-
-  useEffect(() => {
-    setSelectedNodeIds([])
-    setSelectedSpaceIds([])
-    setContextMenu(null)
-    setEmptySelectionPrompt(null)
-    cancelSpaceRename()
     selectionDraftRef.current = null
     trackpadGestureLockRef.current = null
     setIsCanvasWheelGestureCaptureActive(false)
-  }, [
-    cancelSpaceRename,
-    selectionDraftRef,
-    setIsCanvasWheelGestureCaptureActive,
-    setContextMenu,
-    setEmptySelectionPrompt,
-    setSelectedNodeIds,
-    setSelectedSpaceIds,
-    trackpadGestureLockRef,
-    workspaceId,
-  ])
+  }, [selectionDraftRef, setIsCanvasWheelGestureCaptureActive, trackpadGestureLockRef, workspaceId])
 
   useEffect(() => {
     viewportRef.current = viewport
@@ -142,7 +104,7 @@ export function useWorkspaceCanvasLifecycle({
         !event.altKey &&
         !isEditableDomTarget(event.target)
       ) {
-        const selectedNodeIds = selectedNodeIdsRef.current
+        const selectedNodeIds = readSelection().nodeIds
         if (selectedNodeIds.length > 0) {
           event.preventDefault()
           event.stopPropagation()
@@ -185,7 +147,7 @@ export function useWorkspaceCanvasLifecycle({
         window.removeEventListener('blur', handleBlur)
       }
     }
-  }, [isShiftPressedRef, requestNodeDeleteRef, selectedNodeIdsRef, setIsShiftPressed])
+  }, [isShiftPressedRef, readSelection, requestNodeDeleteRef, setIsShiftPressed])
 
   useEffect(() => {
     if (canvasInputModeSetting === 'auto') {

@@ -1,5 +1,6 @@
+import { ensurePersistedAgentData } from './ensureAgentNodeData'
+import { normalizeManagedClaudeResumeBindingOwnership } from '@shared/sync/managedClaudeResumeProjection'
 import type {
-  AgentNodeData,
   ImageNodeData,
   NoteNodeData,
   PersistedTerminalNode,
@@ -16,7 +17,7 @@ import type {
   TerminalRuntimeKind,
   WebsiteWindowSessionMode,
 } from '@shared/contracts/dto'
-import { CANVAS_IMAGE_MIME_TYPES } from '@shared/contracts/dto'
+import { CANVAS_IMAGE_MIME_TYPES, isAgentProviderId } from '@shared/contracts/dto'
 import { normalizeLabelColor, normalizeNodeLabelColorOverride } from '@shared/types/labelColor'
 import { normalizeProjectIconId } from '@shared/types/projectIcon'
 import { normalizeSpaceBoundary } from '@shared/types/spaceBoundary'
@@ -34,9 +35,7 @@ import { isTerminalAgentBinding } from '../terminalAgentOverlay'
 import { isResumeSessionBindingVerified } from '../agentResumeBinding'
 import {
   normalizeAgentRuntimeStatus,
-  normalizeDirectoryMode,
   normalizeEnvironmentVariables,
-  normalizeLaunchMode,
   normalizeNodeKind,
   normalizeOptionalSortOrder,
   normalizeOptionalString,
@@ -139,39 +138,6 @@ function ensurePersistedWorkspaceSpace(
     labelColor: normalizeLabelColor(record.labelColor),
     nodeIds: normalizeWorkspaceSpaceNodeIds(record.nodeIds),
     rect: normalizeWorkspaceSpaceRect(record.rect),
-  }
-}
-
-function ensurePersistedAgentData(value: unknown): AgentNodeData | null {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const record = value as Record<string, unknown>
-  const provider = normalizeProvider(record.provider)
-  const prompt = typeof record.prompt === 'string' ? record.prompt : ''
-  const executionDirectory = normalizeOptionalString(record.executionDirectory)
-
-  if (!provider || !executionDirectory) {
-    return null
-  }
-
-  const resumeBinding = normalizeResumeSessionBinding(provider, record)
-
-  return {
-    provider,
-    prompt,
-    model: normalizeOptionalString(record.model),
-    effectiveModel: normalizeOptionalString(record.effectiveModel),
-    launchMode: normalizeLaunchMode(record.launchMode),
-    ...resumeBinding,
-    executionDirectory,
-    expectedDirectory: normalizeOptionalString(record.expectedDirectory) ?? executionDirectory,
-    directoryMode: normalizeDirectoryMode(record.directoryMode),
-    customDirectory: normalizeOptionalString(record.customDirectory),
-    shouldCreateDirectory:
-      typeof record.shouldCreateDirectory === 'boolean' ? record.shouldCreateDirectory : false,
-    taskId: normalizeOptionalString(record.taskId),
   }
 }
 
@@ -330,7 +296,12 @@ function ensurePersistedNode(node: unknown): PersistedTerminalNode | null {
 
   const kind = normalizeNodeKind(record.kind)
   const sessionId = normalizeOptionalString(record.sessionId)
-  const agent = ensurePersistedAgentData(record.agent)
+  const agent = ensurePersistedAgentData(
+    record.agent,
+    kind === 'agent' &&
+      normalizeManagedClaudeResumeBindingOwnership(record.managedClaudeResumeBindingOwnership) !==
+        null,
+  )
   const task = ensurePersistedTaskData(record.task)
   const terminalAgentBindingCandidate = isTerminalAgentBinding(record.agent) ? record.agent : null
   const terminalAgentBinding =
@@ -358,6 +329,7 @@ function ensurePersistedNode(node: unknown): PersistedTerminalNode | null {
     ...(sessionId ? { sessionId } : {}),
     title: kind === 'folder' && folder ? resolveFileUriName(folder.uri, title) : title,
     titlePinnedByUser: record.titlePinnedByUser === true,
+    titleIsLiteral: record.titleIsLiteral === true,
     width,
     height,
     kind,
@@ -365,17 +337,18 @@ function ensurePersistedNode(node: unknown): PersistedTerminalNode | null {
     runtimeKind,
     terminalGeometry: normalizeTerminalGeometry(record.terminalGeometry),
     workerBinding: normalizeNodeWorkerBinding(record.workerBinding),
-    terminalProviderHint:
-      record.terminalProviderHint === 'claude-code' ||
-      record.terminalProviderHint === 'codex' ||
-      record.terminalProviderHint === 'opencode' ||
-      record.terminalProviderHint === 'gemini' ||
-      record.terminalProviderHint === 'pi' ||
-      record.terminalProviderHint === 'kimi'
-        ? record.terminalProviderHint
-        : kind === 'terminal'
-          ? (terminalAgentBindingCandidate?.provider ?? null)
-          : null,
+    ...(normalizeManagedClaudeResumeBindingOwnership(record.managedClaudeResumeBindingOwnership)
+      ? {
+          managedClaudeResumeBindingOwnership: normalizeManagedClaudeResumeBindingOwnership(
+            record.managedClaudeResumeBindingOwnership,
+          ),
+        }
+      : {}),
+    terminalProviderHint: isAgentProviderId(record.terminalProviderHint)
+      ? record.terminalProviderHint
+      : kind === 'terminal'
+        ? (terminalAgentBindingCandidate?.provider ?? null)
+        : null,
     labelColorOverride: normalizeNodeLabelColorOverride(record.labelColorOverride),
     sidebarSortOrder:
       kind === 'agent' ? normalizeOptionalSortOrder(record.sidebarSortOrder) : undefined,

@@ -1,9 +1,35 @@
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
 import type { Plugin } from 'vite'
 import { runtimeBuildIdentityPlugin } from './scripts/lib/runtime-build-plugin'
+import {
+  MAIN_ENTRIES,
+  PRELOAD_ENTRIES,
+  RENDERER_HTML_ENTRIES,
+  RENDERER_ROOT,
+} from './scripts/lib/build-entries.mjs'
+
+const resolveEntries = (entries: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(entries).map(([name, path]) => [name, resolve(__dirname, path)]),
+  )
+
+/** Keep installation ahead of shared Desktop/Web UI evaluation without installing in Web. */
+export function desktopStartupChunk(id: string): string | undefined {
+  const path = id.replaceAll('\\', '/')
+  // Vite prepends this import ahead of source imports; it must not pull in the app graph.
+  if (id === '\0vite/preload-helper.js') {
+    return 'modulePreload'
+  }
+  if (path.endsWith('/src/app/renderer/bootstrap/desktopApiInstallation.ts')) {
+    return 'desktopApiInstallation'
+  }
+  if (path.endsWith('/src/app/renderer/bootstrap/installDesktopOpenCoveApi.ts')) {
+    return 'desktopBridge'
+  }
+  return undefined
+}
 
 export function buildOpenCoveContentSecurityPolicy(isDev: boolean): string {
   const scriptSources = isDev ? ["'self'", "'unsafe-eval'"] : ["'self'"]
@@ -78,20 +104,7 @@ export default defineConfig(({ command }) => {
       build: {
         outDir: 'out/main',
         rollupOptions: {
-          input: {
-            index: resolve(__dirname, 'src/app/main/index.ts'),
-            worker: resolve(__dirname, 'src/app/worker/index.ts'),
-            pluginHost: resolve(
-              __dirname,
-              'src/contexts/plugins/infrastructure/pluginHostEntry.ts',
-            ),
-            managedRuntime: resolve(__dirname, 'src/app/managedRuntime/index.ts'),
-            ptyHost: resolve(__dirname, 'src/platform/process/ptyHost/entry.ts'),
-            windowsConsoleObserver: resolve(
-              __dirname,
-              'src/platform/process/ptyHost/windowsConsoleObserverEntry.ts',
-            ),
-          },
+          input: resolveEntries(MAIN_ENTRIES),
         },
       },
     },
@@ -108,24 +121,23 @@ export default defineConfig(({ command }) => {
       build: {
         outDir: 'out/preload',
         rollupOptions: {
-          input: {
-            index: resolve(__dirname, 'src/app/preload/index.ts'),
-          },
+          input: resolveEntries(PRELOAD_ENTRIES),
         },
       },
     },
     renderer: {
-      root: 'src/app/renderer',
+      root: RENDERER_ROOT,
       build: {
         outDir: 'out/renderer',
         rollupOptions: {
-          input: {
-            index: resolve(__dirname, 'src/app/renderer/index.html'),
-            web: resolve(__dirname, 'src/app/renderer/web.html'),
+          input: resolveEntries(RENDERER_HTML_ENTRIES),
+          output: {
+            manualChunks: desktopStartupChunk,
+            onlyExplicitManualChunks: false,
           },
         },
       },
-      plugins: [runtimeIdentityPlugin(), opencoveCspPlugin(), tailwindcss(), react()],
+      plugins: [runtimeIdentityPlugin(), opencoveCspPlugin(), react()],
       resolve: {
         alias: {
           '@app': resolve(__dirname, 'src/app'),

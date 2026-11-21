@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { inspect } from 'node:util'
 import type { IncomingMessage } from 'node:http'
 import { SessionGrantRegistry } from '../../../src/app/main/controlSurface/http/sessionGrantRegistry'
+import { SESSION_GRANT_POLICY } from '../../../src/app/main/controlSurface/http/sessionGrantPolicy'
 import { sessionGrantAllowsOperation } from '../../../src/app/main/controlSurface/http/sessionGrantAuthorization'
 import { resolveRequestAuth } from '../../../src/app/main/controlSurface/http/requestAuth'
 import { WebSessionManager } from '../../../src/app/main/controlSurface/http/webSessionManager'
@@ -41,14 +42,10 @@ describe('session grants', () => {
     expect(() => registry.issue(identity)).toThrow('absent session')
   })
 
-  it('allows exactly registered read/interact operations, retaining private-only fences', () => {
+  it('uses the explicit policy while retaining the tier ceiling', () => {
     for (const op of CONTROL_SURFACE_OPERATIONS) {
-      const privateOnly =
-        op.id.startsWith('worker.') ||
-        op.id === 'auth.issueWebSessionTicket' ||
-        op.id === 'sync.writeState' ||
-        op.id === 'sync.writeWorkspaceStateRaw'
-      expect(sessionGrantAllowsOperation(op.id)).toBe(!privateOnly && op.scope !== 'admin')
+      const denied = SESSION_GRANT_POLICY[op.id].access === 'deny'
+      expect(sessionGrantAllowsOperation(op.id)).toBe(!denied && op.scope !== 'admin')
     }
     expect(sessionGrantAllowsOperation('unknown')).toBe(false)
   })
@@ -108,7 +105,6 @@ describe('session grants', () => {
         { kind: 'session-grant', grant } as const,
       ]) {
         // Requests are sequential to observe authorization and revocation boundaries.
-        // eslint-disable-next-line no-await-in-loop
         const result = await surface.invoke(
           { ...ctx, requestAuth: auth },
           { kind: 'query', id: 'system.whoami', payload: {} },
@@ -137,7 +133,6 @@ describe('session grants', () => {
       for (const id of ['not.registered', 'worker.shutdown']) {
         expect(
           // Requests are sequential to observe authorization and revocation boundaries.
-          // eslint-disable-next-line no-await-in-loop
           await surface.invoke(
             { ...ctx, requestAuth: { kind: 'session-grant', grant } },
             { kind: 'query', id, payload: {} },

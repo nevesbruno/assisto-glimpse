@@ -93,7 +93,7 @@ function schemaSnapshot(raw: DatabaseSync): unknown {
   return raw.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY name').all()
 }
 
-describe('persistence schema 14 for orchestration (C-01)', () => {
+describe('persistence schema 16 for orchestration (D018)', () => {
   afterEach(() => {
     open?.close()
     open = null
@@ -110,7 +110,7 @@ describe('persistence schema 14 for orchestration (C-01)', () => {
     const { raw } = openMigrated()
 
     expect(raw.prepare('PRAGMA user_version').get()).toEqual({ user_version: DB_SCHEMA_VERSION })
-    expect(DB_SCHEMA_VERSION).toBe(14)
+    expect(DB_SCHEMA_VERSION).toBe(16)
     for (const table of ORCHESTRATION_TABLES) {
       expect(columnsOf(raw, table)).toEqual([...CURRENT_SCHEMA_COLUMNS[table]])
     }
@@ -337,10 +337,80 @@ describe('persistence schema 14 for orchestration (C-01)', () => {
 
     migrate(db)
 
-    expect(raw.prepare('PRAGMA user_version').get()).toEqual({ user_version: 14 })
+    expect(raw.prepare('PRAGMA user_version').get()).toEqual({ user_version: DB_SCHEMA_VERSION })
     expect(raw.prepare('SELECT name FROM workspaces').all()).toEqual([{ name: 'Kept' }])
     for (const table of ORCHESTRATION_TABLES) {
       expect(columnsOf(raw, table)).toEqual([...CURRENT_SCHEMA_COLUMNS[table]])
     }
+  })
+
+  // D018: the fork declared 14 with the orchestration tables; upstream declared 15 for node
+  // lineage. Both must converge on 16 without dropping each other's data.
+  it('upgrades a fork v14 database keeping its orchestration data and adding node lineage', () => {
+    const { raw, db } = openMigrated()
+    insert(raw, 'workspaces', {
+      id: 'ws-fork',
+      name: 'Fork v14',
+      path: '/p',
+      worktrees_root: '/w',
+      viewport_x: 0,
+      viewport_y: 0,
+      viewport_zoom: 1,
+      is_minimap_visible: 1,
+    })
+    link(raw, { id: 'link-fork' })
+    dispatch(raw, { id: 'dispatch-fork', link_id: 'link-fork', text: 'hello' })
+    const linksBefore = raw.prepare('SELECT * FROM agent_links').all()
+    const dispatchesBefore = raw.prepare('SELECT * FROM orchestration_dispatches').all()
+
+    raw.exec('DROP TABLE node_lineage; PRAGMA user_version = 14')
+
+    migrate(db)
+
+    expect(raw.prepare('PRAGMA user_version').get()).toEqual({ user_version: 16 })
+    expect(raw.prepare('SELECT * FROM agent_links').all()).toEqual(linksBefore)
+    expect(raw.prepare('SELECT * FROM orchestration_dispatches').all()).toEqual(dispatchesBefore)
+    expect(raw.prepare('SELECT name FROM workspaces').all()).toEqual([{ name: 'Fork v14' }])
+    for (const table of ORCHESTRATION_TABLES) {
+      expect(columnsOf(raw, table)).toEqual([...CURRENT_SCHEMA_COLUMNS[table]])
+    }
+    expect(columnsOf(raw, 'node_lineage')).toEqual([...CURRENT_SCHEMA_COLUMNS.node_lineage])
+  })
+
+  it('adds the orchestration tables to an upstream v15 database that never had them', () => {
+    const { raw, db } = openMigrated()
+    insert(raw, 'workspaces', {
+      id: 'ws-upstream',
+      name: 'Upstream v15',
+      path: '/p',
+      worktrees_root: '/w',
+      viewport_x: 0,
+      viewport_y: 0,
+      viewport_zoom: 1,
+      is_minimap_visible: 1,
+    })
+    raw.exec(`
+      DROP TABLE agent_links;
+      DROP TABLE orchestration_dispatches;
+      DROP TABLE orchestration_notices;
+      DROP TABLE orchestration_hook_approvals;
+      DELETE FROM app_meta WHERE key = 'orchestration_links_revision';
+      PRAGMA user_version = 15;
+    `)
+
+    migrate(db)
+
+    expect(raw.prepare('PRAGMA user_version').get()).toEqual({ user_version: 16 })
+    expect(raw.prepare('SELECT name FROM workspaces').all()).toEqual([{ name: 'Upstream v15' }])
+    expect(columnsOf(raw, 'node_lineage')).toEqual([...CURRENT_SCHEMA_COLUMNS.node_lineage])
+    for (const table of ORCHESTRATION_TABLES) {
+      expect(columnsOf(raw, table)).toEqual([...CURRENT_SCHEMA_COLUMNS[table]])
+    }
+    expect(
+      raw.prepare(`SELECT value FROM app_meta WHERE key = 'orchestration_links_revision'`).get(),
+    ).toEqual({ value: '0' })
+
+    link(raw, {})
+    dispatch(raw, {})
   })
 })

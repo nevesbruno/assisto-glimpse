@@ -1,38 +1,32 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
 import { useStoreApi, type Node, type ReactFlowInstance } from '@xyflow/react'
-import type { TerminalNodeData, WorkspaceSpaceState } from '../../../types'
-import type { ContextMenuState, EmptySelectionPromptState, SelectionDraftState } from '../types'
+import type { TerminalNodeData } from '../../../types'
+import type { SelectionDraftState } from '../types'
 import { isPointInsideRect } from './useSpaceOwnership.helpers'
-import { applySelectionDraft, setSortedSelectedSpaceIds } from './useSelectionDraft.helpers'
+import { applySelectionDraft } from './useSelectionDraft.helpers'
 import {
   getPresentedNodeSize,
   projectCanvasInteractionLayout,
 } from '../../../utils/canvasInteractionLayout'
 import { readCanvasInteractionState } from './useNodeDragSession.collapse'
-
-type SelectionDraftUiState = Pick<
-  SelectionDraftState,
-  'startX' | 'startY' | 'currentX' | 'currentY' | 'phase'
->
+import {
+  useCanvasInteractionCommands,
+  useCanvasSelectionCommands,
+  useCanvasUiCommands,
+  useReadCanvasDocument,
+  useReadCanvasSelection,
+} from '../../../store/canvasStoreContext'
 
 interface UseSelectionDraftParams {
   workspaceId?: string
   isTrackpadCanvasMode: boolean
   isShiftPressedRef: MutableRefObject<boolean>
   selectionDraftRef: MutableRefObject<SelectionDraftState | null>
-  setSelectionDraftUi: React.Dispatch<React.SetStateAction<SelectionDraftUiState | null>>
   reactFlow: ReactFlowInstance<Node<TerminalNodeData>>
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
-  selectedNodeIdsRef: MutableRefObject<string[]>
-  selectedSpaceIdsRef: MutableRefObject<string[]>
   setNodes: (
     updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
     options?: { syncLayout?: boolean },
   ) => void
-  setSelectedNodeIds: React.Dispatch<React.SetStateAction<string[]>>
-  setSelectedSpaceIds: React.Dispatch<React.SetStateAction<string[]>>
-  setContextMenu: React.Dispatch<React.SetStateAction<ContextMenuState | null>>
-  setEmptySelectionPrompt: React.Dispatch<React.SetStateAction<EmptySelectionPromptState | null>>
 }
 
 export function useWorkspaceCanvasSelectionDraft({
@@ -40,21 +34,19 @@ export function useWorkspaceCanvasSelectionDraft({
   isTrackpadCanvasMode,
   isShiftPressedRef,
   selectionDraftRef,
-  setSelectionDraftUi,
   reactFlow,
-  spacesRef,
-  selectedNodeIdsRef,
-  selectedSpaceIdsRef,
   setNodes,
-  setSelectedNodeIds,
-  setSelectedSpaceIds,
-  setContextMenu,
-  setEmptySelectionPrompt,
 }: UseSelectionDraftParams): {
   handleCanvasPointerDownCapture: (event: React.PointerEvent<HTMLDivElement>) => void
   handleCanvasPointerMoveCapture: (event: React.PointerEvent<HTMLDivElement>) => void
   handleCanvasPointerUpCapture: (event?: { clientX: number; clientY: number }) => boolean
 } {
+  const ui = useCanvasUiCommands()
+  const readSelection = useReadCanvasSelection()
+  const readDocument = useReadCanvasDocument()
+  const selection = useCanvasSelectionCommands()
+  const { setSelectionDraft } = useCanvasInteractionCommands()
+
   const cancelSelectionOnWindowBlur = !(
     typeof window !== 'undefined' && window.opencoveApi?.meta?.isTest === true
   )
@@ -68,26 +60,14 @@ export function useWorkspaceCanvasSelectionDraft({
       applySelectionDraft({
         draft,
         reactFlow,
-        spaces: spacesRef.current,
+        spaces: readDocument().spaces,
         collapseState: readCanvasInteractionState(workspaceId),
-        selectedNodeIdsRef,
-        selectedSpaceIdsRef,
+        selection,
         setNodes,
-        setSelectedNodeIds,
-        setSelectedSpaceIds,
         forceDeselectIntersectingNodes: options?.forceDeselectIntersectingNodes === true,
       })
     },
-    [
-      reactFlow,
-      selectedNodeIdsRef,
-      selectedSpaceIdsRef,
-      setNodes,
-      setSelectedNodeIds,
-      setSelectedSpaceIds,
-      spacesRef,
-      workspaceId,
-    ],
+    [reactFlow, readDocument, selection, setNodes, workspaceId],
   )
 
   const detachGlobalPointerListeners = useCallback(() => {
@@ -102,7 +82,7 @@ export function useWorkspaceCanvasSelectionDraft({
         return false
       }
 
-      setSelectionDraftUi(null)
+      setSelectionDraft(null)
 
       if (pointer) {
         draft.currentX = pointer.clientX
@@ -151,9 +131,7 @@ export function useWorkspaceCanvasSelectionDraft({
             },
             { syncLayout: false },
           )
-          selectedNodeIdsRef.current = []
-          setSelectedNodeIds([])
-          setSortedSelectedSpaceIds([], selectedSpaceIdsRef, setSelectedSpaceIds)
+          selection.clear()
           reactFlowStore.setState({
             nodesSelectionActive: false,
             coveDragSurfaceSelectionMode: false,
@@ -165,15 +143,15 @@ export function useWorkspaceCanvasSelectionDraft({
 
       draft.phase = 'settling'
       applyDraftSelection(draft, { forceDeselectIntersectingNodes: true })
-      const hasSelectedNodes = selectedNodeIdsRef.current.length > 0
-      const hasSelectedSpaces = selectedSpaceIdsRef.current.length > 0
+      const { nodeIds, spaceIds } = readSelection()
+      const hasSelectedNodes = nodeIds.length > 0
+      const hasSelectedSpaces = spaceIds.length > 0
       const hasAnySelection = hasSelectedNodes || hasSelectedSpaces
       const shouldEnableDragSurfaceSelectionMode = hasAnySelection
       reactFlowStore.setState({
         nodesSelectionActive: hasSelectedNodes,
         coveDragSurfaceSelectionMode: shouldEnableDragSurfaceSelectionMode,
       } as unknown as Parameters<typeof reactFlowStore.setState>[0])
-      setEmptySelectionPrompt(null)
 
       window.requestAnimationFrame(() => {
         if (selectionDraftRef.current === draft) {
@@ -194,13 +172,10 @@ export function useWorkspaceCanvasSelectionDraft({
       detachGlobalPointerListeners,
       reactFlowStore,
       selectionDraftRef,
-      selectedNodeIdsRef,
-      selectedSpaceIdsRef,
-      setSelectionDraftUi,
-      setEmptySelectionPrompt,
+      readSelection,
+      selection,
+      setSelectionDraft,
       setNodes,
-      setSelectedNodeIds,
-      setSelectedSpaceIds,
     ],
   )
 
@@ -240,7 +215,7 @@ export function useWorkspaceCanvasSelectionDraft({
         selectionDraftRef.current = null
       }
 
-      setSelectionDraftUi(null)
+      setSelectionDraft(null)
     }
 
     window.addEventListener('pointerup', handleGlobalPointerUp, true)
@@ -261,7 +236,7 @@ export function useWorkspaceCanvasSelectionDraft({
     detachGlobalPointerListeners,
     finalizeSelectionDraft,
     selectionDraftRef,
-    setSelectionDraftUi,
+    setSelectionDraft,
   ])
 
   useEffect(() => {
@@ -277,9 +252,9 @@ export function useWorkspaceCanvasSelectionDraft({
         pendingSelectionUiFrameRef.current = null
       }
 
-      setSelectionDraftUi(null)
+      setSelectionDraft(null)
     }
-  }, [detachGlobalPointerListeners, setSelectionDraftUi])
+  }, [detachGlobalPointerListeners, setSelectionDraft])
 
   const scheduleSelectionDraftUiUpdate = useCallback(() => {
     if (pendingSelectionUiFrameRef.current !== null) {
@@ -294,7 +269,7 @@ export function useWorkspaceCanvasSelectionDraft({
         return
       }
 
-      setSelectionDraftUi({
+      setSelectionDraft({
         startX: draft.startX,
         startY: draft.startY,
         currentX: draft.currentX,
@@ -302,7 +277,7 @@ export function useWorkspaceCanvasSelectionDraft({
         phase: draft.phase,
       })
     })
-  }, [selectionDraftRef, setSelectionDraftUi])
+  }, [selectionDraftRef, setSelectionDraft])
 
   const handleCanvasPointerDownCapture = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -372,7 +347,7 @@ export function useWorkspaceCanvasSelectionDraft({
 
       const interaction = projectCanvasInteractionLayout(
         reactFlow.getNodes(),
-        spacesRef.current,
+        readDocument().spaces,
         readCanvasInteractionState(workspaceId),
       )
       const startSpace = interaction.spaces.find(space => {
@@ -399,12 +374,12 @@ export function useWorkspaceCanvasSelectionDraft({
         pointerId: event.pointerId,
         toggleSelection: event.shiftKey || isShiftPressedRef.current,
         selectedNodeIdsAtStart: selectedNodes.map(node => node.id),
-        selectedSpaceIdsAtStart: [...selectedSpaceIdsRef.current],
+        selectedSpaceIdsAtStart: [...readSelection().spaceIds],
         startSpaceId: startSpace?.id ?? null,
         phase: 'active',
       }
 
-      setSelectionDraftUi({
+      setSelectionDraft({
         startX: event.clientX,
         startY: event.clientY,
         currentX: event.clientX,
@@ -412,21 +387,19 @@ export function useWorkspaceCanvasSelectionDraft({
         phase: 'active',
       })
       registerGlobalPointerListeners()
-      setContextMenu(null)
-      setEmptySelectionPrompt(null)
+      ui.closeContextMenu()
     },
     [
       detachGlobalPointerListeners,
       isShiftPressedRef,
       isTrackpadCanvasMode,
       reactFlow,
+      readDocument,
+      readSelection,
       registerGlobalPointerListeners,
-      selectedSpaceIdsRef,
       selectionDraftRef,
-      spacesRef,
-      setContextMenu,
-      setEmptySelectionPrompt,
-      setSelectionDraftUi,
+      ui,
+      setSelectionDraft,
       workspaceId,
     ],
   )

@@ -7,12 +7,7 @@ import {
   type AgentSettings,
 } from '@contexts/settings/domain/agentSettings'
 import type { TerminalPtyGeometryDisplayMetrics } from '@contexts/workspace/domain/terminalPtyGeometry'
-import type {
-  TaskPriority,
-  TaskRuntimeStatus,
-  TerminalNodeData,
-  WorkspaceSpaceState,
-} from '../../../types'
+import type { TaskPriority, TaskRuntimeStatus, TerminalNodeData } from '../../../types'
 import { normalizeTaskPriority, normalizeTaskTagSelection } from '../helpers'
 import type {
   CreateNodeInput,
@@ -21,28 +16,24 @@ import type {
   UpdateTaskStatus,
 } from '../types'
 import { resumeTaskAgentSessionAction, runTaskAgentAction } from './useTaskActions.agentSession'
+import { useCanvasDocumentCommands, useReadCanvasDocument } from '../../../store/canvasStoreContext'
+import type { TaskActionContext } from './useTaskActions.agentSession.shared'
 
 interface UseTaskActionsParams {
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  setNodes: (
-    updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-    options?: { syncLayout?: boolean },
-  ) => void
+  updateCanvasDocument: TaskActionContext['updateCanvasDocument']
+  setNodes: TaskActionContext['setNodes']
   createNodeForSession: (input: CreateNodeInput) => Promise<Node<TerminalNodeData> | null>
   buildAgentNodeTitle: (
     provider: AgentSettings['defaultProvider'],
     effectiveModel: string | null,
   ) => string
-  launchAgentInNode: (nodeId: string, mode: 'new' | 'resume') => Promise<void>
+  launchAgentInNode: TaskActionContext['launchAgentInNode']
   agentSettings: AgentSettings
   workspaceId: string
   workspacePath: string
   environmentVariables?: Record<string, string>
   taskTagOptions: string[]
   terminalDisplayMetrics: TerminalPtyGeometryDisplayMetrics
-  onRequestPersistFlush?: () => void
   runTaskAgentRef: MutableRefObject<(nodeId: string) => Promise<void>>
   resumeTaskAgentSessionRef: MutableRefObject<
     (taskNodeId: string, recordId: string) => Promise<void>
@@ -54,9 +45,7 @@ interface UseTaskActionsParams {
 }
 
 export function useWorkspaceCanvasTaskActions({
-  nodesRef,
-  spacesRef,
-  onSpacesChange,
+  updateCanvasDocument,
   setNodes,
   createNodeForSession,
   buildAgentNodeTitle,
@@ -67,7 +56,6 @@ export function useWorkspaceCanvasTaskActions({
   environmentVariables,
   taskTagOptions,
   terminalDisplayMetrics,
-  onRequestPersistFlush,
   runTaskAgentRef,
   resumeTaskAgentSessionRef,
   removeTaskAgentSessionRecordRef,
@@ -80,13 +68,15 @@ export function useWorkspaceCanvasTaskActions({
   ) => Promise<{ title: string; priority: TaskPriority; tags: string[] }>
 } {
   const { t } = useTranslation()
+  const documentCommands = useCanvasDocumentCommands()
+  const readDocument = useReadCanvasDocument()
 
   const runTaskAgent = useCallback(
     async (taskNodeId: string) => {
       await runTaskAgentAction(taskNodeId, {
-        nodesRef,
-        spacesRef,
-        onSpacesChange,
+        readDocument,
+        updateCanvasDocument,
+        updateSpaces: documentCommands.updateSpaces,
         setNodes,
         createNodeForSession,
         buildAgentNodeTitle,
@@ -97,22 +87,20 @@ export function useWorkspaceCanvasTaskActions({
         environmentVariables,
         t,
         terminalDisplayMetrics,
-        onRequestPersistFlush,
       })
     },
     [
       agentSettings,
       buildAgentNodeTitle,
       createNodeForSession,
+      documentCommands,
       environmentVariables,
       launchAgentInNode,
-      nodesRef,
-      onSpacesChange,
-      onRequestPersistFlush,
+      readDocument,
       setNodes,
-      spacesRef,
       t,
       terminalDisplayMetrics,
+      updateCanvasDocument,
       workspaceId,
       workspacePath,
     ],
@@ -120,41 +108,41 @@ export function useWorkspaceCanvasTaskActions({
 
   const removeTaskAgentSessionRecord = useCallback(
     (taskNodeId: string, recordId: string) => {
-      setNodes(prevNodes =>
-        prevNodes.map(node => {
-          if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
-            return node
-          }
+      setNodes(
+        prevNodes =>
+          prevNodes.map(node => {
+            if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
+              return node
+            }
 
-          const nextSessions = (node.data.task.agentSessions ?? []).filter(
-            record => record.id !== recordId,
-          )
+            const nextSessions = (node.data.task.agentSessions ?? []).filter(
+              record => record.id !== recordId,
+            )
 
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              task: {
-                ...node.data.task,
-                agentSessions: nextSessions,
-                updatedAt: new Date().toISOString(),
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                task: {
+                  ...node.data.task,
+                  agentSessions: nextSessions,
+                  updatedAt: new Date().toISOString(),
+                },
               },
-            },
-          }
-        }),
+            }
+          }),
+        { flush: true },
       )
-
-      onRequestPersistFlush?.()
     },
-    [onRequestPersistFlush, setNodes],
+    [setNodes],
   )
 
   const resumeTaskAgentSession = useCallback(
     async (taskNodeId: string, recordId: string) => {
       await resumeTaskAgentSessionAction(taskNodeId, recordId, {
-        nodesRef,
-        spacesRef,
-        onSpacesChange,
+        readDocument,
+        updateCanvasDocument,
+        updateSpaces: documentCommands.updateSpaces,
         setNodes,
         createNodeForSession,
         buildAgentNodeTitle,
@@ -164,21 +152,19 @@ export function useWorkspaceCanvasTaskActions({
         environmentVariables,
         t,
         terminalDisplayMetrics,
-        onRequestPersistFlush,
       })
     },
     [
       agentSettings,
       buildAgentNodeTitle,
       createNodeForSession,
+      documentCommands,
       environmentVariables,
-      nodesRef,
-      onRequestPersistFlush,
-      onSpacesChange,
+      readDocument,
       setNodes,
-      spacesRef,
       t,
       terminalDisplayMetrics,
+      updateCanvasDocument,
       workspaceId,
       workspacePath,
     ],
@@ -186,29 +172,29 @@ export function useWorkspaceCanvasTaskActions({
 
   const updateTaskStatus = useCallback(
     (taskNodeId: string, status: TaskRuntimeStatus) => {
-      setNodes(prevNodes =>
-        prevNodes.map(node => {
-          if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
-            return node
-          }
+      setNodes(
+        prevNodes =>
+          prevNodes.map(node => {
+            if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
+              return node
+            }
 
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              task: {
-                ...node.data.task,
-                status,
-                updatedAt: new Date().toISOString(),
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                task: {
+                  ...node.data.task,
+                  status,
+                  updatedAt: new Date().toISOString(),
+                },
               },
-            },
-          }
-        }),
+            }
+          }),
+        { flush: true },
       )
-
-      onRequestPersistFlush?.()
     },
-    [onRequestPersistFlush, setNodes],
+    [setNodes],
   )
 
   const quickUpdateTaskTitle = useCallback(
@@ -216,31 +202,31 @@ export function useWorkspaceCanvasTaskActions({
       const normalizedTitle = nextTitle.trim()
 
       const now = new Date().toISOString()
-      setNodes(prevNodes =>
-        prevNodes.map(node => {
-          if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
-            return node
-          }
+      setNodes(
+        prevNodes =>
+          prevNodes.map(node => {
+            if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
+              return node
+            }
 
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              title: normalizedTitle,
-              lastError: null,
-              task: {
-                ...node.data.task,
-                autoGeneratedTitle: false,
-                updatedAt: now,
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                title: normalizedTitle,
+                lastError: null,
+                task: {
+                  ...node.data.task,
+                  autoGeneratedTitle: false,
+                  updatedAt: now,
+                },
               },
-            },
-          }
-        }),
+            }
+          }),
+        { flush: true },
       )
-
-      onRequestPersistFlush?.()
     },
-    [onRequestPersistFlush, setNodes],
+    [setNodes],
   )
 
   const quickUpdateTaskRequirement = useCallback(
@@ -251,30 +237,30 @@ export function useWorkspaceCanvasTaskActions({
       }
 
       const now = new Date().toISOString()
-      setNodes(prevNodes =>
-        prevNodes.map(node => {
-          if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
-            return node
-          }
+      setNodes(
+        prevNodes =>
+          prevNodes.map(node => {
+            if (node.id !== taskNodeId || node.data.kind !== 'task' || !node.data.task) {
+              return node
+            }
 
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              lastError: null,
-              task: {
-                ...node.data.task,
-                requirement: normalizedRequirement,
-                updatedAt: now,
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                lastError: null,
+                task: {
+                  ...node.data.task,
+                  requirement: normalizedRequirement,
+                  updatedAt: now,
+                },
               },
-            },
-          }
-        }),
+            }
+          }),
+        { flush: true },
       )
-
-      onRequestPersistFlush?.()
     },
-    [onRequestPersistFlush, setNodes],
+    [setNodes],
   )
 
   const suggestTaskTitle = useCallback(

@@ -3,9 +3,7 @@ import { useWorkspaceCanvasTaskTagOptions } from './useTaskTagOptions'
 
 export function useWorkspaceCanvasTaskSupport({
   agentTaskTagOptions,
-  nodesRef,
-  spacesRef,
-  onSpacesChange,
+  updateCanvasDocument,
   setNodes,
   createNodeForSession,
   buildAgentNodeTitle,
@@ -14,14 +12,11 @@ export function useWorkspaceCanvasTaskSupport({
   workspaceId,
   workspacePath,
   environmentVariables,
-  onRequestPersistFlush,
   actionRefs,
   terminalDisplayMetrics,
 }: {
   agentTaskTagOptions: Parameters<typeof useWorkspaceCanvasTaskTagOptions>[0]
-  nodesRef: Parameters<typeof useWorkspaceCanvasTaskActions>[0]['nodesRef']
-  spacesRef: Parameters<typeof useWorkspaceCanvasTaskActions>[0]['spacesRef']
-  onSpacesChange: Parameters<typeof useWorkspaceCanvasTaskActions>[0]['onSpacesChange']
+  updateCanvasDocument: Parameters<typeof useWorkspaceCanvasTaskActions>[0]['updateCanvasDocument']
   setNodes: Parameters<typeof useWorkspaceCanvasTaskActions>[0]['setNodes']
   createNodeForSession: Parameters<typeof useWorkspaceCanvasTaskActions>[0]['createNodeForSession']
   buildAgentNodeTitle: Parameters<typeof useWorkspaceCanvasTaskActions>[0]['buildAgentNodeTitle']
@@ -30,9 +25,6 @@ export function useWorkspaceCanvasTaskSupport({
   workspaceId: Parameters<typeof useWorkspaceCanvasTaskActions>[0]['workspaceId']
   workspacePath: Parameters<typeof useWorkspaceCanvasTaskActions>[0]['workspacePath']
   environmentVariables?: Record<string, string>
-  onRequestPersistFlush?: Parameters<
-    typeof useWorkspaceCanvasTaskActions
-  >[0]['onRequestPersistFlush']
   terminalDisplayMetrics: Parameters<
     typeof useWorkspaceCanvasTaskActions
   >[0]['terminalDisplayMetrics']
@@ -58,9 +50,7 @@ export function useWorkspaceCanvasTaskSupport({
 } {
   const taskTagOptions = useWorkspaceCanvasTaskTagOptions(agentTaskTagOptions)
   const { suggestTaskTitle } = useWorkspaceCanvasTaskActions({
-    nodesRef,
-    spacesRef,
-    onSpacesChange,
+    updateCanvasDocument,
     setNodes,
     createNodeForSession,
     buildAgentNodeTitle,
@@ -70,7 +60,6 @@ export function useWorkspaceCanvasTaskSupport({
     workspacePath,
     environmentVariables,
     taskTagOptions,
-    onRequestPersistFlush,
     terminalDisplayMetrics,
     runTaskAgentRef: actionRefs.runTaskAgentRef,
     resumeTaskAgentSessionRef: actionRefs.resumeTaskAgentSessionRef,

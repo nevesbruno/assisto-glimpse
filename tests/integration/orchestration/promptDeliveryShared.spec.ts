@@ -1,3 +1,4 @@
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 // @vitest-environment node
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -25,7 +26,9 @@ type ComposeInput = Parameters<NonNullable<Parameters<typeof lazyOrchestration>[
 function fixture() {
   const base = promptDeliveryRuntimeFixture()
   const { hub, write } = base
-  const providers = new AgentProviderRegistry(createBuiltinAgentProviderContributions())
+  const providers = new AgentProviderRegistry(
+    createBuiltinAgentProviderContributions({ artifactRoot: createTestAgentLaunchArtifactRoot() }),
+  )
   const delivery = createAgentPromptDelivery(hub, providers)
   const surface = createControlSurface()
   registerAgentPromptHandlers(surface, hub, delivery, async () => undefined)

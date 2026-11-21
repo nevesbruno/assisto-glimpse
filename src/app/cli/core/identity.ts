@@ -1,8 +1,10 @@
-import type { OperationId } from './command'
+import type { LineageQuota } from '../../../shared/contracts/dto/nodeLineage'
+import type { TextOutputContext, OperationId } from './command'
 import { usage } from './errors'
 
 export type Invoke = (id: OperationId, payload: unknown) => Promise<unknown>
 export interface CallerIdentity {
+  lineageQuota?: LineageQuota
   caller: string
   scope: string
   projectId: string | null
@@ -12,10 +14,38 @@ export interface CallerIdentity {
 }
 
 /** Only these public fields may leave the CLI; credentials never enter the projection. */
-export function callerIdentity(value: unknown): CallerIdentity {
+export function callerIdentity(value: unknown, includeTree = false): CallerIdentity {
   const wire = value as Record<string, unknown>
   const id = (key: string) => (typeof wire[key] === 'string' && wire[key] ? wire[key] : null)
+  const quota = wire.lineageQuota as LineageQuota | undefined
   return {
+    ...(quota
+      ? {
+          lineageQuota: {
+            ...(includeTree && Array.isArray(quota.nodes)
+              ? {
+                  nodes: quota.nodes.map(node => ({
+                    nodeId: node.nodeId,
+                    title: node.title,
+                    kind: node.kind,
+                    depth: node.depth,
+                    spawnedBy: node.spawnedBy ?? null,
+                    sessionId: node.sessionId ?? null,
+                    sessionStartedAt: node.sessionStartedAt ?? null,
+                    state: node.state,
+                  })),
+                }
+              : {}),
+            depth: quota.depth,
+            maxDepth: quota.maxDepth,
+            liveInTree: quota.liveInTree,
+            maxLiveInTree: quota.maxLiveInTree,
+            ...(quota.remainingLiveInTree !== undefined
+              ? { remainingLiveInTree: quota.remainingLiveInTree }
+              : {}),
+          },
+        }
+      : {}),
     caller: String(wire.kind),
     scope: String(wire.scopeTier),
     projectId: id('projectId'),
@@ -25,7 +55,18 @@ export function callerIdentity(value: unknown): CallerIdentity {
   }
 }
 
-export const identityFields = ['caller', 'scope', 'projectId', 'spaceId', 'nodeId', 'sessionId']
+export const identityFields = [
+  'caller',
+  'scope',
+  'projectId',
+  'spaceId',
+  'nodeId',
+  'sessionId',
+  'lineageQuota',
+  ...['depth', 'maxDepth', 'liveInTree', 'maxLiveInTree', 'remainingLiveInTree'].map(
+    field => `lineageQuota.${field}`,
+  ),
+]
 
 export function selfUnavailable(kind: string): never {
   usage(
@@ -47,6 +88,18 @@ export function sessionIdentity(env: Record<string, string | undefined>, invoke:
       }
       const identity = await whoami()
       const id = identity[`${kind}Id`]
+      if (identity.caller === 'session-grant' && kind === 'node' && !id) {
+        usage(
+          'This session is not bound to a canvas node.',
+          'Use --node <selector> to choose a node, or --space <selector> for node list and node create.',
+        )
+      }
+      if (identity.caller === 'session-grant' && kind === 'space' && !id && !identity.nodeId) {
+        usage(
+          'This session has no Space.',
+          'Use --space <selector> to choose a Space, or --project <selector> for project scope.',
+        )
+      }
       if (identity.caller === 'session-grant' && kind === 'space' && !id) {
         usage(
           'This OpenCove terminal does not belong to a space.',
@@ -59,4 +112,21 @@ export function sessionIdentity(env: Record<string, string | undefined>, invoke:
       return id
     },
   }
+}
+
+export function lineageQuotaSummary(quota: LineageQuota): string {
+  return `Agents: ${quota.liveInTree} of ${quota.maxLiveInTree} running in your tree; depth ${quota.depth} of ${quota.maxDepth}\n`
+}
+
+/** Only default interactive identity output may append prose to the JSON value. */
+export function identityText(
+  value: unknown,
+  { io, options, render }: TextOutputContext,
+): string | undefined {
+  if (!io.stdout.isTTY || options.pretty || options.output || options.fields !== undefined) {
+    return undefined
+  }
+  const result = value as { self?: CallerIdentity; lineageQuota?: LineageQuota }
+  const quota = (result.self ?? result).lineageQuota
+  return quota ? render() + lineageQuotaSummary(quota) : undefined
 }

@@ -1,6 +1,11 @@
-import type { MutableRefObject } from 'react'
+import { isAppErrorDescriptor } from '@shared/errors/appError'
+import { prepareManagedClaudeCreationIntent } from '../../../utils/managedClaudeCreation'
+import {
+  ABSENT_MANAGED_CLAUDE_BINDING,
+  type ManagedClaudeLifecycleReceipt,
+} from '@shared/contracts/managedClaudeLaunch'
 import { isAllocateProjectPlaceholderPath } from '@app/renderer/shell/utils/projectPlaceholderPath'
-import { toFileUri } from '@contexts/filesystem/domain/fileUri'
+import { toFileUri } from '@contexts/filesystem/domain'
 import {
   resolveAgentExecutablePathOverride,
   resolveAgentLaunchEnv,
@@ -14,6 +19,7 @@ import type {
 } from '@shared/contracts/dto'
 import type { WorkspaceSpaceState } from '../../../types'
 import type { NodeWorkerBinding } from '@shared/types/nodeWorkerBinding'
+import type { CanvasDocumentCommands } from '../../../store/canvasStoreContext'
 import {
   resolveControlSurfaceInvoke,
   shouldUseControlSurfacePlainRuntime,
@@ -25,6 +31,7 @@ export interface WorkspaceAgentLaunchBinding {
 }
 
 export interface WorkspaceAgentSessionLaunchResult {
+  managedClaudeLifecycle?: ManagedClaudeLifecycleReceipt
   sessionId: string
   resumeSessionId: string | null
   launchMode: 'new' | 'resume'
@@ -125,26 +132,30 @@ async function listWorkspaceMounts(
 function updateSpaceTargetMountId({
   targetSpace,
   nextMountId,
-  spacesRef,
-  onSpacesChange,
-  onRequestPersistFlush,
+  updateSpaces,
 }: {
   targetSpace: WorkspaceSpaceState | null
   nextMountId: string
-  spacesRef?: MutableRefObject<WorkspaceSpaceState[]>
-  onSpacesChange?: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  updateSpaces?: CanvasDocumentCommands['updateSpaces']
 }): void {
-  if (!targetSpace || targetSpace.targetMountId === nextMountId || !spacesRef || !onSpacesChange) {
+  if (!targetSpace || targetSpace.targetMountId === nextMountId || !updateSpaces) {
     return
   }
 
-  const updatedSpaces = spacesRef.current.map(space =>
-    space.id === targetSpace.id ? { ...space, targetMountId: nextMountId } : space,
+  // The mount query has answered by now: the recipe maps the Spaces the store holds when it runs,
+  // and the flush rides on the write.
+  updateSpaces(
+    spaces => {
+      const stored = spaces.find(space => space.id === targetSpace.id)
+      if (!stored || stored.targetMountId === nextMountId) {
+        return spaces
+      }
+      return spaces.map(space =>
+        space.id === targetSpace.id ? { ...space, targetMountId: nextMountId } : space,
+      )
+    },
+    { flush: true },
   )
-  spacesRef.current = updatedSpaces
-  onSpacesChange(updatedSpaces)
-  onRequestPersistFlush?.()
 }
 
 export async function resolveWorkspaceAgentLaunchBinding({
@@ -153,9 +164,7 @@ export async function resolveWorkspaceAgentLaunchBinding({
   currentMountId,
   executionDirectory,
   targetSpace,
-  spacesRef,
-  onSpacesChange,
-  onRequestPersistFlush,
+  updateSpaces,
   mountQueryFailurePolicy = 'ignore',
 }: {
   workspaceId: string
@@ -163,9 +172,7 @@ export async function resolveWorkspaceAgentLaunchBinding({
   currentMountId: string | null
   executionDirectory: string
   targetSpace: WorkspaceSpaceState | null
-  spacesRef?: MutableRefObject<WorkspaceSpaceState[]>
-  onSpacesChange?: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  updateSpaces?: CanvasDocumentCommands['updateSpaces']
   mountQueryFailurePolicy?: 'ignore' | 'throw'
 }): Promise<WorkspaceAgentLaunchBinding> {
   let mountId = currentMountId
@@ -226,9 +233,7 @@ export async function resolveWorkspaceAgentLaunchBinding({
   updateSpaceTargetMountId({
     targetSpace,
     nextMountId: mountId,
-    spacesRef,
-    onSpacesChange,
-    onRequestPersistFlush,
+    updateSpaces,
   })
 
   if (normalizedDirectory.length === 0 || normalizedDirectory === normalizedWorkspacePath) {
@@ -279,6 +284,17 @@ export async function launchWorkspaceAgentSession({
   launchGeometry: { terminalGeometry: { cols: number; rows: number } }
   retryResolveMountBinding?: (failedMountId: string) => Promise<WorkspaceAgentLaunchBinding | null>
 }): Promise<WorkspaceAgentSessionLaunchResult> {
+  const intent = await prepareManagedClaudeCreationIntent(
+    provider === 'claude-code' && canvasNodeId
+      ? mode === 'new'
+        ? { kind: 'launchNew' as const, expected: ABSENT_MANAGED_CLAUDE_BINDING }
+        : {
+            kind: 'resumeConversation' as const,
+            resumeSessionId: resumeSessionId!,
+            expected: ABSENT_MANAGED_CLAUDE_BINDING,
+          }
+      : undefined,
+  )
   const invokeLaunchInMount = async (
     nextMountId: string,
     nextExecutionDirectory: string,
@@ -288,7 +304,9 @@ export async function launchWorkspaceAgentSession({
     return await window.opencoveApi.controlSurface.invoke<LaunchAgentSessionResult>({
       kind: 'command',
       id: 'session.launchAgentInMount',
+      clientFeatures: { managedClaudeResumeBindingV1: true },
       payload: {
+        ...(intent ? { intent } : {}),
         canvasNodeId,
         workspaceId,
         spaceId,
@@ -316,6 +334,7 @@ export async function launchWorkspaceAgentSession({
     try {
       const launched = await invokeLaunchInMount(launchMountId, launchExecutionDirectory)
       return {
+        managedClaudeLifecycle: launched.managedClaudeLifecycle,
         sessionId: launched.sessionId,
         resumeSessionId: launched.resumeSessionId ?? null,
         launchMode: launched.launchMode ?? mode,
@@ -329,7 +348,22 @@ export async function launchWorkspaceAgentSession({
         },
       }
     } catch (error) {
-      if (!retryResolveMountBinding) {
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
+      const details =
+        error && typeof error === 'object' && 'details' in error
+          ? (error.details as { managedClaudeLaunch?: boolean; phase?: string; reason?: string })
+          : undefined
+      if (
+        !isAppErrorDescriptor(error) ||
+        code.startsWith('agent.managed_launch_') ||
+        // Only explicit pre-spawn rejection evidence permits an automatic mount repair.
+        !(
+          details?.managedClaudeLaunch === true &&
+          details.phase === 'beforeSpawn' &&
+          details.reason === 'mountUnavailable'
+        ) ||
+        !retryResolveMountBinding
+      ) {
         throw error
       }
 
@@ -347,6 +381,7 @@ export async function launchWorkspaceAgentSession({
 
       const launched = await invokeLaunchInMount(launchMountId, launchExecutionDirectory)
       return {
+        managedClaudeLifecycle: launched.managedClaudeLifecycle,
         sessionId: launched.sessionId,
         resumeSessionId: launched.resumeSessionId ?? null,
         launchMode: launched.launchMode ?? mode,
@@ -370,7 +405,9 @@ export async function launchWorkspaceAgentSession({
     const launched = await controlSurfaceInvoke<LaunchAgentSessionResult>({
       kind: 'command',
       id: 'session.launchAgent',
+      clientFeatures: { managedClaudeResumeBindingV1: true },
       payload: {
+        ...(intent ? { intent } : {}),
         canvasNodeId,
         workspaceId,
         spaceId,
@@ -390,6 +427,7 @@ export async function launchWorkspaceAgentSession({
     })
 
     return {
+      managedClaudeLifecycle: launched.managedClaudeLifecycle,
       sessionId: launched.sessionId,
       resumeSessionId: launched.resumeSessionId ?? null,
       launchMode: launched.launchMode ?? mode,
@@ -405,6 +443,8 @@ export async function launchWorkspaceAgentSession({
   }
 
   const launched = await window.opencoveApi.agent.launch({
+    clientFeatures: { managedClaudeResumeBindingV1: true },
+    ...(intent ? { intent } : {}),
     canvasNodeId,
     workspaceId,
     spaceId,
@@ -424,6 +464,7 @@ export async function launchWorkspaceAgentSession({
   })
 
   return {
+    managedClaudeLifecycle: launched.managedClaudeLifecycle,
     sessionId: launched.sessionId,
     resumeSessionId: launched.resumeSessionId ?? null,
     launchMode: launched.launchMode ?? mode,

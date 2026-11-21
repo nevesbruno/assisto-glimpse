@@ -6,6 +6,7 @@ import type {
   AgentProviderId,
 } from '../../../../shared/contracts/dto'
 import type { TerminalAgentHookContext } from '../../../../shared/runtime/agentHook/agentHookChannel'
+import type { CommandFileArgument } from '../../../../shared/types/commandFileArgument'
 
 export interface AgentProviderPermissionConfiguration {
   readonly arguments?: readonly string[]
@@ -40,6 +41,7 @@ export interface AgentLaunchArtifactRegistrar {
 
 export interface AgentLaunchPlan {
   readonly args: readonly string[]
+  readonly fileArguments?: readonly CommandFileArgument[]
   readonly command: string
   readonly effectiveModel: string | null
   readonly env: Readonly<NodeJS.ProcessEnv>
@@ -54,6 +56,8 @@ export interface CreateAgentLaunchPlanCommand {
   readonly environment?: Readonly<NodeJS.ProcessEnv>
   readonly profileId?: string | null
   readonly agentFullAccess: boolean
+  readonly residentContext?: 'canvas' | 'none'
+  readonly isInvocationCurrent?: () => boolean
   readonly codexReuseRunningAppServer?: boolean
   readonly artifacts: AgentLaunchArtifactRegistrar
   readonly executablePathOverride?: string | null
@@ -86,6 +90,8 @@ export interface AgentHookInjectionPlan {
 }
 
 export interface PrepareAgentHookInjectionCommand {
+  readonly residentContext?: 'canvas' | 'none'
+  readonly isInvocationCurrent?: () => boolean
   readonly codexReuseRunningAppServer?: boolean
   readonly arguments?: readonly string[]
   readonly artifacts: AgentLaunchArtifactRegistrar

@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import './scripts/lib/isolateHostEnvironment.mjs'
 import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { availableParallelism } from 'node:os'
@@ -51,7 +52,7 @@ export default defineConfig({
     ],
 
     // 排除目录
-    exclude: ['node_modules', 'dist', 'tests/e2e'],
+    exclude: ['node_modules', 'dist', 'tests/e2e', 'tests/contract/worker-cli/**'],
 
     // 覆盖率配置
     coverage: {

@@ -1,4 +1,10 @@
+import type {
+  ManagedClaudeLaunchIntent,
+  ManagedClaudeLifecycleReceipt,
+  ManagedClaudeBindingObservation,
+} from '../managedClaudeLaunch'
 import type { AgentLaunchMode, AgentProviderId } from './agent'
+import type { PersistedWorkspaceNodeKind } from '../persistedAppState'
 import type { TerminalPtyGeometry, TerminalRuntimeKind } from './terminal'
 import type { PresentationSnapshotTerminalResult } from './terminal'
 import type { WorkerEndpointKindDto } from './topology'
@@ -34,6 +40,13 @@ export interface ControlSurfaceCapabilitiesResult {
   protocolVersion: number
   appVersion: string | null
   features: {
+    managedClaudeResumeBindingV1?: boolean
+    managedClaudeResumeBindingDeliveryV1?: boolean
+    managedClaudeResumeBindingWritesEnabled?: boolean
+    eventStreamV1?: boolean
+    nodeLineageV1?: boolean
+    nodeNearPlacementV1?: boolean
+    boundedAgentSpawningV1?: boolean
     operationRegistry?: boolean
     webShell: boolean
     sync: {
@@ -56,16 +69,8 @@ export interface ControlSurfaceCapabilitiesResult {
   }
 }
 
-export type CanvasNodeKind =
-  | 'terminal'
-  | 'agent'
-  | 'task'
-  | 'note'
-  | 'image'
-  | 'document'
-  | 'folder'
-  | 'website'
-  | 'unknown'
+// Role and plugin windows are not exposed to the Control Surface; they are reported as unknown.
+export type CanvasNodeKind = Exclude<PersistedWorkspaceNodeKind, 'role' | 'plugin'> | 'unknown'
 
 export interface CanvasNodeSummary {
   data?: import('./nodeControl').CompactNodeDataDto
@@ -126,6 +131,8 @@ export interface ListSpacesResult {
     directoryPath: string
     targetMountId: string | null
     parentSpaceId: string | null
+    /** Canvas geometry; absent on older Workers, null if no frame is saved. */
+    rect?: { x: number; y: number; width: number; height: number } | null
     boundary: SpaceBoundary
     sortOrder: number
     nodeIds: string[]
@@ -146,6 +153,8 @@ export interface GetSpaceResult {
     directoryPath: string
     targetMountId: string | null
     parentSpaceId: string | null
+    /** Canvas geometry; absent on older Workers, null if no frame is saved. */
+    rect?: { x: number; y: number; width: number; height: number } | null
     boundary: SpaceBoundary
     sortOrder: number
     nodeIds: string[]
@@ -220,6 +229,7 @@ export interface ArchiveWorktreeResult {
 }
 
 export interface LaunchAgentSessionInput {
+  intent?: ManagedClaudeLaunchIntent
   canvasNodeId?: string
   workspaceId?: string
   spaceId?: string | null
@@ -238,6 +248,7 @@ export interface LaunchAgentSessionInput {
 }
 
 export interface LaunchAgentSessionInMountInput {
+  intent?: ManagedClaudeLaunchIntent
   canvasNodeId?: string
   workspaceId?: string
   spaceId?: string
@@ -257,6 +268,8 @@ export interface LaunchAgentSessionInMountInput {
 }
 
 export interface LaunchAgentSessionResult {
+  managedClaudeLifecycle?: ManagedClaudeLifecycleReceipt
+  managedClaudeBinding?: ManagedClaudeBindingObservation
   sessionId: string
   provider: AgentProviderId
   startedAt: string
@@ -373,11 +386,15 @@ export interface PreparedRuntimeAgentResult {
   customDirectory: string | null
   shouldCreateDirectory: boolean
   taskId: string | null
+  /** Launch-time override; absent means follow the current Settings value. */
+  agentFullAccess?: boolean
 }
 
 export type AgentRecoveryIssue = 'codex_writer_locked' | 'remote_worker_unavailable'
 
 export interface PreparedRuntimeNodeResult {
+  managedClaudeBinding?: ManagedClaudeBindingObservation
+  managedClaudeLifecycle?: ManagedClaudeLifecycleReceipt
   nodeId: string
   kind: 'terminal' | 'agent'
   recoveryState: 'live' | 'revived' | 'restarted' | 'fallback_terminal'

@@ -1,9 +1,9 @@
 import type { WorkspaceCanvasViewProps } from '../WorkspaceCanvasView.types'
 import type { WorkspaceCanvasProps } from '../types'
 import type { useWorkspaceCanvasAgentSupport } from './useCanvasAgentSupport'
-import type { useWorkspaceCanvasState } from './useCanvasState'
 import type { WorkspaceCanvasActionRefs } from './useActionRefs'
 import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
+import { useReadCanvasDocument } from '../../../store/canvasStoreContext'
 import { useWorkspaceCanvasRoleActions } from './useRoleActions'
 
 type RoleViewProps = Pick<
@@ -13,8 +13,6 @@ type RoleViewProps = Pick<
   | 'runProjectRoleFromContextMenu'
   | 'openRoleEditor'
   | 'deleteProjectRole'
-  | 'roleCreator'
-  | 'setRoleCreator'
   | 'closeRoleCreator'
   | 'createRole'
 >
@@ -24,11 +22,8 @@ export function useWorkspaceCanvasRoleUi({
   workspacePath,
   environmentVariables,
   agentSettings,
-  canvasState,
   nodeStore,
   agentSupport,
-  onSpacesChange,
-  onRequestPersistFlush,
   onShowMessage,
   actionRefs,
 }: {
@@ -36,14 +31,10 @@ export function useWorkspaceCanvasRoleUi({
   workspacePath: string
   environmentVariables?: Record<string, string>
   agentSettings: WorkspaceCanvasProps['agentSettings']
-  canvasState: Pick<
-    ReturnType<typeof useWorkspaceCanvasState>,
-    'contextMenu' | 'setContextMenu' | 'spacesRef'
-  >
   nodeStore: Pick<
     UseWorkspaceCanvasNodesStoreResult,
-    | 'nodesRef'
     | 'setNodes'
+    | 'updateCanvasDocument'
     | 'createRoleNode'
     | 'createNodeForSession'
     | 'updateRoleProvider'
@@ -51,23 +42,18 @@ export function useWorkspaceCanvasRoleUi({
     | 'appendRoleRunRecord'
   >
   agentSupport: Pick<ReturnType<typeof useWorkspaceCanvasAgentSupport>, 'buildAgentNodeTitle'>
-  onSpacesChange: WorkspaceCanvasProps['onSpacesChange']
-  onRequestPersistFlush?: WorkspaceCanvasProps['onRequestPersistFlush']
   onShowMessage?: WorkspaceCanvasProps['onShowMessage']
   actionRefs: WorkspaceCanvasActionRefs
 }): RoleViewProps {
+  const readDocument = useReadCanvasDocument()
   const roleActions = useWorkspaceCanvasRoleActions({
     workspaceId,
     workspacePath,
     environmentVariables,
     agentSettings,
-    contextMenu: canvasState.contextMenu,
-    setContextMenu: canvasState.setContextMenu,
-    nodesRef: nodeStore.nodesRef,
-    spacesRef: canvasState.spacesRef,
+    readDocument,
     setNodes: nodeStore.setNodes,
-    onSpacesChange,
-    onRequestPersistFlush,
+    updateCanvasDocument: nodeStore.updateCanvasDocument,
     onShowMessage,
     standardWindowSizeBucket: agentSettings.standardWindowSizeBucket,
     createRoleNode: nodeStore.createRoleNode,
@@ -85,8 +71,6 @@ export function useWorkspaceCanvasRoleUi({
     runProjectRoleFromContextMenu: roleActions.runProjectRoleFromContextMenu,
     openRoleEditor: roleActions.openRoleEditor,
     deleteProjectRole: roleActions.deleteProjectRole,
-    roleCreator: roleActions.roleCreator,
-    setRoleCreator: roleActions.setRoleCreator,
     closeRoleCreator: roleActions.closeRoleCreator,
     createRole: roleActions.createRole,
   }

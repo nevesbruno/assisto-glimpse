@@ -1,6 +1,6 @@
 import { toPersistedState } from '@contexts/workspace/presentation/renderer/utils/persistence/toPersistedState'
 import { toShellWorkspaceStateForSync } from '@app/renderer/shell/hooks/workerSync/mergeWorkspaceStateForSync'
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DragEvent } from 'react'
 import type { Node } from '@xyflow/react'
@@ -15,8 +15,15 @@ import {
 import { useWorkspaceCanvasFilesystemNodeCreation } from '@contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useNodesStore.createFilesystemNodes'
 import { FILESYSTEM_ENTRY_MIME } from '@contexts/workspace/presentation/renderer/components/workspaceCanvas/filesystemDrag'
 import { useCanvasCollapseStore } from '@contexts/workspace/presentation/renderer/store/useCanvasCollapseStore'
+import { useAppStore } from '../../../src/app/renderer/shell/store/useAppStore'
+import {
+  createCanvasDocumentHarness,
+  renderInCanvasDocument,
+} from '../../support/canvasDocumentHarness'
+import { storeBackedChannelsOf } from '../../support/workspaceCanvasStoreHarness'
 
-vi.mock('@xyflow/react', () => ({
+vi.mock('@xyflow/react', async importOriginal => ({
+  ...(await importOriginal<object>()),
   useReactFlow: () => ({ screenToFlowPosition: (point: unknown) => point }),
 }))
 
@@ -47,28 +54,40 @@ function folder(): Node<TerminalNodeData> {
   }
 }
 
+// The folder lives in the app store, which the hook reads through the canvas store's reader; the
+// node store's writer is the store-backed one, and `show` moves the provider and the app store's
+// active workspace together.
 function setup() {
-  const nodesRef = { current: [folder()] }
+  const harness = createCanvasDocumentHarness({ workspaceId: 'one', nodes: [folder()] })
+  useAppStore.setState(state => ({
+    workspaces: [...state.workspaces, { ...state.workspaces[0], id: 'two', nodes: [], spaces: [] }],
+  }))
+  const { nodesRef, setNodes } = storeBackedChannelsOf('one', harness.flush)
   const createDocumentNode = vi.fn(() => null)
   const createFolderNode = vi.fn(() => null)
   const onShowMessage = vi.fn()
   const params: Omit<FilesystemNodesParams, 'workspaceId'> = {
-    nodeStore: {
-      nodesRef,
-      createDocumentNode,
-      createFolderNode,
-      setNodes: update => {
-        nodesRef.current = update(nodesRef.current)
-      },
-    },
-    spacesRef: { current: [] },
-    onSpacesChange: vi.fn(),
+    nodeStore: { createDocumentNode, createFolderNode, setNodes, updateCanvasDocument: vi.fn() },
     onShowMessage,
   }
-  const view = renderHook(({ workspaceId }) => useFilesystemNodes({ ...params, workspaceId }), {
-    initialProps: { workspaceId: 'one' },
+  let shown = 'one'
+  const view = renderInCanvasDocument(() => useFilesystemNodes({ ...params, workspaceId: shown }), {
+    workspaceId: () => shown,
   })
-  return { ...view, nodesRef, createDocumentNode, createFolderNode, onShowMessage }
+  return {
+    ...view,
+    harness,
+    nodesRef,
+    createDocumentNode,
+    createFolderNode,
+    onShowMessage,
+    show: (workspaceId: string) =>
+      act(() => {
+        shown = workspaceId
+        useAppStore.setState({ activeWorkspaceId: workspaceId })
+        view.rerender()
+      }),
+  }
 }
 
 function drop(kind: 'file' | 'directory' = 'file'): DragEvent<HTMLDivElement> {
@@ -145,7 +164,7 @@ describe('filesystem node ownership across async work', () => {
     await act(async () => {
       view.result.current.handleDrop(drop())
     })
-    view.rerender({ workspaceId: 'two' })
+    view.show('two')
     await act(async () => {
       finish({ kind: 'file' })
     })
@@ -229,7 +248,10 @@ describe('filesystem node ownership across async work', () => {
     })
     const current = { ...original, nodes: view.nodesRef.current }
     const merged = toShellWorkspaceStateForSync(stale, current)
-    expect(merged.nodes[0]).toBe(view.nodesRef.current[0])
+    expect(merged.nodes[0]).toMatchObject({
+      id: 'folder',
+      data: { workerBinding: { endpointId: 'local', mountId: null } },
+    })
     expect(merged.nodes[0].data.folder).toMatchObject({
       uri: 'file:///repo',
       viewMode: 'list',
@@ -240,19 +262,20 @@ describe('filesystem node ownership across async work', () => {
   it('initializes collapsed presentation before publishing a folder with expanded dimensions', () => {
     const nodesRef = { current: [] as Node<TerminalNodeData>[] }
     let compactAtPublish = false
-    const view = renderHook(() =>
-      useWorkspaceCanvasFilesystemNodeCreation({
-        nodesRef,
-        spacesRef: { current: [] },
-        standardWindowSizeBucket: 'regular',
-        setNodes: update => {
-          nodesRef.current = update(nodesRef.current)
-          compactAtPublish =
-            useCanvasCollapseStore.getState().workspaces.one?.collapsedNodeIds[
-              nodesRef.current[0].id
-            ] === true
-        },
-      }),
+    createCanvasDocumentHarness({ workspaceId: 'one' })
+    const view = renderInCanvasDocument(
+      () =>
+        useWorkspaceCanvasFilesystemNodeCreation({
+          standardWindowSizeBucket: 'regular',
+          setNodes: update => {
+            nodesRef.current = update(nodesRef.current)
+            compactAtPublish =
+              useCanvasCollapseStore.getState().workspaces.one?.collapsedNodeIds[
+                nodesRef.current[0].id
+              ] === true
+          },
+        }),
+      { workspaceId: 'one' },
     )
     act(() => {
       view.result.current.createFolderNode(
@@ -278,15 +301,17 @@ describe('filesystem node ownership across async work', () => {
           one: { collapsedNodeIds: collapsed ? { folder: true } : {}, collapsedSpaceIds: {} },
         },
       })
-      const view = renderHook(() =>
-        useWorkspaceCanvasFilesystemNodeCreation({
-          nodesRef,
-          spacesRef: { current: [] },
-          standardWindowSizeBucket: 'regular',
-          setNodes: update => {
-            nodesRef.current = update(nodesRef.current)
-          },
-        }),
+      // The creator places against the store's nodes: the sibling is seeded there too.
+      createCanvasDocumentHarness({ workspaceId: 'one', nodes: [sibling] })
+      const view = renderInCanvasDocument(
+        () =>
+          useWorkspaceCanvasFilesystemNodeCreation({
+            standardWindowSizeBucket: 'regular',
+            setNodes: update => {
+              nodesRef.current = update(nodesRef.current)
+            },
+          }),
+        { workspaceId: 'one' },
       )
       act(() => {
         view.result.current.createFolderNode(

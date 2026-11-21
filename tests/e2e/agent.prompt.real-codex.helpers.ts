@@ -9,7 +9,7 @@ type ResponsesInputItem = {
   role?: string
   content?: Array<{ type: string; text?: string }>
 }
-type ResponsesRequest = {
+export type ResponsesRequest = {
   stream?: boolean
   tools?: Array<{ name?: string }>
   input?: ResponsesInputItem[]
@@ -33,6 +33,8 @@ function respond(
   approvalProbe: boolean,
   slowTool = false,
   slowToolSeconds = 3,
+  slowToolCommand = `sleep ${slowToolSeconds}`,
+  replyText = 'ACK',
 ): void {
   const id = `resp_${Date.now()}`
   const item = slowTool
@@ -42,7 +44,7 @@ function respond(
         call_id: `call_sleep_${Date.now()}`,
         name: 'exec_command',
         status: 'completed',
-        arguments: JSON.stringify({ cmd: `sleep ${slowToolSeconds}` }),
+        arguments: JSON.stringify({ cmd: slowToolCommand }),
       }
     : approvalProbe
       ? {
@@ -63,7 +65,7 @@ function respond(
           id: 'msg_ack',
           role: 'assistant',
           status: 'completed',
-          content: [{ type: 'output_text', text: 'ACK', annotations: [] }],
+          content: [{ type: 'output_text', text: replyText, annotations: [] }],
         }
   res.writeHead(200, { 'content-type': 'text/event-stream' })
   const send = (type: string, data: Record<string, unknown>) =>
@@ -82,14 +84,22 @@ function respond(
   res.end()
 }
 
-export async function startResponsesApi(options: { slowToolSeconds?: number } = {}): Promise<{
+export async function startResponsesApi(
+  options: {
+    slowToolSeconds?: number
+    slowToolCommand?: string
+    replyText?: (blocks: string[]) => string
+  } = {},
+): Promise<{
   server: Server
   url: string
   main: () => string[][]
   all: () => string[]
+  requests: () => ResponsesRequest[]
 }> {
   // Text blocks of the latest user message in each agent-loop request that starts a turn.
   const mainTurns: string[][] = []
+  const requests: ResponsesRequest[] = []
   // User text of every agent-loop request, including requests that resume after a tool call.
   const allUserText: string[] = []
   const server = createServer(async (req, res) => {
@@ -105,6 +115,9 @@ export async function startResponsesApi(options: { slowToolSeconds?: number } = 
     }
     if (req.method === 'POST' && (req.url ?? '').includes('/responses') && body) {
       const isMain = (body.tools ?? []).some(tool => tool.name === 'exec_command')
+      if (isMain) {
+        requests.push(structuredClone(body))
+      }
       const blocks = lastUserBlocks(body)
       const resumed = continuesToolCall(body)
       if (isMain && !resumed) {
@@ -123,6 +136,8 @@ export async function startResponsesApi(options: { slowToolSeconds?: number } = 
         isMain && !resumed && blocks.some(block => block.includes('TRIGGER_TOOL')),
         isMain && !resumed && blocks.some(block => block.includes('SLOW_TOOL')),
         options.slowToolSeconds,
+        options.slowToolCommand,
+        options.replyText?.(blocks),
       )
       return
     }
@@ -136,6 +151,7 @@ export async function startResponsesApi(options: { slowToolSeconds?: number } = 
     url: `http://127.0.0.1:${port}/v1`,
     main: () => [...mainTurns],
     all: () => [...allUserText],
+    requests: () => structuredClone(requests),
   }
 }
 

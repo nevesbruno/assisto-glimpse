@@ -1,11 +1,9 @@
 import fs from 'node:fs/promises'
+import { waitForSessionReadRetry } from '../AgentSessionReadLifetime'
 import { basename, join, resolve } from 'node:path'
-import { StringDecoder } from 'node:string_decoder'
 import type { AgentProviderId } from '@shared/contracts/dto'
-import {
-  resolveCodexHomeDirectoryCandidates,
-  resolveHomeDirectoryCandidates,
-} from '../../../../platform/os/HomeDirectory'
+import { resolveHomeDirectoryCandidates } from '../../../../platform/os/HomeDirectory'
+import { listCodexSessionFiles } from '../cli/CodexSessionFiles'
 import { normalizeAgentProjectRootPath } from '../AgentProjectRootPath'
 import { resolveClaudeProjectDirectoryCandidateGroups } from '../ClaudeProjectPaths'
 import {
@@ -19,27 +17,11 @@ interface ResolveSessionFilePathInput {
   sessionId: string
   startedAtMs: number
   timeoutMs?: number
+  signal?: AbortSignal
 }
 
 const POLL_INTERVAL_MS = 200
 const DEFAULT_TIMEOUT_MS = 2600
-const FIRST_LINE_READ_CHUNK_BYTES = 4096
-const FIRST_LINE_MAX_BYTES = 64 * 1024
-
-function toDateDirectoryParts(timestampMs: number): [string, string, string] {
-  const date = new Date(timestampMs)
-  const year = String(date.getFullYear())
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-
-  return [year, month, day]
-}
-
-function wait(durationMs: number): Promise<void> {
-  return new Promise(resolveWait => {
-    setTimeout(resolveWait, durationMs)
-  })
-}
 
 async function listFiles(directory: string): Promise<string[]> {
   try {
@@ -56,53 +38,6 @@ async function listDirectories(directory: string): Promise<string[]> {
     return entries.filter(entry => entry.isDirectory()).map(entry => join(directory, entry.name))
   } catch {
     return []
-  }
-}
-
-async function readFirstLine(filePath: string): Promise<string | null> {
-  let handle: Awaited<ReturnType<typeof fs.open>> | null = null
-  try {
-    handle = await fs.open(filePath, 'r')
-    const decoder = new StringDecoder('utf8')
-    const buffer = Buffer.allocUnsafe(FIRST_LINE_READ_CHUNK_BYTES)
-    let bytesReadTotal = 0
-    let remainder = ''
-
-    while (bytesReadTotal < FIRST_LINE_MAX_BYTES) {
-      const bytesToRead = Math.min(buffer.length, FIRST_LINE_MAX_BYTES - bytesReadTotal)
-      // eslint-disable-next-line no-await-in-loop
-      const { bytesRead } = await handle.read(buffer, 0, bytesToRead, null)
-      if (bytesRead <= 0) {
-        break
-      }
-
-      bytesReadTotal += bytesRead
-
-      const textChunk = decoder.write(buffer.subarray(0, bytesRead))
-      if (textChunk.length === 0) {
-        continue
-      }
-
-      const merged = `${remainder}${textChunk}`
-      const newlineIndex = merged.indexOf('\n')
-      if (newlineIndex !== -1) {
-        const line = merged.slice(0, newlineIndex).trim()
-        return line.length > 0 ? line : null
-      }
-
-      remainder = merged
-    }
-
-    if (bytesReadTotal >= FIRST_LINE_MAX_BYTES) {
-      return null
-    }
-
-    const finalLine = `${remainder}${decoder.end()}`.trim()
-    return finalLine.length > 0 ? finalLine : null
-  } catch {
-    return null
-  } finally {
-    await handle?.close().catch(() => undefined)
   }
 }
 
@@ -143,83 +78,14 @@ async function findCodexSessionFilePath(
   cwd: string,
   sessionId: string,
   startedAtMs: number,
+  signal?: AbortSignal,
 ): Promise<string | null> {
-  const resolvedCwd = resolve(cwd)
-
-  const dateCandidates = new Set<string>()
-  const now = Date.now()
-  const timestamps = [startedAtMs, now, now - 24 * 60 * 60 * 1000]
-
-  for (const timestamp of timestamps) {
-    const [year, month, day] = toDateDirectoryParts(timestamp)
-    for (const codexHomeDirectory of resolveCodexHomeDirectoryCandidates()) {
-      dateCandidates.add(join(codexHomeDirectory, 'sessions', year, month, day))
-    }
+  const files = await listCodexSessionFiles({ cwd, sessionId, startedAtMs, signal })
+  const normalize = (directory: string): string => {
+    const resolved = resolve(directory)
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved
   }
-
-  const files = (
-    await Promise.all(
-      [...dateCandidates].map(async directory => {
-        const directoryFiles = await listFiles(directory)
-        return directoryFiles.filter(file => basename(file).startsWith('rollout-'))
-      }),
-    )
-  ).flat()
-
-  if (files.length === 0) {
-    return null
-  }
-
-  const candidates = (
-    await Promise.all(
-      files.map(async file => {
-        try {
-          const stats = await fs.stat(file)
-          return {
-            file,
-            mtimeMs: stats.mtimeMs,
-          }
-        } catch {
-          return null
-        }
-      }),
-    )
-  )
-    .filter((item): item is { file: string; mtimeMs: number } => item !== null)
-    .filter(item => item.mtimeMs >= startedAtMs - 60_000)
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)
-
-  for (const candidate of candidates) {
-    // eslint-disable-next-line no-await-in-loop
-    const firstLine = await readFirstLine(candidate.file)
-    if (!firstLine) {
-      continue
-    }
-
-    try {
-      const parsed = JSON.parse(firstLine) as {
-        payload?: {
-          id?: unknown
-          cwd?: unknown
-        }
-      }
-
-      const detectedSessionId =
-        typeof parsed.payload?.id === 'string' ? parsed.payload.id.trim() : null
-      const sessionCwd =
-        typeof parsed.payload?.cwd === 'string' ? resolve(parsed.payload.cwd) : null
-
-      if (!detectedSessionId || detectedSessionId !== sessionId || sessionCwd !== resolvedCwd) {
-        continue
-      }
-
-      return candidate.file
-    } catch {
-      continue
-    }
-  }
-
-  return null
+  return files.find(file => normalize(file.cwd) === normalize(cwd))?.filePath ?? null
 }
 
 async function findGeminiSessionFilePath(cwd: string, sessionId: string): Promise<string | null> {
@@ -234,7 +100,6 @@ async function findGeminiSessionFilePath(cwd: string, sessionId: string): Promis
   ).flat()
 
   for (const projectDirectory of projectDirectories) {
-    // eslint-disable-next-line no-await-in-loop
     const projectRoot = await fs
       .readFile(join(projectDirectory, '.project_root'), 'utf8')
       .then(normalizeAgentProjectRootPath)
@@ -244,13 +109,11 @@ async function findGeminiSessionFilePath(cwd: string, sessionId: string): Promis
       continue
     }
 
-    // eslint-disable-next-line no-await-in-loop
     const chatFiles = (await listFiles(join(projectDirectory, 'chats'))).filter(file => {
       return file.endsWith('.json') && basename(file).startsWith('session-')
     })
 
     for (const chatFile of chatFiles) {
-      // eslint-disable-next-line no-await-in-loop
       const contents = await fs.readFile(chatFile, 'utf8').catch(() => null)
       if (!contents) {
         continue
@@ -277,6 +140,7 @@ async function tryResolveSessionFilePath(
   cwd: string,
   sessionId: string,
   startedAtMs: number,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   if (provider === 'claude-code') {
     return await findExistingClaudeSessionFilePathInGroups(
@@ -285,7 +149,7 @@ async function tryResolveSessionFilePath(
   }
 
   if (provider === 'codex') {
-    return await findCodexSessionFilePath(cwd, sessionId, startedAtMs)
+    return await findCodexSessionFilePath(cwd, sessionId, startedAtMs, signal)
   }
 
   if (provider === 'gemini') {
@@ -309,8 +173,17 @@ async function pollSessionFilePath(
   sessionId: string,
   startedAtMs: number,
   deadline: number,
+  signal?: AbortSignal,
 ): Promise<string | null> {
-  const resolvedPath = await tryResolveSessionFilePath(provider, cwd, sessionId, startedAtMs)
+  signal?.throwIfAborted()
+  const resolvedPath = await tryResolveSessionFilePath(
+    provider,
+    cwd,
+    sessionId,
+    startedAtMs,
+    signal,
+  )
+  signal?.throwIfAborted()
   if (resolvedPath) {
     return resolvedPath
   }
@@ -319,8 +192,8 @@ async function pollSessionFilePath(
     return null
   }
 
-  await wait(POLL_INTERVAL_MS)
-  return await pollSessionFilePath(provider, cwd, sessionId, startedAtMs, deadline)
+  await waitForSessionReadRetry(POLL_INTERVAL_MS, signal)
+  return await pollSessionFilePath(provider, cwd, sessionId, startedAtMs, deadline, signal)
 }
 
 export async function resolveSessionFilePath({
@@ -329,12 +202,21 @@ export async function resolveSessionFilePath({
   sessionId,
   startedAtMs,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal,
 }: ResolveSessionFilePathInput): Promise<string | null> {
+  signal?.throwIfAborted()
   const normalizedSessionId = sessionId.trim()
   if (normalizedSessionId.length === 0) {
     return null
   }
 
   const deadline = Date.now() + timeoutMs
-  return await pollSessionFilePath(provider, cwd, normalizedSessionId, startedAtMs, deadline)
+  return await pollSessionFilePath(
+    provider,
+    cwd,
+    normalizedSessionId,
+    startedAtMs,
+    deadline,
+    signal,
+  )
 }

@@ -22,19 +22,25 @@ export type { NodePlacementDirection, Point, Rect, Size, WorkspacePlacementNode 
 
 export function resolveWorkspaceNodesPlacement({
   anchor,
+  preferredAnchors,
   size,
   nodes,
   spaceRects,
   targetSpaceRect,
   preferredDirection,
   avoidRects,
+  overflowDirections,
 }: {
   anchor: Point
+  /** Explicit creation anchors, ordered by reference-edge distance; growth may beat distant interior slots. */
+  preferredAnchors?: Point[]
   size: Size
   nodes: WorkspacePlacementNode[]
   spaceRects?: Array<{ x: number; y: number; width: number; height: number }>
   targetSpaceRect?: { x: number; y: number; width: number; height: number } | null
   preferredDirection?: NodePlacementDirection
+  /** Try full containment, then exhaust each direction in order; omit for pointer placement. */
+  overflowDirections?: NodePlacementDirection[]
   avoidRects?: Array<{ x: number; y: number; width: number; height: number }>
 }): { placement: Point; canPlace: boolean } {
   const spaceObstacles = (spaceRects ?? []).map(rect =>
@@ -59,6 +65,13 @@ export function resolveWorkspaceNodesPlacement({
   const combinedObstaclesExceptTarget = avoidObstacles.length
     ? [...obstaclesExceptTarget, ...avoidObstacles]
     : obstaclesExceptTarget
+
+  const preferred = preferredAnchors?.find(candidate =>
+    isPositionAvailable(candidate, size, nodes, undefined, combinedObstaclesExceptTarget),
+  )
+  if (preferred) {
+    return { placement: preferred, canPlace: true }
+  }
 
   if (!targetSpaceRect) {
     if (isPositionAvailable(anchor, size, nodes, undefined, combinedSpaceObstacles)) {
@@ -93,34 +106,40 @@ export function resolveWorkspaceNodesPlacement({
       return { placement: boundedPlacement, canPlace: true }
     }
 
-    const scopedPlacement = findNearestFreeAnchorWithinBounds(
-      anchor,
-      size,
-      targetAnchorBounds,
-      nodes,
-      undefined,
-      combinedObstaclesExceptTarget,
-    )
+    const scopedPlacement = overflowDirections
+      ? null
+      : findNearestFreeAnchorWithinBounds(
+          anchor,
+          size,
+          targetAnchorBounds,
+          nodes,
+          undefined,
+          combinedObstaclesExceptTarget,
+        )
     if (scopedPlacement) {
       return { placement: scopedPlacement, canPlace: true }
     }
 
     // Ownership is retained by the caller, which grows the target and its ancestors.
     // A child's current frame is a preferred region, not a hard creation boundary.
-    const aroundSpacePlacement = findNearestFreePositionAroundBounds({
-      desired: anchor,
-      size,
-      bounds: targetBounds,
-      allNodes: nodes,
-      directions: resolvePreferredDirections({
-        anchor,
+    const directionGroups = overflowDirections
+      ? overflowDirections.map(direction => [direction])
+      : [resolvePreferredDirections({ anchor, size, targetSpaceRect, preferredDirection })]
+    let aroundSpacePlacement: Point | null = null
+    for (const directions of directionGroups) {
+      aroundSpacePlacement = findNearestFreePositionAroundBounds({
+        desired: anchor,
         size,
-        targetSpaceRect,
-        preferredDirection,
-      }),
-      gap: SPACE_NODE_PADDING,
-      obstacles: combinedObstaclesExceptTarget,
-    })
+        bounds: targetBounds,
+        allNodes: nodes,
+        directions,
+        gap: SPACE_NODE_PADDING,
+        obstacles: combinedObstaclesExceptTarget,
+      })
+      if (aroundSpacePlacement) {
+        break
+      }
+    }
 
     if (aroundSpacePlacement) {
       return { placement: aroundSpacePlacement, canPlace: true }

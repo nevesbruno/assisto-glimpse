@@ -6,9 +6,22 @@ import type {
   TerminalNodeData,
   WorkspaceSpaceState,
 } from '../../../src/contexts/workspace/presentation/renderer/types'
+import {
+  CANVAS_STORE_TEST_WORKSPACE_ID,
+  CanvasStoreTestProvider,
+} from '../../support/canvasStoreTestHarness'
+import { useCanvasInteraction } from '../../../src/contexts/workspace/presentation/renderer/store/canvasStoreContext'
+import type { CanvasInteractionState } from '../../../src/contexts/workspace/presentation/renderer/store/canvasStore.interaction'
+
+const selectNodeDragFramePreview = (interaction: CanvasInteractionState) =>
+  interaction.nodeDragFramePreview
+import { createCanvasDocumentHarness } from '../../support/canvasDocumentHarness'
+import { applyLiveNodes } from '../../../src/contexts/workspace/presentation/renderer/utils/canvasLiveNodes'
 
 vi.mock('@xyflow/react', () => {
   return {
+    // The change path reads the drag surface mode of React Flow's store when a batch runs.
+    useStoreApi: () => ({ getState: () => ({}) }),
     applyNodeChanges: (
       changes: Array<Record<string, unknown>>,
       nodes: Array<Record<string, unknown>>,
@@ -52,6 +65,7 @@ describe('useWorkspaceCanvasApplyNodeChanges live and commit publishing', () => 
   it('publishes live drag positions without committing until release', async () => {
     const liveNodesChange = vi.fn()
     const committedNodesChange = vi.fn()
+    const releaseNodesChange = vi.fn()
 
     const { useWorkspaceCanvasApplyNodeChanges } =
       await import('../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useApplyNodeChanges')
@@ -90,41 +104,37 @@ describe('useWorkspaceCanvasApplyNodeChanges live and commit publishing', () => 
       },
     ]
 
+    // The change path reads the nodes of the document, as the store holds them when a batch runs.
+    createCanvasDocumentHarness({
+      workspaceId: CANVAS_STORE_TEST_WORKSPACE_ID,
+      nodes: initialNodes,
+    })
+
     function Harness() {
       const [nodes, setNodes] = useState(initialNodes)
-      const nodesRef = useRef(nodes)
-      nodesRef.current = nodes
-      const [, setSnapGuides] = useState(null)
-      const magneticSnappingEnabledRef = useRef(false)
-      const spacesRef = useRef<WorkspaceSpaceState[]>([])
-      const selectedSpaceIdsRef = useRef<string[]>([])
-      const dragSelectedSpaceIdsRef = useRef<string[] | null>(null)
       const isNodeDraggingRef = useRef(false)
       const nodeDragSession = useWorkspaceCanvasNodeDragSession({
         workspaceId: 'workspace-live-commit',
-        spacesRef,
-        selectedSpaceIdsRef,
-        dragSelectedSpaceIdsRef,
-        magneticSnappingEnabledRef,
-        setSnapGuides,
-        onSpacesChange: () => undefined,
       })
 
       const apply = useWorkspaceCanvasApplyNodeChanges({
-        nodesRef,
         onNodesChange: next => {
           liveNodesChange(next)
-          setNodes(next)
+          setNodes(current => applyLiveNodes(current, next))
         },
         onNodesCommit: next => {
           committedNodesChange(next)
           setNodes(next)
         },
+        onNodesRelease: release => {
+          releaseNodesChange(release)
+          setNodes(current => applyLiveNodes(current, release.liveNodes))
+        },
         clearAgentLaunchToken: () => undefined,
         normalizePosition: (_nodeId, desired) => desired,
         applyPendingScrollbacks: next => next,
+        nodes,
         isNodeDraggingRef,
-        dragSelectedSpaceIdsRef,
         nodeDragSession,
       })
 
@@ -169,7 +179,7 @@ describe('useWorkspaceCanvasApplyNodeChanges live and commit publishing', () => 
       )
     }
 
-    render(<Harness />)
+    render(<Harness />, { wrapper: CanvasStoreTestProvider })
 
     fireEvent.click(screen.getByRole('button', { name: 'Drag' }))
 
@@ -186,13 +196,13 @@ describe('useWorkspaceCanvasApplyNodeChanges live and commit publishing', () => 
     await waitFor(() => {
       expect(screen.getByTestId('node-position')).toHaveTextContent('70,80')
     })
-    expect(committedNodesChange).toHaveBeenCalledTimes(1)
+    // A release is its own write, not a commit of the whole result.
+    expect(releaseNodesChange).toHaveBeenCalledTimes(1)
+    expect(committedNodesChange).not.toHaveBeenCalled()
     expect(finalProjection).toHaveBeenCalledTimes(1)
   })
 
   it('retains a derived Space preview on primary-only frames and never commits it', async () => {
-    const onSpacesChange = vi.fn()
-    const onRequestPersistFlush = vi.fn()
     const { useWorkspaceCanvasNodeDragSession } =
       await import('../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useNodeDragSession')
 
@@ -240,22 +250,18 @@ describe('useWorkspaceCanvasApplyNodeChanges live and commit publishing', () => 
       },
     ]
 
+    // The session reads the Spaces from the store of the canvas under test.
+    const documentHarness = createCanvasDocumentHarness({
+      workspaceId: CANVAS_STORE_TEST_WORKSPACE_ID,
+      nodes,
+      spaces,
+    })
+
     function Harness() {
-      const spacesRef = useRef(spaces)
-      const selectedSpaceIdsRef = useRef<string[]>([])
-      const dragSelectedSpaceIdsRef = useRef<string[] | null>(null)
-      const magneticSnappingEnabledRef = useRef(false)
-      const [, setSnapGuides] = useState(null)
       const session = useWorkspaceCanvasNodeDragSession({
         workspaceId: 'workspace-space-preview-retention',
-        spacesRef,
-        selectedSpaceIdsRef,
-        dragSelectedSpaceIdsRef,
-        magneticSnappingEnabledRef,
-        setSnapGuides,
-        onSpacesChange,
-        onRequestPersistFlush,
       })
+      const preview = useCanvasInteraction(selectNodeDragFramePreview)
       const project = () =>
         session.projectNodeDrag({
           currentNodes: nodes,
@@ -267,9 +273,7 @@ describe('useWorkspaceCanvasApplyNodeChanges live and commit publishing', () => 
 
       return (
         <div>
-          <div data-testid="preview-height">
-            {session.nodeSpaceFramePreview?.get('space')?.height ?? 'none'}
-          </div>
+          <div data-testid="preview-height">{preview?.get('space')?.height ?? 'none'}</div>
           <button
             type="button"
             onClick={() => {
@@ -289,7 +293,7 @@ describe('useWorkspaceCanvasApplyNodeChanges live and commit publishing', () => 
       )
     }
 
-    render(<Harness />)
+    render(<Harness />, { wrapper: CanvasStoreTestProvider })
     fireEvent.click(screen.getByRole('button', { name: 'Secondary' }))
     await waitFor(() => {
       expect(Number(screen.getByTestId('preview-height').textContent)).toBeGreaterThan(360)
@@ -299,14 +303,15 @@ describe('useWorkspaceCanvasApplyNodeChanges live and commit publishing', () => 
     await waitFor(() => {
       expect(Number(screen.getByTestId('preview-height').textContent)).toBeGreaterThan(360)
     })
-    expect(onSpacesChange).not.toHaveBeenCalled()
-    expect(onRequestPersistFlush).not.toHaveBeenCalled()
+    expect(documentHarness.notifications).not.toHaveBeenCalled()
+    expect(documentHarness.flush).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'End' }))
     await waitFor(() => {
       expect(screen.getByTestId('preview-height')).toHaveTextContent('none')
     })
-    expect(onSpacesChange).not.toHaveBeenCalled()
-    expect(onRequestPersistFlush).not.toHaveBeenCalled()
+    expect(documentHarness.notifications).not.toHaveBeenCalled()
+    expect(documentHarness.flush).not.toHaveBeenCalled()
+    expect(documentHarness.readStoreDocument().spaces).toEqual(spaces)
   })
 })

@@ -1,9 +1,21 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import type { Node } from '@xyflow/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import type { QuickCommand } from '../../src/contexts/settings/domain/agentSettings'
-import type { TerminalNodeData } from '../../src/contexts/workspace/presentation/renderer/types'
+import type {
+  TerminalNodeData,
+  WorkspaceSpaceState,
+} from '../../src/contexts/workspace/presentation/renderer/types'
+import {
+  CANVAS_STORE_TEST_WORKSPACE_ID,
+  renderHookWithCanvasStore,
+} from '../support/canvasStoreTestHarness'
+import { createCanvasDocumentHarness } from '../support/canvasDocumentHarness'
+import {
+  commitCanvasDocument,
+  replaceWorkspaceNodes,
+} from '../../src/contexts/workspace/presentation/renderer/store/workspaceDocumentCommands'
 import { useWorkspaceCanvasQuickMenuActions } from '../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useInteractions.quickMenuActions'
 import { useWorkspaceCanvasNodeCreation } from '../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useNodesStore.createNodes'
 import { createRemotePtySessionCoordinator } from '../../src/app/main/controlSurface/remote/remotePtyRuntime.sessionCoordinator'
@@ -86,15 +98,40 @@ function setup() {
     pty: { attach, write, spawn, kill: vi.fn() },
     controlSurface: { invoke },
   })
-  const nodesRef = { current: [] as Node<TerminalNodeData>[] }
+  // The document is the store's: the canvas store of the hook below belongs to this workspace.
+  const document = createCanvasDocumentHarness({
+    workspaceId: CANVAS_STORE_TEST_WORKSPACE_ID,
+    spaces: [
+      {
+        id: 'space',
+        name: 'Worktree',
+        directoryPath: '/worktree',
+        targetMountId: null,
+        labelColor: null,
+        nodeIds: [],
+        rect: { x: 0, y: 0, width: 2000, height: 1500 },
+      },
+    ],
+  })
+  const readNodes = (): Node<TerminalNodeData>[] => document.readStoreDocument().nodes
+  // The push-away of the created node writes through one recipe, as the node store runs it.
+  const updateCanvasDocument = (
+    recipe: (document: { nodes: Node<TerminalNodeData>[]; spaces: WorkspaceSpaceState[] }) => {
+      nodes: Node<TerminalNodeData>[]
+      spaces: WorkspaceSpaceState[]
+    },
+  ) => {
+    commitCanvasDocument(CANVAS_STORE_TEST_WORKSPACE_ID, current => {
+      const next = recipe({ nodes: current.nodes, spaces: current.spaces })
+      return { ...current, nodes: next.nodes, spaces: next.spaces }
+    })
+  }
   const onShowMessage = vi.fn()
-  const hook = renderHook(
+  const hook = renderHookWithCanvasStore(
     ({ workspaceId }) => {
       const creationOptions = {
-        nodesRef,
-        spacesRef: { current: [] },
         setNodes: (updater: (nodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[]) => {
-          nodesRef.current = updater(nodesRef.current)
+          replaceWorkspaceNodes(CANVAS_STORE_TEST_WORKSPACE_ID, updater(readNodes()))
         },
         standardWindowSizeBucket: 'regular' as const,
         browserDefaultMode: 'native' as const,
@@ -104,34 +141,22 @@ function setup() {
       return useWorkspaceCanvasQuickMenuActions({
         ...creationOptions,
         ...creation,
-        contextMenu: { kind: 'pane', x: 100, y: 100, flowX: 100, flowY: 100 },
-        setContextMenu: vi.fn(),
         workspaceId,
         // A detached worktree uses Control Surface spawn, outside the workspace root.
         workspacePath: '/workspace',
-        spacesRef: {
-          current: [
-            {
-              id: 'space',
-              name: 'Worktree',
-              directoryPath: '/worktree',
-              targetMountId: null,
-              labelColor: null,
-              nodeIds: [],
-              rect: { x: 0, y: 0, width: 2000, height: 1500 },
-            },
-          ],
-        },
+        updateCanvasDocument,
         websiteWindowsEnabled: true,
         defaultTerminalProfileId: null,
         terminalFontSize: 13,
         terminalDisplayMetrics: { fontSize: 13 },
-        onSpacesChange: vi.fn(),
       })
     },
-    { initialProps: { workspaceId: 'workspace' } },
+    {
+      initialProps: { workspaceId: 'workspace' },
+      contextMenu: { kind: 'pane', x: 100, y: 100, flowX: 100, flowY: 100 },
+    },
   )
-  return { ...hook, coordinator, messages, attach, write, spawn, invoke, nodesRef, onShowMessage }
+  return { ...hook, coordinator, messages, attach, write, spawn, invoke, readNodes, onShowMessage }
 }
 
 describe('terminal quick command launch and PTY attachment', () => {
@@ -142,7 +167,7 @@ describe('terminal quick command launch and PTY attachment', () => {
       launch = harness.result.current.runQuickCommand(quickCommand())
     })
     const outcome = launch.catch(error => error)
-    await waitFor(() => expect(harness.nodesRef.current).toHaveLength(1))
+    await waitFor(() => expect(harness.readNodes()).toHaveLength(1))
     await waitFor(() =>
       expect(harness.messages).toContainEqual(
         expect.objectContaining({ type: 'attach', sessionId: 'created-session' }),
@@ -183,7 +208,9 @@ describe('terminal quick command launch and PTY attachment', () => {
       launch = harness.result.current.runQuickCommand(quickCommand())
     })
     await waitFor(() => expect(harness.attach).toHaveBeenCalledTimes(1))
-    harness.nodesRef.current = []
+    act(() => {
+      replaceWorkspaceNodes(CANVAS_STORE_TEST_WORKSPACE_ID, [])
+    })
     harness.coordinator.onSessionAttached('created-session', { role: 'controller', epoch: 1 })
     await launch
     expect(harness.write).not.toHaveBeenCalled()
@@ -274,7 +301,7 @@ describe('terminal quick command launch and PTY attachment', () => {
     await act(async () => {
       await harness.result.current.runQuickCommand(quickCommand())
     })
-    expect(harness.nodesRef.current).toEqual([])
+    expect(harness.readNodes()).toEqual([])
     expect(harness.attach).not.toHaveBeenCalled()
     expect(harness.write).not.toHaveBeenCalled()
   })

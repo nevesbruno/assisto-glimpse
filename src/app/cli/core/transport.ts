@@ -1,3 +1,7 @@
+import { taskClaimErrorPresentation } from '../../../shared/errors/taskClaimError'
+import { clientFeaturesForOperation } from '../../../shared/contracts/controlSurface/clientFeatures'
+import { agentSpawnErrorPresentation } from '../../../shared/errors/agentSpawnError'
+import { isConnectionRefused } from '../../../shared/errors/connectionRefused'
 import { isPromptDeliveryResult, normalizePromptDeliveryResult } from './promptTransport'
 import {
   agentPromptErrorPresentation,
@@ -5,11 +9,14 @@ import {
   promptUnknownRecovery,
 } from '../../../shared/errors/agentPromptError'
 import { isAppErrorDescriptor, formatAppErrorMessage } from '../../../shared/errors/appError'
+import { nodeParentErrorPresentation } from '../../../shared/errors/nodeParentError'
 import { CONTROL_SURFACE_PROTOCOL_VERSION } from '../../../shared/contracts/controlSurface/protocol'
 import type { Connection } from './context'
 import { get } from './render'
 import type { ErrorTarget, OptionSpec } from './command'
 import { CliError, inputChoiceIssues, inputErrorMessage, validationError } from './errors'
+import { authorizationError } from './authorizationError'
+import { initialPromptErrorPresentation } from '../../../shared/errors/initialPromptFeedback'
 export async function invoke(
   connection: Connection,
   request: { kind: string; id: string; payload: unknown },
@@ -42,7 +49,7 @@ export async function invoke(
         'content-type': 'application/json',
         'x-opencove-protocol': String(CONTROL_SURFACE_PROTOCOL_VERSION),
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify({ ...request, clientFeatures: clientFeaturesForOperation(request.id) }),
       signal: controller.signal,
     })
     const authStatus = [401, 403].includes(response.status)
@@ -52,22 +59,38 @@ export async function invoke(
       }
       throw error
     })
-    if (
-      authStatus ||
-      ['common.forbidden', 'control_surface.unauthorized'].includes(result?.error?.code)
-    ) {
-      throw new CliError(
-        result?.error?.code ?? 'context.unauthorized',
-        4,
-        'Authorization failed. An OpenCove session may read and interact, but cannot perform administrative actions or manage workers.',
-        'If you intend a broader action, run the command outside the OpenCove session with a desktop token.',
-        result?.error?.details,
-      )
+    const authError = authorizationError(response.status, result?.error)
+    if (authError) {
+      throw authError
     }
     if (result?.ok === false) {
       const error = result.error ?? {}
+      const initialPrompt = initialPromptErrorPresentation(error)
+      if (initialPrompt) {
+        throw new CliError(error.code, 2, initialPrompt.message, initialPrompt.hint, error.details)
+      }
+      const parent = nodeParentErrorPresentation(error)
+      if (parent) {
+        throw new CliError(error.code, 1, parent.message, parent.hint, error.details)
+      }
       if (prompt && !isAppErrorDescriptor(error)) {
         throw new CliError('transport.invalid_response', 1, 'Invalid control surface response')
+      }
+      const unknownHandler = `Unknown control surface ${request.kind}: ${request.id}`
+      if (
+        error.code === 'common.invalid_input' &&
+        (request.kind === 'query' || request.kind === 'command') &&
+        (error.debugMessage === unknownHandler || error.debugMessage === `Error: ${unknownHandler}`)
+      ) {
+        throw new CliError(
+          error.code,
+          5,
+          `The connected OpenCove Worker is older than this CLI and does not support ${request.id}. Restart or update OpenCove.`,
+          undefined,
+          error.details,
+          // Capability negotiation still needs the canonical diagnostic.
+          unknownHandler,
+        )
       }
       if (prompt && error.code === 'common.invalid_input') {
         const text = promptValidationPresentation(error.details)
@@ -117,6 +140,8 @@ export async function invoke(
           : String(error.code).endsWith('.unsupported_operation')
             ? 'does not support this operation'
             : undefined
+      const claim = taskClaimErrorPresentation(error)
+      const spawn = agentSpawnErrorPresentation(error)
       const promptError =
         prompt && isAppErrorDescriptor(error) ? agentPromptErrorPresentation(error) : undefined
       const attemptsKnown =
@@ -135,23 +160,27 @@ export async function invoke(
                 ? 6
                 : 1,
         // agent.prompt renders its own recovery text; other commands keep target-aware messages.
-        prompt
-          ? (promptError?.message ??
+        claim?.message ??
+          spawn?.message ??
+          (prompt
+            ? (promptError?.message ??
               (!attemptsKnown
                 ? 'Prompt delivery failed. The outcome is unknown.'
                 : formatAppErrorMessage(error)))
-          : target?.entity && targetAction
-            ? `${target.entity} ${JSON.stringify(Object.values(targetDetails)[0])} ${targetAction}`
-            : error.code === 'common.invalid_input'
-              ? inputErrorMessage(request.id, error.debugMessage)
-              : (error.debugMessage ?? error.code ?? 'Operation failed'),
-        prompt
-          ? (promptError?.hint ?? promptUnknownRecovery)
-          : error.code === 'common.approved_path_required'
-            ? 'Run "opencove mount list --project <id>" to see approved roots.'
-            : target
-              ? `Run "${target.listCommand}" to find available targets.`
-              : undefined,
+            : target?.entity && targetAction
+              ? `${target.entity} ${JSON.stringify(Object.values(targetDetails)[0])} ${targetAction}`
+              : error.code === 'common.invalid_input'
+                ? inputErrorMessage(request.id, error.debugMessage)
+                : (error.debugMessage ?? error.code ?? 'Operation failed')),
+        claim?.hint ??
+          spawn?.hint ??
+          (prompt
+            ? (promptError?.hint ?? promptUnknownRecovery)
+            : error.code === 'common.approved_path_required'
+              ? 'Run "opencove mount list --project <id>" to see approved roots.'
+              : target
+                ? `Run "${target.listCommand}" to find available targets.`
+                : undefined),
         prompt && !attemptsKnown
           ? { ...error.details, deliveryOutcome: 'unknown' }
           : target
@@ -183,14 +212,6 @@ export async function invoke(
       if (!prompt) {
         throw error
       }
-      if (error.code === 'context.unauthorized') {
-        throw new CliError(
-          error.code,
-          error.exitCode,
-          'OpenCove refused authorization for this request.',
-          'Check the endpoint and credentials before retrying.',
-        )
-      }
       if (error.code !== 'transport.invalid_response') {
         throw error
       }
@@ -210,7 +231,11 @@ export async function invoke(
           ? 'Timed out waiting for the delivery result. The outcome is unknown.'
           : 'Request timed out',
         prompt ? promptUnknownRecovery : undefined,
-        prompt ? { deliveryOutcome: 'unknown' } : undefined,
+        prompt
+          ? { deliveryOutcome: 'unknown' }
+          : request.kind === 'query'
+            ? { reason: 'read_timeout' }
+            : undefined,
       )
     }
     throw new CliError(
@@ -222,7 +247,14 @@ export async function invoke(
       request.id === 'agent.prompt'
         ? promptUnknownRecovery
         : 'Check the endpoint URL and ensure the OpenCove app or worker is running.',
-      { endpoint: connection.endpoint, ...(prompt ? { deliveryOutcome: 'unknown' } : {}) },
+      {
+        endpoint: connection.endpoint,
+        ...(prompt
+          ? { deliveryOutcome: 'unknown' }
+          : request.kind === 'query' && isConnectionRefused(error)
+            ? { reason: 'connection_refused' }
+            : {}),
+      },
     )
   } finally {
     clearTimeout(timer)

@@ -15,7 +15,7 @@ export function updateWorkspacesWithTerminalAgentActivityMetadata({
   workspaces,
   event,
 }: {
-  workspaces: WorkspaceState[]
+  workspaces: readonly WorkspaceState[]
   event: ActivityMetadataEvent
 }): {
   nextWorkspaces: WorkspaceState[]
@@ -80,6 +80,7 @@ export function updateWorkspacesWithTerminalAgentActivityMetadata({
             ? (node.data.agentOverlay?.startedAtMs ?? activity.observedAtMs)
             : activity.observedAtMs,
         activity: {
+          ...(activity.launchMode ? { launchMode: activity.launchMode } : {}),
           invocationId: activity.invocationId,
           generation: activity.generation,
           phase: activity.phase,
@@ -107,6 +108,7 @@ export function updateWorkspacesWithTerminalAgentActivityMetadata({
         previousActivity?.invocationId !== nextOverlay.activity.invocationId ||
         previousActivity?.generation !== nextOverlay.activity.generation ||
         previousActivity?.phase !== nextOverlay.activity.phase ||
+        previousActivity?.launchMode !== nextOverlay.activity.launchMode ||
         previousActivity?.observedAtMs !== nextOverlay.activity.observedAtMs ||
         previousActivity?.sourceRevision !== nextOverlay.activity.sourceRevision ||
         previousActivity?.revision !== nextOverlay.activity.revision
@@ -135,7 +137,7 @@ export function updateWorkspacesWithTerminalAgentActivityMetadata({
   })
 
   return {
-    nextWorkspaces: didChange ? nextWorkspaces : workspaces,
+    nextWorkspaces: nextWorkspaces,
     didChange,
     durableDidChange,
   }
@@ -173,14 +175,14 @@ export function reconcileTerminalAgentActivitySnapshots({
   workspaces,
   readLatestMetadata,
 }: {
-  workspaces: WorkspaceState[]
+  workspaces: readonly WorkspaceState[]
   readLatestMetadata: (sessionId: string) => TerminalSessionMetadataEvent | null
 }): {
   nextWorkspaces: WorkspaceState[]
   didChange: boolean
   durableDidChange: boolean
 } {
-  let nextWorkspaces = workspaces
+  let nextWorkspaces: WorkspaceState[] = [...workspaces]
   let didChange = false
   let durableDidChange = false
   const sessionIds = new Set(

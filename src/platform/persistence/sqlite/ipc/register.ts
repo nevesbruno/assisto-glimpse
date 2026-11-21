@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { persistWriteWireResult } from '../appStateWriteResult'
 import { IPC_CHANNELS } from '../../../../shared/contracts/ipc'
 import type { PersistWriteResult, ReadAppStateResult } from '../../../../shared/contracts/dto'
 import type { IpcRegistrationDisposable } from '../../../../app/main/ipc/types'
@@ -70,14 +71,12 @@ export function registerPersistenceIpcHandlers(
 
       try {
         const store = await getStore()
-        return await store.writeWorkspaceStateRaw(normalized.raw)
+        return persistWriteWireResult(await store.writeWorkspaceStateRaw(normalized.raw))
       } catch (error) {
         return {
           ok: false,
           reason: 'io',
-          error: createAppErrorDescriptor('persistence.io_failed', {
-            debugMessage: toAppErrorDescriptor(error).debugMessage,
-          }),
+          error: toAppErrorDescriptor(error, 'persistence.io_failed'),
         }
       }
     },
@@ -128,17 +127,17 @@ export function registerPersistenceIpcHandlers(
         }
 
         const store = await getStore()
-        return await store.writeAppState(normalized.state, {
-          baseRevision: normalized.baseRevision,
-          allowEmptyWorkspaceOverwrite: normalized.allowEmptyWorkspaceOverwrite === true,
-        })
+        return persistWriteWireResult(
+          await store.writeAppState(normalized.state, {
+            baseRevision: normalized.baseRevision,
+            allowEmptyWorkspaceOverwrite: normalized.allowEmptyWorkspaceOverwrite === true,
+          }),
+        )
       } catch (error) {
         return {
           ok: false,
           reason: 'io',
-          error: createAppErrorDescriptor('persistence.io_failed', {
-            debugMessage: toAppErrorDescriptor(error).debugMessage,
-          }),
+          error: toAppErrorDescriptor(error, 'persistence.io_failed'),
         }
       }
     },
@@ -190,9 +189,7 @@ export function registerPersistenceIpcHandlers(
         return {
           ok: false,
           reason: 'io',
-          error: createAppErrorDescriptor('persistence.io_failed', {
-            debugMessage: toAppErrorDescriptor(error).debugMessage,
-          }),
+          error: toAppErrorDescriptor(error, 'persistence.io_failed'),
         }
       }
     },
@@ -247,9 +244,7 @@ export function registerPersistenceIpcHandlers(
         return {
           ok: false,
           reason: 'io',
-          error: createAppErrorDescriptor('persistence.io_failed', {
-            debugMessage: toAppErrorDescriptor(error).debugMessage,
-          }),
+          error: toAppErrorDescriptor(error, 'persistence.io_failed'),
         }
       }
     },

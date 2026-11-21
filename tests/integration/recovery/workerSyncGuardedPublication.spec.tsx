@@ -97,7 +97,7 @@ it.each(['edit', 'creation', 'deletion', 'renewal', 'settings'] as const)(
             throw 'conflict'
           }
           durable = normalize(state)!
-          return ++revision
+          return { revision: ++revision, corrected: false }
         },
       })
       return { ok: true, level: 'full', bytes: 1, revision: result.revision, merged: result.merged }
@@ -118,27 +118,29 @@ it.each(['edit', 'creation', 'deletion', 'renewal', 'settings'] as const)(
     acceptPersistedStateSnapshot({ state: base, revision, isPersisted: true })
     guardNodeFromSyncOverwrite(nodeId)
     if (scenario === 'edit' || scenario === 'renewal') {
-      useAppStore.getState().setWorkspaces(previous =>
-        previous.map(project => ({
-          ...project,
-          nodes: project.nodes.map(node =>
-            node.id === nodeId
-              ? { ...node, data: { ...node.data, note: { text: 'local text' } } }
-              : node,
-          ),
-        })),
-      )
+      useAppStore.setState(state => ({
+        workspaces: (previous =>
+          previous.map(project => ({
+            ...project,
+            nodes: project.nodes.map(node =>
+              node.id === nodeId
+                ? { ...node, data: { ...node.data, note: { text: 'local text' } } }
+                : node,
+            ),
+          })))(state.workspaces),
+      }))
     }
     if (scenario === 'creation') {
-      useAppStore.getState().setWorkspaces(previous =>
-        previous.map(project => ({
-          ...project,
-          nodes: [
-            ...project.nodes,
-            { ...project.nodes.find(node => node.id === nodeId)!, id: 'local-created' },
-          ],
-        })),
-      )
+      useAppStore.setState(state => ({
+        workspaces: (previous =>
+          previous.map(project => ({
+            ...project,
+            nodes: [
+              ...project.nodes,
+              { ...project.nodes.find(node => node.id === nodeId)!, id: 'local-created' },
+            ],
+          })))(state.workspaces),
+      }))
       guardNodeFromSyncOverwrite('local-created', 2500)
     }
     if (scenario === 'settings') {
@@ -216,7 +218,6 @@ it.each(['edit', 'creation', 'deletion', 'renewal', 'settings'] as const)(
           }
           revision++
           act(() => emit({ type: 'app_state.updated', operationId: 'node.update', revision }))
-          // eslint-disable-next-line no-await-in-loop -- Each renewal must apply before the guard expires.
           await act(async () => {
             await vi.advanceTimersByTimeAsync(100)
           })

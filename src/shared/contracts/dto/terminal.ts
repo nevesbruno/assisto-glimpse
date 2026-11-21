@@ -1,4 +1,5 @@
-import type { AgentProviderId } from './agent'
+import type { AgentLaunchMode, AgentProviderId } from './agent'
+import type { TerminalAgentShimProvider } from '../agentProviderDescriptors'
 
 export interface PseudoTerminalSession {
   sessionId: string
@@ -111,6 +112,7 @@ export interface ResizeTerminalInput {
   operationId?: string
   baseGeometryRevision?: number | null
   authorityEpoch?: number | null
+  // @compat pty-geometry-legacy-revision
   /** @deprecated Compatibility only. Use operationId + baseGeometryRevision. */
   revision?: number | null
 }
@@ -227,6 +229,8 @@ export type AgentHookInstallState =
   | 'not_required'
 
 export interface TerminalSessionStateEvent {
+  /** Provider history reconstruction; never a live turn boundary. Consumed by the Worker. */
+  baseline?: boolean
   /** Present only on Worker-decided projections. */
   agentRunState?: import('./agentRunState').AgentRunSnapshot
   agentProvider?: AgentProviderId
@@ -235,6 +239,7 @@ export interface TerminalSessionStateEvent {
   emittedAtMs?: number
   hookEventName?: string
   blockedReason?: 'permission' | 'question' | 'plan' | null
+  blockedSummary?: import('./agentRunState').AgentBlockedSummary | null
 
   piConversation?: { pid: number; revision: number }
   observationUnavailable?: boolean
@@ -246,10 +251,12 @@ export interface TerminalSessionStateEvent {
   observedAtMs?: number
 }
 
-export type TerminalAgentShimProvider = 'claude-code' | 'codex' | 'pi'
+export type { TerminalAgentShimProvider }
 
 export interface TerminalAgentActivitySnapshot {
   provider: TerminalAgentShimProvider
+  /** Invocation intent, independent of subsequent provider identity discovery. */
+  launchMode?: AgentLaunchMode
   invocationId: string
   generation: number
   phase: 'active' | 'exited'

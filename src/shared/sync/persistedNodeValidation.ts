@@ -88,7 +88,8 @@ function isAgentNodeData(value: unknown): value is PersistedAgentNodeData {
     (value.directoryMode === undefined || isExecutionDirectoryMode(value.directoryMode)) &&
     (value.customDirectory === undefined || isNullableString(value.customDirectory)) &&
     isOptionalBoolean(value.shouldCreateDirectory) &&
-    (value.taskId === undefined || isNullableString(value.taskId))
+    (value.taskId === undefined || isNullableString(value.taskId)) &&
+    isOptionalBoolean(value.agentFullAccess)
   )
 }
 
@@ -250,6 +251,7 @@ export function isPersistedNode(value: unknown): value is PersistedNodeContract 
     isOptionalNullableString(value.sessionId) &&
     typeof value.title === 'string' &&
     isOptionalBoolean(value.titlePinnedByUser) &&
+    isOptionalBoolean(value.titleIsLiteral) &&
     isPoint(value.position) &&
     isFiniteNumber(value.width) &&
     isFiniteNumber(value.height) &&

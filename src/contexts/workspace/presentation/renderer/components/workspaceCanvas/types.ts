@@ -19,6 +19,7 @@ import type { LabelColor } from '@shared/types/labelColor'
 import type { SpaceBoundary } from '@shared/types/spaceBoundary'
 import type { TerminalPtyGeometryDisplayMetrics } from '@contexts/workspace/domain/terminalPtyGeometry'
 import type { CanvasCollapseState } from '../../utils/canvasCollapse'
+import type { ManagedClaudeLifecycleReceipt } from '@shared/contracts/managedClaudeLaunch'
 
 export type WorkspaceCanvasMessageTone = 'info' | 'warning' | 'error'
 
@@ -34,11 +35,8 @@ export interface WorkspaceCanvasProps {
   environmentVariables?: Record<string, string>
   worktreesRoot: string
   nodes: Node<TerminalNodeData>[]
-  onNodesChange: (nodes: Node<TerminalNodeData>[]) => void
-  onRequestPersistFlush?: () => void
   spaces: WorkspaceSpaceState[]
   activeSpaceId: string | null
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
   onActiveSpaceChange: (spaceId: string | null) => void
   onOpenSpaceContextMenu?: (spaceId: string, anchor: { x: number; y: number }) => void
   shortcutsEnabled?: boolean
@@ -111,14 +109,14 @@ export interface SelectionDraftState {
   phase: 'active' | 'settling'
 }
 
-export interface EmptySelectionPromptState {
-  x: number
-  y: number
-  rect: WorkspaceSpaceRect
-}
+/** What the marquee rectangle shows: the draft without its pointer and selection bookkeeping. */
+export type SelectionDraftUiState = Pick<
+  SelectionDraftState,
+  'startX' | 'startY' | 'currentX' | 'currentY' | 'phase'
+>
 
 export interface SpaceTargetMountPickerState {
-  nodeIds: string[]
+  nodeIds: readonly string[]
   rect: WorkspaceSpaceRect | null
   mounts: MountDto[]
   selectedMountId: string
@@ -172,18 +170,6 @@ export interface CanvasWheelGestureSessionState {
 
 export type TrackpadGestureLockState = CanvasWheelGestureSessionState
 
-export interface TaskCreatorState {
-  anchor: Point
-  title: string
-  requirement: string
-  priority: TaskPriority
-  selectedTags: string[]
-  autoGenerateTitle: boolean
-  isGeneratingTitle: boolean
-  isCreating: boolean
-  error: string | null
-}
-
 export interface RoleCreatorState {
   anchor: Point
   mode: 'create' | 'edit'
@@ -233,6 +219,7 @@ export interface SpaceWorktreeMismatchDropWarningState {
 export interface CreateNodeInput {
   nodeId?: string
   sessionId: string
+  managedClaudeLifecycle?: ManagedClaudeLifecycleReceipt
   profileId?: string | null
   runtimeKind?: TerminalRuntimeKind
   terminalGeometry?: TerminalPtyGeometry | null

@@ -54,11 +54,11 @@ export type MultiEndpointPtyRuntime = ControlSurfacePtyRuntime & {
   }>
   drainPresentationRecovery: () => Promise<void>
   drainLaunchArtifacts: () => Promise<void>
-  dispose: () => void
+  dispose: () => void | Promise<void>
 }
 
 export function createMultiEndpointPtyRuntime(options: {
-  localRuntime: ControlSurfacePtyRuntime & { dispose?: () => void }
+  localRuntime: ControlSurfacePtyRuntime & { dispose?: () => void | Promise<void> }
   topology: WorkerTopologyStore
   disposeLocalRuntime: boolean
   agentStateSources?: readonly Pick<ControlSurfacePtyRuntime, 'onState' | 'onClaudeTranscript'>[]
@@ -242,7 +242,6 @@ export function createMultiEndpointPtyRuntime(options: {
     drainPresentationRecovery: async () => {
       for (;;) {
         const observed = [...proxiesByEndpointId.values()]
-        // eslint-disable-next-line no-await-in-loop
         await Promise.all(observed.map(async proxy => await proxy.drainPresentationRecovery()))
         if (
           observed.length === proxiesByEndpointId.size &&
@@ -253,14 +252,14 @@ export function createMultiEndpointPtyRuntime(options: {
       }
     },
     drainLaunchArtifacts: async () => await launchArtifactOwner.drain(),
-    write: (sessionId, data) => {
+    write: (sessionId, ...input) => {
       const route = routes.get(sessionId)
       if (!route || route.kind === 'local') {
-        options.localRuntime.write(sessionId, data)
+        options.localRuntime.write(sessionId, ...input)
         return
       }
 
-      getProxy(route.endpointId).write(route.remoteSessionId, data)
+      getProxy(route.endpointId).write(route.remoteSessionId, input[0])
     },
     probeForeground: sessionId => {
       const route = routes.get(sessionId)
@@ -301,11 +300,13 @@ export function createMultiEndpointPtyRuntime(options: {
       const {
         authorityEpoch: _upstreamAuthorityEpoch,
         baseGeometryRevision: _upstreamBaseGeometryRevision,
+        // @compat pty-geometry-legacy-revision
         revision: _upstreamLegacyRevision,
         ...downstreamInput
       } = input
       void _upstreamAuthorityEpoch
       void _upstreamBaseGeometryRevision
+      // @compat pty-geometry-legacy-revision
       void _upstreamLegacyRevision
       const remoteResult = await getProxy(route.endpointId).resize({
         ...downstreamInput,
@@ -317,6 +318,14 @@ export function createMultiEndpointPtyRuntime(options: {
       }
     },
     kill: sessionId => {
+      // Exited remote windows retain a cursor identity, not a live route. Cleanup
+      // must still reach the Worker that owns their observed descendants.
+      const retired = retiredRemoteCursorByHomeSessionId.get(sessionId)
+      if (!routes.has(sessionId) && retired) {
+        getProxy(retired.endpointId).kill(retired.remoteSessionId)
+        retiredRemoteCursorByHomeSessionId.delete(sessionId)
+        return
+      }
       const route = routes.get(sessionId)
       if (!route || route.kind === 'local') {
         options.localRuntime.kill(sessionId)
@@ -401,7 +410,7 @@ export function createMultiEndpointPtyRuntime(options: {
 
       if (options.disposeLocalRuntime) {
         try {
-          options.localRuntime.dispose?.()
+          return options.localRuntime.dispose?.()
         } catch {
           // ignore
         }

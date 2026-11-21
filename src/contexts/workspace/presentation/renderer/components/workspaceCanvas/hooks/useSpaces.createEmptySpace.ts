@@ -9,38 +9,28 @@ import {
 } from '@contexts/workspace/domain/workspaceBootstrap'
 import { resolveNodesPlacement } from './useNodesStore.resolvePlacement'
 import { resolveSpaceMountLaunchContext } from './spaceMountLaunchContext'
+import {
+  useCanvasDocumentCommands,
+  useCanvasUiCommands,
+  useReadCanvasDocument,
+} from '../../../store/canvasStoreContext'
 
 type Options = Pick<
   Parameters<typeof useWorkspaceCanvasCreateSpace>[0],
-  | 'workspaceId'
-  | 'workspacePath'
-  | 'standardWindowSizeBucket'
-  | 'nodesRef'
-  | 'spacesRef'
-  | 'onSpacesChange'
-  | 'onRequestPersistFlush'
-  | 'setContextMenu'
-  | 'setEmptySelectionPrompt'
-  | 'setSpaceTargetMountPicker'
-  | 'cancelSpaceRename'
-  | 'onShowMessage'
+  'workspaceId' | 'workspacePath' | 'standardWindowSizeBucket' | 'onShowMessage'
 > & { resolveDefaultSpaceName: () => string }
 
 export function useCreateEmptySpace({
   workspaceId,
   workspacePath,
   standardWindowSizeBucket,
-  nodesRef,
-  spacesRef,
-  onSpacesChange,
-  onRequestPersistFlush,
-  setContextMenu,
-  setEmptySelectionPrompt,
-  setSpaceTargetMountPicker,
-  cancelSpaceRename,
   onShowMessage,
   resolveDefaultSpaceName,
 }: Options) {
+  const ui = useCanvasUiCommands()
+  const readDocument = useReadCanvasDocument()
+  const documentCommands = useCanvasDocumentCommands()
+
   const { t } = useTranslation()
   const lifetime = useMemo(
     () => ({ workspaceId, workspacePath, active: true }),
@@ -61,7 +51,6 @@ export function useCreateEmptySpace({
           workspaceId,
           workspacePath,
           space: null,
-          spaces: [],
           fallbackToFirstMount: true,
         })
       } catch (error) {
@@ -91,10 +80,10 @@ export function useCreateEmptySpace({
       const resolved = resolveNodesPlacement({
         anchor: desiredAnchor,
         size,
-        getNodes: () => nodesRef.current,
+        getNodes: () => readDocument().nodes,
         getSpaceRects: () =>
-          spacesRef.current
-            .map(space => space.rect)
+          readDocument()
+            .spaces.map(space => space.rect)
             .filter(
               (rect): rect is { x: number; y: number; width: number; height: number } =>
                 rect !== null,
@@ -103,9 +92,8 @@ export function useCreateEmptySpace({
 
       if (resolved.canPlace !== true) {
         onShowMessage?.(t('messages.noWindowSlotNearby'), 'warning')
-        setContextMenu(null)
-        setEmptySelectionPrompt(null)
-        cancelSpaceRename()
+        ui.closeContextMenu()
+        ui.cancelSpaceRename()
         return null
       }
 
@@ -124,28 +112,21 @@ export function useCreateEmptySpace({
         rect,
       })
 
-      const nextSpaces = sanitizeSpaces([...spacesRef.current, nextSpace])
-      spacesRef.current = nextSpaces
-      onSpacesChange(nextSpaces)
-      onRequestPersistFlush?.()
-      setContextMenu(null)
-      setEmptySelectionPrompt(null)
-      setSpaceTargetMountPicker(null)
-      cancelSpaceRename()
+      documentCommands.updateSpaces(spaces => sanitizeSpaces([...spaces, nextSpace]), {
+        flush: true,
+      })
+      ui.closeContextMenu()
+      ui.closeDialog('spaceTargetMountPicker')
+      ui.cancelSpaceRename()
       return nextSpaceId
     },
     [
-      cancelSpaceRename,
-      nodesRef,
+      documentCommands,
       lifetime,
-      onRequestPersistFlush,
       onShowMessage,
-      onSpacesChange,
+      readDocument,
       resolveDefaultSpaceName,
-      setContextMenu,
-      setEmptySelectionPrompt,
-      setSpaceTargetMountPicker,
-      spacesRef,
+      ui,
       standardWindowSizeBucket,
       workspaceId,
       workspacePath,

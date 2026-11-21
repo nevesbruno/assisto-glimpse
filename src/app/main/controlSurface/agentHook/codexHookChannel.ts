@@ -1,3 +1,4 @@
+import { terminalEnvironment } from '../../../../shared/runtime/terminalEnvironment.mjs'
 import { createServer } from 'node:http'
 import {
   createAgentHookChannel,
@@ -18,15 +19,19 @@ export function createCodexHookChannel(options: {
     ...options,
     hookPath: '/hooks/codex',
     source: 'codex_hook',
-    validateEnvelope: value =>
-      normalizeCodexHookEnvelope(value) ?? validateCodexHookEnvelope(value),
-    resolveSessionIdentity: envelope => ({
-      hookEventName: envelope.hookEventName,
-      providerSessionId: envelope.codexSessionId,
-    }),
+    publishManagedSessionIdentity: true,
+    validateEnvelope: value => {
+      const envelope = normalizeCodexHookEnvelope(value) ?? validateCodexHookEnvelope(value)
+      // Child hooks share the invocation credential, but have no authority over its parent.
+      return envelope?.agentId ? { ...envelope, state: null } : envelope
+    },
+    resolveSessionIdentity: envelope =>
+      envelope.agentId
+        ? null
+        : { hookEventName: envelope.hookEventName, providerSessionId: envelope.codexSessionId },
     buildReservationEnv: (endpoint, token) => ({
-      OPENCOVE_CODEX_HOOK_ENDPOINT: endpoint,
-      OPENCOVE_CODEX_HOOK_TOKEN: token,
+      [terminalEnvironment.codexHookEndpoint]: endpoint,
+      [terminalEnvironment.codexHookToken]: token,
     }),
   })
 }

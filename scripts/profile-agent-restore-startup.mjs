@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* eslint-disable no-await-in-loop -- profiling script intentionally samples the real app over time */
+import './lib/isolateHostEnvironment.mjs'
 
 import { _electron as electron } from '@playwright/test'
 import Database from 'better-sqlite3'

@@ -1,58 +1,55 @@
-import { useCallback, useLayoutEffect, type MutableRefObject } from 'react'
+import { useCallback, useLayoutEffect } from 'react'
 import { resolvePaneNodeCreationAnchor } from './useInteractions.creationAnchor'
 import type { Node } from '@xyflow/react'
 import type { StandardWindowSizeBucket } from '@contexts/settings/domain/agentSettings'
 import type { TerminalPtyGeometryDisplayMetrics } from '@contexts/workspace/domain/terminalPtyGeometry'
 import type { Point } from '../../../types'
-import type { TerminalNodeData, WorkspaceSpaceState } from '../../../types'
-import type { ContextMenuState, CreateNodeInput } from '../types'
+import type { TerminalNodeData } from '../../../types'
+import type { CreateNodeInput } from '../types'
 import { createTerminalNodeAtFlowPosition } from './useInteractions.paneNodeCreation'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
 import { bindWorkspaceCanvasCreateTerminalAtFlowPointTestAction } from '../testHarness'
-
-type SetNodes = (
-  updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-  options?: { syncLayout?: boolean },
-) => void
+import {
+  useCanvasDocumentCommands,
+  useCanvasUiCommands,
+  useReadCanvasDocument,
+  useReadCanvasUi,
+} from '../../../store/canvasStoreContext'
 
 export function useWorkspaceCanvasTerminalCreation({
-  contextMenu,
-  setContextMenu,
   workspaceId,
-  spacesRef,
   workspacePath,
   environmentVariables,
   defaultTerminalProfileId,
-  nodesRef,
   standardWindowSizeBucket,
   terminalFontSize,
   terminalDisplayMetrics,
   createNodeForSession,
-  setNodes,
-  onSpacesChange,
+  updateCanvasDocument,
   onShowMessage,
 }: {
-  contextMenu: ContextMenuState | null
-  setContextMenu: (next: ContextMenuState | null) => void
   workspaceId: string
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
   workspacePath: string
   environmentVariables?: Record<string, string>
   defaultTerminalProfileId: string | null
-  nodesRef: MutableRefObject<Node<TerminalNodeData>[]>
   standardWindowSizeBucket: StandardWindowSizeBucket
   terminalFontSize: number
   terminalDisplayMetrics: TerminalPtyGeometryDisplayMetrics
   createNodeForSession: (input: CreateNodeInput) => Promise<Node<TerminalNodeData> | null>
-  setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
   onShowMessage?: (message: string, level: 'info' | 'warning' | 'error') => void
 }): {
   createTerminalNode: () => Promise<void>
   createTerminalNodeAtFlowPoint: (anchor: Point) => Promise<void>
 } {
+  const ui = useCanvasUiCommands()
+  const documentCommands = useCanvasDocumentCommands()
+  const readDocument = useReadCanvasDocument()
+  const readUi = useReadCanvasUi()
+
   const createTerminalAtFlowPoint = useCallback(
     async (anchor: Point) => {
-      setContextMenu(null)
+      ui.closeContextMenu()
       await createTerminalNodeAtFlowPosition({
         anchor,
         workspaceId,
@@ -62,10 +59,9 @@ export function useWorkspaceCanvasTerminalCreation({
         terminalDisplayMetrics,
         workspacePath,
         environmentVariables,
-        spacesRef,
-        nodesRef,
-        setNodes,
-        onSpacesChange,
+        readDocument,
+        updateCanvasDocument,
+        updateSpaces: documentCommands.updateSpaces,
         createNodeForSession,
         onShowMessage,
       })
@@ -73,16 +69,15 @@ export function useWorkspaceCanvasTerminalCreation({
     [
       createNodeForSession,
       defaultTerminalProfileId,
+      documentCommands,
       environmentVariables,
-      nodesRef,
-      onSpacesChange,
       onShowMessage,
-      setContextMenu,
-      setNodes,
-      spacesRef,
+      readDocument,
+      ui,
       standardWindowSizeBucket,
       terminalFontSize,
       terminalDisplayMetrics,
+      updateCanvasDocument,
       workspaceId,
       workspacePath,
     ],
@@ -100,12 +95,13 @@ export function useWorkspaceCanvasTerminalCreation({
   }, [createTerminalAtFlowPoint])
 
   const createTerminalNode = useCallback(async () => {
+    const contextMenu = readUi().contextMenu
     if (!contextMenu || contextMenu.kind !== 'pane') {
       return
     }
 
     await createTerminalAtFlowPoint(resolvePaneNodeCreationAnchor(contextMenu))
-  }, [contextMenu, createTerminalAtFlowPoint])
+  }, [createTerminalAtFlowPoint, readUi])
 
   return {
     createTerminalNode,

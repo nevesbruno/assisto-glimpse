@@ -16,6 +16,136 @@
 4. 只重跑目标失败项，确认是否稳定复现。
 5. 若是 E2E，优先看 `screenshot`、`trace`、`console` 与持久化状态。
 
+### Electron renderer / GPU 进程崩溃
+
+`Page crashed` / `Target crashed` 是进程退出信号，不能按普通导航失败重试。
+先看 CI 的 `[opencove-runtime-diagnostics]` 输出和失败附件
+`electron-process-diagnostics`：它们保留 `render-process-gone` / `child-process-gone`
+的 reason、exitCode、窗口加载阶段、GPU feature status 和退出时内存快照。
+快照中的进程可能已不包含死掉的 renderer，不能把它当作崩溃前峰值内存。
+主进程日志先于自动 reload 记录；测试必须在删除 userData 前保留日志及 stdout/stderr。
+Playwright trace 中最先失败的步骤才是崩溃位置，后续 evaluate 的错误可能只是结果。
+本地验证链路：构建后运行 `runtime-diagnostics.renderer-crash.spec.ts`，该测试明确调用
+`webContents.forcefullyCrashRenderer()`，并验证应用清理后附件仍存在。
+
+恢复测试的主进程身份必须通过 `electronApp.evaluate(() => process.pid)` 从 Electron
+内部读取。Playwright 1.58 在 Windows 使用 `shell: true` 启动，`electronApp.process()`
+返回的是 shell launcher，PID 与 Electron 主进程不同。保留 launcher 的退出状态作为
+进程清理证据，但比较恢复前后是否为同一个主进程时必须使用 Electron 自己的 PID。
+
+#### E2E 原生 minidump 与符号化
+
+只有 **Windows** 上 `NODE_ENV=test` **且**设置了 `OPENCOVE_TEST_USER_DATA_DIR` 的
+Desktop 启动才会启动 Electron Crashpad。主进程在创建 renderer 前把 `crashDumps` 指向该测试 profile
+内的 `crashDumps/`，使用 `uploadToServer: false`、`ignoreSystemCrashHandler: true`。
+生产启动不改变 crash reporter 或系统 crash handler。dump 含进程内存，不属于脱敏诊断包，
+不要提交到 Git、发送到在线符号化服务，或改成真实用户 profile。
+
+Windows 是当前存在未解释原生 renderer 崩溃的平台。macOS 的真实 fixture 交错 A/B
+测量发现启用 reporter 后，启动到空 workspace 就绪加关闭的配对中位增量超过 20 ms，
+所以不让 macOS/Linux 每次 E2E 启动承担 handler 成本。恢复测试按平台断言：Windows
+必须有一个有效 dump，其他平台必须没有 dump；不能用“有没有捕获到 dump”决定是否检查。
+
+E2E fixture 在启动前记录已有 dump，退出后、删除 profile 前把本次新增的 `.dmp`
+复制到 test output，并作为 `electron-minidump-*.dmp` 附件保留。扫描不依赖 Crashpad 的
+平台目录名（Windows 常见 `reports/`，macOS/Linux 常见 `pending/`、`completed/`），
+也不跟随 symlink。fixture 通常在 test 的 `finally` 内关闭应用，此时 Playwright 尚未把
+test 标成失败，所以所有新增 dump 都保留，包括明确注入的恢复测试。
+
+Windows CI 的 `Upload Playwright report` 在 `failure()` 时上传整个 `test-results/`，
+artifact 名为 `playwright-report-windows-platform-e2e`，保留 7 天；上述附件和原始副本均
+在这个目录内，不需要单独上传测试 profile。已有 dump 不会在复用 profile 的下一次启动
+重复附加。文字附件失败时仍尝试保存 dump；诊断错误不替换原始 test 错误。
+
+在 Apple Silicon Mac 上分析 **Windows x64 / Electron 41.5.1** dump：
+
+```bash
+mkdir -p artifacts/crash-analysis/tools artifacts/crash-analysis/windows
+curl -fL -o artifacts/crash-analysis/stackwalk.tar.xz \
+  https://github.com/rust-minidump/rust-minidump/releases/download/v0.27.0/minidump-stackwalk-aarch64-apple-darwin.tar.xz
+tar -xf artifacts/crash-analysis/stackwalk.tar.xz -C artifacts/crash-analysis/tools
+curl -fL -o artifacts/crash-analysis/windows-symbols.zip \
+  https://github.com/electron/electron/releases/download/v41.5.1/electron-v41.5.1-win32-x64-symbols.zip
+unzip -q artifacts/crash-analysis/windows-symbols.zip -d artifacts/crash-analysis/windows
+
+# 从失败 run 下载；RUN_ID 替换为具体 run 编号。
+gh run download RUN_ID --repo DeadWaveWave/opencove \
+  -n playwright-report-windows-platform-e2e -D artifacts/crash-analysis/ci
+# 将 dump_file 改为下载的 electron-minidump-*.dmp 路径。
+dump_file=artifacts/crash-analysis/ci/path/to/electron-minidump.dmp
+artifacts/crash-analysis/tools/minidump-stackwalk-aarch64-apple-darwin/minidump-stackwalk \
+  --human "$dump_file" artifacts/crash-analysis/windows/breakpad_symbols \
+  > artifacts/crash-analysis/renderer-stack.txt
+```
+
+Intel Mac 下载 `minidump-stackwalk-x86_64-apple-darwin.tar.xz`。stackwalker 的架构匹配
+分析机；**symbols 的版本、平台和架构匹配崩溃进程**。保持 zip 内的 Breakpad 目录结构，
+不要把 `.sym` 文件平铺。41.5.1 Windows x64 的主模块为
+`electron.exe.pdb/87F7B822BA38AB224C4C44205044422E1/electron.exe.sym`。
+工具按模块 debug ID 匹配；仅有 `electron.exe + offset` 而没有函数名时，先查版本、
+架构、debug ID 和传入的 `breakpad_symbols` 根目录。系统 DLL 没有符号时仍可分析
+Electron 帧；不要把未知系统帧误报为 Electron 的根因。
+
+本机端到端验证：先 `pnpm build`，再运行
+`OPENCOVE_E2E_DISABLE_CRASH_FALLBACK=1 pnpm exec playwright test tests/e2e/runtime-diagnostics.renderer-crash.spec.ts`。
+该测试在 Windows 检查 profile 删除后的 dump 与 `MDMP` 签名，其他平台仍检查恢复与文字附件。
+CI 的 `platform-e2e-windows` 也运行它，所以 Windows 上的捕获链路每次 PR 都会被验证。
+若需在 Mac 重新验证原生符号化链路，仅在本地临时移除 `startTestCrashReporter` 的平台判断，
+保留 test/profile 条件并重新构建，用下面的临时测试产生 dump；完成后恢复平台判断并重新构建，
+不要提交该临时改动。`forcefullyCrashRenderer()` 在 macOS
+可能先请求诊断快照再杀进程，此时 stackwalker 显示 `No crash`，不代表 dump 不可用。
+若要验证真正异常的 faulting frame，可在使用 `launchApp` 的临时 Playwright 测试中，
+通过 CDP 调用 preload 隔离上下文的 `process.crash()`（不要向产品组件或 bridge 增加入口）：
+
+```ts
+const cdp = await electronApp.context().newCDPSession(window)
+const contexts: Array<{ id: number; name: string }> = []
+cdp.on('Runtime.executionContextCreated', ({ context }) => contexts.push(context))
+await cdp.send('Runtime.enable')
+const isolated = contexts.find(context => context.name === 'Electron Isolated Context')!
+const crashed = window.waitForEvent('crash')
+await cdp.send('Runtime.evaluate', {
+  expression: 'process.crash()', contextId: isolated.id,
+}).catch(error => {
+  if (!/crash|closed/i.test(String(error))) throw error
+})
+await crashed
+// finally 中必须 await electronApp.close()，以保留附件并清理本测试进程。
+```
+
+macOS arm64 dump 使用 `electron-v41.5.1-darwin-arm64-symbols.zip`，其余符号化步骤相同。
+已用 Electron 41.5.1 在 macOS arm64 生成真实 renderer 异常、让临时测试失败，并在 profile
+清理后符号化保留的 dump：`EXC_BAD_ACCESS / KERN_INVALID_ADDRESS`，地址 `0x0`，
+`CrRendererMain` 顶帧 `electron::ElectronBindings::Crash()`，源码 `electron_bindings.cc:118`。
+这证明捕获、失败附件和符号化链路；它不等于复现 Windows 的自发访问违规。
+
+参考：[Electron crashReporter](https://www.electronjs.org/docs/latest/api/crash-reporter)、
+[Electron Crash Reporting](https://www.electronjs.org/docs/latest/tutorial/crash-reporting)、
+[rust-minidump](https://github.com/rust-minidump/rust-minidump)。
+
+#### Crashpad handler 生命周期与 profile 清理
+
+Electron 41.5.1 使用 Chromium 146.0.7680.216 中的 Crashpad。handler 的退出条件是
+**所有 client 消失**，并非主进程退出瞬间：macOS 等待 exception port 失去全部 senders；
+Linux 的 `--initial-client-fd` 等待全部 client socket 关闭；Windows 的
+`--initial-client-data` 注册主进程，随后注册 renderer 等子进程，监视各 client 的进程句柄，
+最后一个退出后结束服务。当前配置禁用上传；Electron 也没有启用 handler 的自我监控。
+因此遗留的 Chromium client 可让 handler 活得比主进程更久，fixture 的 `close()` 不等同于
+显式 join handler。源码与协议见
+[Electron reporter 启动](https://github.com/electron/electron/blob/v41.5.1/shell/browser/api/electron_api_crash_reporter.cc)、
+[Crashpad handler 文档](https://github.com/chromium/chromium/blob/146.0.7680.216/third_party/crashpad/crashpad/handler/crashpad_handler.md)。
+
+Windows 的 metadata、settings 和 dump 文件操作没有 `FILE_SHARE_DELETE`，所以仍在
+处理文件的 handler **可能阻止 profile 删除**；但数据库对象没有终身持有目录或 metadata
+句柄，闲置 handler 存活本身不证明目录被锁。参考
+[Windows database](https://github.com/chromium/chromium/blob/146.0.7680.216/third_party/crashpad/crashpad/client/crash_report_database_win.cc)、
+[Windows file I/O](https://github.com/chromium/chromium/blob/146.0.7680.216/third_party/crashpad/crashpad/util/file/file_io_win.cc)。
+`cleanupUserDataDirWithRetry` 已对 `EBUSY`/`EPERM`/`ENOTEMPTY` 做 6 次尝试（共等待 1.5 秒）；
+耗尽后记录 `Skipping locked userData cleanup` 并留下目录，不让测试失败。没有新增或延长重试。
+检查 Windows CI 时同时检查这条警告与对应 `--type=crashpad-handler` 的 database 路径；
+不能因为 `close()` 已返回就声称 profile 一定删除。macOS unlink 语义也不能证明 Windows
+没有句柄竞争，跨平台清理结果仍需各平台运行验证。
+
 ### Worker 在日志输出后失去响应
 
 如果终端停止接受输入，并伴随 Worker 端口或 PID 被替换，检查启动器是否持续消费子进程
@@ -28,7 +158,32 @@
 进程存活状态由持有的 `ChildProcess` 决定；自动恢复不得仅因探测失败替换仍存活的进程。
 应同时检查 PID/端口是否保持一致，以及同一终端会话在负载和刷新后是否仍能接受输入。
 
+### 持久化提示 I/O 失败，但数据库仍可读写
+
+该提示也可能来自 Desktop 到 Worker 的请求超时。先在数据库隔离副本上验证读写，并检查
+Worker 的独立查询响应、CPU、内存和打开的文件数；不要仅凭通用提示判断数据库损坏。
+大量重复打开同一个 Agent transcript 时，检查会话标题同步是否因画布重渲染而重新订阅，
+以及缓存未命中的并发请求是否重复扫描。
+
+标题是派生展示，不能占满与持久化共享的 Worker 资源。PTY 订阅以运行生命周期为边界，
+回调变化不能触发 cached metadata 重放；同一路径和文件指纹共享在途扫描，只有最新指纹
+拥有缓存发布权。目录扫描必须限制并发，失败、文件变化和清理后允许正确重读。
+恢复时 Worker 状态事件可能早于节点绑定；节点更新后应从事件中心补读运行时状态，
+不能依赖回调变化触发的重新订阅补齐，也不能为补齐状态重新启动标题扫描。
+回归入口：`ptyTaskCompletion.lifecycle.spec.tsx`、`agentSessionCatalog.cache.concurrent.spec.ts`
+和 `agentSessionCatalog.scanBudget.spec.ts`。
+
 ## 测试层级选择（策略）
+
+### Agent 启动反复完成提醒或误显 Working
+
+对齐 Worker `agent.list`、运行事件和 transcript 的真实写入时间；短时间内多次完成可能是
+历史回放，而非新任务。恢复读取应折叠为一次 baseline，不能发布历史 turn 边界；文件重写、
+分块和半条 JSON 也遵循此规则。通知消费 Worker 的完成 ID 并去重，不从持久化的 UI 状态推断。
+Codex SessionStart 只绑定身份；Working 需要任务证据。可信会话 ID 不代表 resume 启动，
+身份发现也不能重置新 invocation 的 watcher 游标。旧 Codex rollout 按 ID 定位，不按近期目录
+或 mtime 判断是否存在。回归入口：`agentSessionStartupBaseline.spec.ts`、
+`terminalAgentWatcherStartup.spec.ts` 和 `recovery.agent-startup-history.spec.ts`。
 
 目标：用 **最低成本** 的测试层级先定位问题；确认根因后再补足能防回归的覆盖。
 

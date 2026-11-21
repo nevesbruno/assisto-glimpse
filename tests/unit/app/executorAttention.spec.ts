@@ -104,8 +104,30 @@ function waitingEvent(
   return {
     sessionId,
     state: 'waiting',
-    agentRunState: { state, blockedReason, blockedSummary } as never,
+    agentRunState: {
+      state,
+      blockedReason,
+      blockedSummary: blockedSummary
+        ? { kind: 'question', questions: [{ question: blockedSummary, options: [] }] }
+        : null,
+    } as never,
   }
+}
+
+let endedAt = 0
+function endedTurnSnapshot(sessionId: string, state: 'working' | 'idle') {
+  return {
+    sessionId,
+    state,
+    blockedReason: null,
+    blockedSummary: null,
+    turn: null,
+    quality: 'authoritative',
+    lastEndedTurn:
+      state === 'idle'
+        ? { id: `turn-${endedAt}`, outcome: 'completed', endedAt: Date.now() + (endedAt += 1) }
+        : null,
+  } as never
 }
 
 beforeEach(() => orchestrationLinks.store.setState({ linksRevision: 0, links: [] }))
@@ -174,7 +196,13 @@ describe('U-11 executor attention: the watcher', () => {
     const { onStandby, onWorking } = mount()
     act(() => harness.onState?.(waitingEvent('pty-exec', 'permission', 'Run')))
     expect(onStandby).toHaveBeenCalledTimes(1)
-    act(() => harness.onState?.({ sessionId: 'pty-exec', state: 'standby' }))
+    act(() =>
+      harness.onState?.({
+        sessionId: 'pty-exec',
+        state: 'standby',
+        agentRunState: { state: 'idle', blockedReason: null, blockedSummary: null } as never,
+      }),
+    )
     expect(onWorking).toHaveBeenCalledWith('pty-exec')
   })
 
@@ -247,8 +275,20 @@ describe('U-13 executor attention: end of turn does not reach the user', () => {
   }
 
   const endTurn = (sessionId: string) => {
-    act(() => harness.onState?.({ sessionId, state: 'working' }))
-    act(() => harness.onState?.({ sessionId, state: 'standby' }))
+    act(() =>
+      harness.onState?.({
+        sessionId,
+        state: 'working',
+        agentRunState: endedTurnSnapshot(sessionId, 'working'),
+      }),
+    )
+    act(() =>
+      harness.onState?.({
+        sessionId,
+        state: 'standby',
+        agentRunState: endedTurnSnapshot(sessionId, 'idle'),
+      }),
+    )
   }
 
   afterEach(() => {

@@ -10,6 +10,7 @@ import {
   invokeValue,
   openAuthedCanvas,
   readSharedState,
+  terminalTranscript,
   writeAppState,
 } from './helpers'
 
@@ -182,8 +183,7 @@ test.describe('Worker web canvas - Worktree', () => {
     await initRepo(repoPath)
     await invokeValue<void>(page.request, 'command', 'workspace.approveRoot', { path: repoPath })
 
-    await writeAppState(
-      page.request,
+    await writeAppState(page.request, () =>
       buildAppState({
         workspacePath: repoPath,
         workspaceName: 'web-worktree',
@@ -254,8 +254,7 @@ test.describe('Worker web canvas - Worktree', () => {
     await initRepo(repoPath)
     await invokeValue<void>(page.request, 'command', 'workspace.approveRoot', { path: repoPath })
 
-    await writeAppState(
-      page.request,
+    await writeAppState(page.request, () =>
       buildAppState({
         workspacePath: repoPath,
         workspaceName: 'web-worktree-runtime',
@@ -286,7 +285,7 @@ test.describe('Worker web canvas - Worktree', () => {
       }),
     )
 
-    await openAuthedCanvas(page)
+    await openAuthedCanvas(page, '/?opencoveTerminalTestApi=1')
 
     await page.locator(`[data-testid="workspace-space-menu-${spaceId}"]`).click({ force: true })
     await expect(page.locator('[data-testid="workspace-space-action-menu"]')).toBeVisible()
@@ -361,10 +360,13 @@ test.describe('Worker web canvas - Worktree', () => {
     await openSpaceContextMenu(page, spaceId)
     await page.locator('[data-testid="workspace-context-run-default-agent"]').click()
 
-    const agentTerminal = page.locator('.terminal-node', {
-      hasText: '[opencove-test-agent] codex new',
+    const agentTerminal = page.locator('.terminal-node').filter({
+      has: page.locator('.terminal-node__transcript', {
+        hasText: '[opencove-test-agent] codex new',
+      }),
     })
     await expect(agentTerminal).toBeVisible()
+    await expect(terminalTranscript(agentTerminal)).toContainText('[opencove-test-agent] codex new')
 
     await expect
       .poll(async () => {
