@@ -302,7 +302,7 @@ it('spawn sends a request id and prints the link and the first dispatch', async 
   expect(await run(['orch', 'spawn', '--provider', 'codex', '--prompt', 'do it'], s.io)).toBe(0)
   expect(s.bodies[0].payload).toMatchObject({ provider: 'codex', prompt: 'do it' })
   expect(s.bodies[0].payload.requestId).toMatch(/^[0-9a-f-]{36}$/)
-  expect(s.out()).toBe('exec-api ligado (codex, serviço); despacho 7f3a aceito, rodada 1/3\n')
+  expect(s.out()).toBe('exec-api ligado (serviço); despacho 7f3a aceito, rodada 1/3\n')
 })
 
 it('cancel, interrupt and close print the ADR lines', async () => {
@@ -333,6 +333,15 @@ it('user-only commands forward their inputs', async () => {
     ['orch.approval.respond', { executorNodeId: 'e', requestId: 'r1', decision: 'accept' }],
     ['orch.hooks.approve', { executorNodeId: 'e', keys: ['a', 'b'] }],
   ])
+})
+
+it('spawn accepts opencode and sends it as the provider', async () => {
+  const s = server()
+  expect(await run(['orch', 'spawn', '--provider', 'opencode'], s.io)).toBe(0)
+  expect(s.bodies[0].payload.provider).toBe('opencode')
+  const refused = server()
+  expect(await run(['orch', 'spawn', '--provider', 'gemini'], refused.io)).toBe(2)
+  expect(refused.fetch).not.toHaveBeenCalled()
 })
 
 it('spawn defaults the provider to codex and approval respond requires a decision', async () => {

@@ -32,7 +32,9 @@ export const orchSpawnOperation = defineOperation({
   ],
   input: z.strictObject({
     requestId,
-    provider: z.enum(['codex']).describe('Executor provider; only codex in phase 2'),
+    provider: z
+      .enum(['codex', 'opencode'])
+      .describe('Executor provider: codex or opencode; the CLI defaults to codex'),
     prompt: orchestrationTextSchema.optional().describe('Initial task sent as the first dispatch'),
     title: label.optional().describe('Title of the new executor node'),
     model: label.optional().describe('Model identifier passed to the executor provider'),

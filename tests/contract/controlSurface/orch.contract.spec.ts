@@ -27,6 +27,14 @@ const matrix: Record<string, 'read' | 'interact' | 'admin'> = {
 const queries = new Set(['orch.status', 'orch.link.list'])
 
 describe('orch.* operations contract (C-02)', () => {
+  it('accepts opencode in orch.spawn alongside codex', () => {
+    const spawn = (provider: string) =>
+      byId['orch.spawn'].input.safeParse({ requestId: uuid, provider }).success
+    expect(spawn('codex')).toBe(true)
+    expect(spawn('opencode')).toBe(true)
+    expect(spawn('claude-code')).toBe(false)
+  })
+
   it('declares the twelve operations with the matrix scopes, kind and availability', () => {
     expect(orchOperations.map(op => op.id).sort()).toEqual(Object.keys(matrix).sort())
     for (const op of orchOperations) {

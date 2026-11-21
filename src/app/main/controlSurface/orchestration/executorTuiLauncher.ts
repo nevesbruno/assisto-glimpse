@@ -2,10 +2,12 @@ import type {
   ExecutorTuiLauncher,
   LaunchExecutorTuiInput,
 } from '../../../../contexts/orchestration/application/ports'
+import type { ExecutorRuntimeProvider } from '../../../../contexts/orchestration/application/ports/executorRuntime'
+import { buildCodexRemoteTuiCommand } from '../../../../contexts/orchestration/infrastructure/codex/CodexRemoteTuiCommand'
 import {
-  EXECUTOR_REMOTE_TOKEN_ENV,
-  buildCodexRemoteTuiCommand,
-} from '../../../../contexts/orchestration/infrastructure/codex/CodexRemoteTuiCommand'
+  OPEN_CODE_REMOTE_PASSWORD_ENV,
+  buildOpenCodeRemoteTuiCommand,
+} from '../../../../contexts/orchestration/infrastructure/opencode/OpenCodeRemoteTuiCommand'
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../handlers/sessionPrepareOrReviveGeometry'
 import type { ControlSurfacePtyRuntime } from '../handlers/sessionPtyRuntime'
 import { canvasSpawnIdentity } from '../sessionSpawnIdentityContext'
@@ -20,11 +22,25 @@ export type DisposableExecutorTuiLauncher = ExecutorTuiLauncher & {
 
 export interface ExecutorTuiLauncherDeps {
   readonly ptyRuntime: Pick<ControlSurfacePtyRuntime, 'spawnSession' | 'kill'>
+  /** Resolved before the launch: the codex executable, the historical entry point. */
   readonly resolveCodexExecutable: () => string
+  /** Resolved per provider; without it an opencode TUI cannot be launched. */
+  readonly resolveExecutable?: (provider: ExecutorRuntimeProvider) => string
   readonly liveSessionOf: (nodeId: string) => string | null
   /** Attaches the new PTY to the executor node (composition owns the node state). */
-  readonly bindSession: (nodeId: string, sessionId: string) => Promise<void>
+  readonly bindSession: (
+    nodeId: string,
+    sessionId: string,
+    provider: ExecutorRuntimeProvider,
+  ) => Promise<void>
   readonly killDelayMs?: number
+}
+
+/** The attach token names the provider: each adapter injects its own secret variable. */
+export function providerOfAttach(
+  attach: LaunchExecutorTuiInput['attach'],
+): ExecutorRuntimeProvider {
+  return attach.tokenEnv.name === OPEN_CODE_REMOTE_PASSWORD_ENV ? 'opencode' : 'codex'
 }
 
 /** Runs outside `canvasSpawnIdentity`, so the PTY never gets a window grant (A5). */
@@ -52,13 +68,36 @@ export function createExecutorTuiLauncher(
     pendingKills.set(nodeId, { sessionId, timer })
   }
 
-  const spawnTui = async (input: LaunchExecutorTuiInput): Promise<void> => {
-    const { command, args } = buildCodexRemoteTuiCommand({
-      executablePath: deps.resolveCodexExecutable(),
+  const commandOf = (
+    provider: ExecutorRuntimeProvider,
+    input: LaunchExecutorTuiInput,
+  ): { command: string; args: string[] } => {
+    const executablePath =
+      deps.resolveExecutable?.(provider) ??
+      (provider === 'codex'
+        ? deps.resolveCodexExecutable()
+        : (() => {
+            throw new Error('The opencode executable was not resolved before the TUI launch.')
+          })())
+    if (provider === 'opencode') {
+      return buildOpenCodeRemoteTuiCommand({
+        executablePath,
+        sessionId: input.attach.sessionRef,
+        url: input.attach.url,
+        cwd: input.attach.cwd,
+      })
+    }
+    return buildCodexRemoteTuiCommand({
+      executablePath,
       threadId: input.attach.sessionRef,
       url: input.attach.url,
       cwd: input.attach.cwd,
     })
+  }
+
+  const spawnTui = async (input: LaunchExecutorTuiInput): Promise<void> => {
+    const provider = providerOfAttach(input.attach)
+    const { command, args } = commandOf(provider, input)
     const { sessionId } = await canvasSpawnIdentity.exit(() =>
       deps.ptyRuntime.spawnSession({
         cwd: input.attach.cwd,
@@ -66,10 +105,10 @@ export function createExecutorTuiLauncher(
         rows: DEFAULT_PTY_ROWS,
         command,
         args,
-        injectedEnv: { [EXECUTOR_REMOTE_TOKEN_ENV]: input.attach.tokenEnv.value },
+        injectedEnv: { [input.attach.tokenEnv.name]: input.attach.tokenEnv.value },
       }),
     )
-    await deps.bindSession(input.executorNodeId, sessionId)
+    await deps.bindSession(input.executorNodeId, sessionId, provider)
   }
 
   return {
