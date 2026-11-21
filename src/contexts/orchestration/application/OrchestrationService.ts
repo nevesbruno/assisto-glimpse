@@ -29,6 +29,7 @@ import {
   type ExecutorSlot,
 } from './executorSlots'
 import { respondApproval, recordApprovalEvent, type RespondApprovalInput } from './approvals'
+import { pendingAttention } from './pendingAttention'
 import { approveHooks, type ApproveHooksInput } from './hookApprovals'
 import { createLink, type CreateLinkInput } from './linkCreate'
 import { extendLinkRounds } from './linkLifecycle'
@@ -176,6 +177,10 @@ export class OrchestrationService {
 
   public createLink(principal: OrchestrationPrincipal, input: CreateLinkInput) {
     return createLink(this.ctx, principal, input)
+  }
+
+  public pendingAttention(principal: OrchestrationPrincipal, input: { executorNodeId?: string }) {
+    return pendingAttention(this.ctx, principal, input.executorNodeId ?? null)
   }
 
   public respondApproval(principal: OrchestrationPrincipal, input: RespondApprovalInput) {

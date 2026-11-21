@@ -5,6 +5,14 @@ import {
 } from './executorHealth'
 import type { ExecutorRuntime, ExecutorRuntimeEvent, HookTrustPending } from './ports'
 
+/** What the approval window needs from the request, kept besides its identity. */
+export interface PendingApproval {
+  readonly requestId: string
+  readonly kind: string
+  readonly summary: string
+  readonly turnRef: string | null
+}
+
 export interface ExecutorSlot {
   readonly executorNodeId: string
   runtime: ExecutorRuntime | null
@@ -13,7 +21,7 @@ export interface ExecutorSlot {
   tail: Promise<unknown>
   /** `turnRef` to the turn id of the run state. */
   readonly turns: Map<string, string>
-  readonly pendingApprovals: Set<string>
+  readonly pendingApprovals: Map<string, PendingApproval>
   pendingHooks: readonly HookTrustPending[]
   /** Hooks were approved and the service has not restarted to read them yet. */
   restartPending: boolean
@@ -43,7 +51,7 @@ export function createSlot(executorNodeId: string): ExecutorSlot {
     health: INITIAL_EXECUTOR_HEALTH,
     tail: Promise.resolve(),
     turns: new Map(),
-    pendingApprovals: new Set(),
+    pendingApprovals: new Map(),
     pendingHooks: [],
     restartPending: false,
   }
@@ -52,7 +60,12 @@ export function createSlot(executorNodeId: string): ExecutorSlot {
 /** Keeps what the status shows, which is the part of a signal the slot itself remembers. */
 export function rememberSignal(slot: ExecutorSlot, signal: ExecutorRuntimeEvent): void {
   if (signal.type === 'approval.requested') {
-    slot.pendingApprovals.add(signal.requestId)
+    slot.pendingApprovals.set(signal.requestId, {
+      requestId: signal.requestId,
+      kind: signal.kind,
+      summary: signal.summary,
+      turnRef: signal.turnRef,
+    })
   } else if (signal.type === 'approval.resolved') {
     slot.pendingApprovals.delete(signal.requestId)
   } else if (signal.type === 'hooks.trust_pending') {

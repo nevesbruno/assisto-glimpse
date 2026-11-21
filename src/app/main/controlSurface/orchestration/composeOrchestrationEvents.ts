@@ -6,6 +6,7 @@ import type {
   Clock,
   DispatchRepository,
   ExecutorNodePort,
+  ExecutorRuntimeEvent,
   IdGenerator,
   NoticeOutboxRepository,
   OrchestrationEventPublisher,
@@ -69,6 +70,13 @@ export interface OrchestrationEvents {
 
 const RESTARTS_EXHAUSTED = 'restarts_exhausted'
 
+/** A new item for the approval window: the renderer answers by reading `orch.approval.list`. */
+const ATTENTION_EVENTS = new Set<ExecutorRuntimeEvent['type']>([
+  'approval.requested',
+  'approval.resolved',
+  'hooks.trust_pending',
+])
+
 /** Everything the Worker does with the events of the service: notices, mirror and health. */
 export function createOrchestrationEvents(deps: OrchestrationEventsDeps): OrchestrationEvents {
   const { sources } = deps
@@ -127,6 +135,9 @@ export function createOrchestrationEvents(deps: OrchestrationEventsDeps): Orches
       unsubscribers.push(
         service.subscribeEvents((executorNodeId, event) => {
           void supervisor.handle(executorNodeId, event)
+          if (ATTENTION_EVENTS.has(event.type)) {
+            mirror.sync().catch(onError)
+          }
           if (event.type === 'executor.down' && event.reason === RESTARTS_EXHAUSTED) {
             service.markExecutorUnavailable(executorNodeId).catch(onError)
           }

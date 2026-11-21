@@ -65,6 +65,13 @@ describe('hook approvals', () => {
   it('records the pair read from the service with who, event and origin, and lowers the count', async () => {
     const spawned = await withPendingHooks()
     expect(await pending(spawned)).toBe(2)
+    expect(
+      (
+        await spawned.harness.service.pendingAttention(USER, {
+          executorNodeId: spawned.executorNodeId,
+        })
+      ).links[0].hooks,
+    ).toEqual([H1, H2])
     await spawned.harness.service.approveHooks(USER, {
       executorNodeId: spawned.executorNodeId,
       keys: ['k1'],
@@ -79,6 +86,13 @@ describe('hook approvals', () => {
       }),
     ])
     expect(await pending(spawned)).toBe(1)
+    expect(
+      (
+        await spawned.harness.service.pendingAttention(USER, {
+          executorNodeId: spawned.executorNodeId,
+        })
+      ).links[0].hooks,
+    ).toEqual([H2])
   })
 
   it('restarts the service at once when the executor is idle, resuming the session and relaunching the TUI', async () => {
