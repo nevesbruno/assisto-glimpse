@@ -56,12 +56,17 @@ export function WorkspaceCanvasView({
   resolveDropTargetLabel,
   nodes,
   edges,
+  edgeTypes,
   nodeTypes,
   onNodesChange,
   onPaneClick,
   onPaneContextMenu,
   onNodeClick,
   onNodeContextMenu,
+  onEdgeClick,
+  orchestrationConnect,
+  renderOrchestrationConnectPrompt,
+  clearOrchestrationLinkSelection,
   onSelectionContextMenu,
   onNodeDragStart,
   onSelectionDragStart,
@@ -203,6 +208,7 @@ export function WorkspaceCanvasView({
         nodes={filteredNodes}
         edges={filteredEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onError={code => {
           // Suppress error015: "drag a node that is not initialized"
@@ -214,10 +220,17 @@ export function WorkspaceCanvasView({
           // eslint-disable-next-line no-console
           console.warn(`[React Flow] error ${code}`)
         }}
-        onPaneClick={onPaneClick}
+        onPaneClick={event => {
+          clearOrchestrationLinkSelection()
+          onPaneClick(event)
+        }}
         onPaneContextMenu={onPaneContextMenu}
         onNodeClick={onNodeClick}
         onNodeContextMenu={onNodeContextMenu}
+        onEdgeClick={onEdgeClick}
+        onConnect={orchestrationConnect.onConnect}
+        onConnectEnd={orchestrationConnect.onConnectEnd}
+        isValidConnection={orchestrationConnect.isValidConnection}
         onSelectionContextMenu={onSelectionContextMenu}
         onNodeDragStart={onNodeDragStart}
         onSelectionDragStart={onSelectionDragStart}
@@ -323,6 +336,15 @@ export function WorkspaceCanvasView({
         onInteractionStart={clearActionBarTransientUi}
         resolveDropTargetLabel={resolveDropTargetLabel}
       />
+      {renderOrchestrationConnectPrompt
+        ? renderOrchestrationConnectPrompt({
+            prompt: orchestrationConnect.prompt,
+            onAccept: () => {
+              void orchestrationConnect.accept()
+            },
+            onCancel: orchestrationConnect.cancel,
+          })
+        : null}
       <WorkspaceCanvasTopOverlays
         spaces={spaces}
         activateSpace={activateSpace}

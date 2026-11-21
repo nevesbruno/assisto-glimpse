@@ -4,11 +4,10 @@ import {
   type AgentLinkRuntimeMode,
 } from '../domain/agentLink'
 import type { OrchestrationPrincipal } from '../domain/orchestrationAuthorization'
-import { attachTui } from './executorTuiRelaunch'
 import { closeExecutorLink } from './linkLifecycle'
+import { activateLinkedExecutor } from './linkBootstrap'
 import type { OrchestrationContext } from './OrchestrationService'
 import { translateRuntimeError } from './runtimeErrors'
-import { restartLinkedService } from './spawnExecutor'
 
 export interface CreateLinkInput {
   readonly orchestratorNodeId: string
@@ -37,6 +36,7 @@ export async function createLink(
       orchestrator,
       executor,
       spawnRequestId: null,
+      executorSessionRef: executor.sessionRef ?? null,
       existingLinks: await links.listActive(),
       now: clock.now(),
     }),
@@ -48,13 +48,11 @@ export async function createLink(
   }
   await ctx.runExclusive(link.executorNodeId, async () => {
     try {
-      await restartLinkedService(ctx, link)
-      await attachTui(ctx, link.executorNodeId, 'relaunch')
+      await activateLinkedExecutor(ctx, link)
     } catch (error) {
       await closeExecutorLink(ctx, link, 'spawn_failed', true)
       throw translateRuntimeError(error)
     }
-    ctx.wake(link.executorNodeId)
   })
   return { linkId: link.id, runtimeMode: link.runtimeMode }
 }

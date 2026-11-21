@@ -219,6 +219,7 @@ export interface FakeNode {
   provider: string
   title: string
   projectId?: string
+  sessionRef?: string | null
 }
 
 export interface Harness {
@@ -312,6 +313,7 @@ export function createHarness(
               projectId: node.projectId ?? 'p1',
               spaceId: 's1',
               cwd: node.provider === ORCHESTRATOR_PROVIDER ? null : '/work',
+              sessionRef: node.sessionRef ?? null,
             }
           : null
       },

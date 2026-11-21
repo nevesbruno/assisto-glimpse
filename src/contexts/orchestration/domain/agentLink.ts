@@ -80,6 +80,8 @@ export interface CreateExecutorLinkInput {
   readonly orchestrator: LinkNodeRef
   readonly executor: LinkNodeRef
   readonly spawnRequestId: string | null
+  /** Conversation of the executor node when the link is drawn by the user; null for a fresh spawn. */
+  readonly executorSessionRef?: string | null
   readonly existingLinks: readonly AgentLink[]
   readonly now: Date
 }
@@ -134,7 +136,7 @@ export function createExecutorLink(input: CreateExecutorLinkInput): AgentLink {
     messagesUsedSource: 0,
     messagesUsedTarget: 0,
     spawnRequestId: input.spawnRequestId,
-    executorSessionRef: null,
+    executorSessionRef: input.executorSessionRef ?? null,
     servicePid: null,
     serviceTokenSha256: null,
     roundsUsed: 0,

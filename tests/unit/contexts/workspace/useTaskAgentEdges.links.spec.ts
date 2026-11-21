@@ -60,16 +60,21 @@ function link(overrides: Partial<OrchestrationLinkDto> = {}): OrchestrationLinkD
   }
 }
 
-const resolve = (nodes: Node<TerminalNodeData>[], links: OrchestrationLinkDto[]) =>
+const resolve = (
+  nodes: Node<TerminalNodeData>[],
+  links: OrchestrationLinkDto[],
+  selectedLinkId: string | null = null,
+) =>
   resolveWorkspaceCanvasAgentEdges({
     nodes,
     links,
+    selectedLinkId,
     formatRoleEdgeLabel: name => name,
     formatLinkDegradedLabel: () => 'Executor unavailable',
   })
 
 describe('orchestration link edges (U-10)', () => {
-  it('draws one non-selectable edge per active link', () => {
+  it('draws one selectable edge per active link', () => {
     const nodes = [node('orch', 'agent', 'standby'), node('exec', 'agent', 'standby')]
     const edges = resolve(nodes, [link()])
     expect(edges).toHaveLength(1)
@@ -77,11 +82,54 @@ describe('orchestration link edges (U-10)', () => {
       id: 'orch-link-11111111-1111-4111-8111-111111111111',
       source: 'orch',
       target: 'exec',
+      type: 'orchestrationLink',
       animated: false,
-      selectable: false,
-      focusable: false,
+      selectable: true,
+      focusable: true,
+      selected: false,
       className: 'workspace-orchestration-edge workspace-orchestration-edge--idle',
+      data: {
+        linkId: '11111111-1111-4111-8111-111111111111',
+        kind: 'executor',
+        targetTitle: 'exec',
+        roundsLimit: 10,
+      },
     })
+  })
+
+  it('marks the edge selected from the store and only that one (A-04)', () => {
+    const second = link({
+      id: '22222222-2222-4222-8222-222222222222',
+      executorNodeId: 'exec-2',
+      orchestratorNodeId: 'orch',
+    })
+    const nodes = [
+      node('orch', 'agent', 'standby'),
+      node('exec', 'agent', 'standby'),
+      node('exec-2', 'agent', 'standby'),
+    ]
+    const edges = resolve(nodes, [link(), second], second.id)
+    expect(edges.map(edge => edge.selected)).toEqual([false, true])
+    expect(resolve(nodes, [link(), second], null).map(edge => edge.selected)).toEqual([
+      false,
+      false,
+    ])
+  })
+
+  it('gives a peer arrow two markers and the peer class, and an executor arrow only the end (A-08)', () => {
+    const nodes = [node('orch', 'agent'), node('exec', 'agent')]
+    const [executor] = resolve(nodes, [link()])
+    expect(executor.markerEnd).toMatchObject({ width: 22, height: 22 })
+    expect(executor.markerStart).toBeUndefined()
+    expect(executor.className).not.toContain('--peer')
+
+    const [peer] = resolve(nodes, [
+      link({ kind: 'peer', runtimeMode: 'terminal', provider: 'claude-code' }),
+    ])
+    expect(peer.className).toContain('--peer')
+    expect(peer.markerEnd).toMatchObject({ width: 22, height: 22 })
+    expect(peer.markerStart).toMatchObject({ width: 22, height: 22 })
+    expect(peer.markerStart).toEqual(peer.markerEnd)
   })
 
   it('animates while the executor works', () => {
@@ -116,7 +164,8 @@ describe('orchestration link edges (U-10)', () => {
       'task-link-task-exec',
       'orch-link-11111111-1111-4111-8111-111111111111',
     ])
-    expect(edges.every(edge => edge.selectable === false)).toBe(true)
+    expect(edges[0].selectable).toBe(false)
+    expect(edges[1].selectable).toBe(true)
   })
 
   it('draws the edge for an active link whose nodes sit outside any space', () => {

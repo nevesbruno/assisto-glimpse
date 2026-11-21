@@ -3,6 +3,10 @@ import { acquireInertRootLease } from '@app/renderer/components/ui/inertRootLeas
 import type { AgentSettings } from '@contexts/settings/domain/agentSettings'
 import type { TerminalClientDisplayCalibration } from '@contexts/settings/domain/terminalDisplayCalibration'
 import { WorkspaceCanvas } from '@contexts/workspace/presentation/renderer/components/WorkspaceCanvas'
+import {
+  orchestrationLinkSelection,
+  useOrchestrationLinkSelectionState,
+} from '@contexts/orchestration/presentation/renderer'
 import type { WorkspaceCanvasMessageTone } from '@contexts/workspace/presentation/renderer/components/workspaceCanvas/types'
 import type {
   SpaceArchiveRecord,
@@ -11,6 +15,12 @@ import type {
 } from '@contexts/workspace/presentation/renderer/types'
 import type { FocusRequest, ProjectContextMenuState } from '../types'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState'
+import { orchestrationCanvasEdgeTypes } from './orchestration/orchestrationCanvasEdgeTypes'
+import { OrchestrationConnectPrompt } from './orchestration/OrchestrationConnectPrompt'
+
+const renderOrchestrationConnectPrompt = (
+  input: React.ComponentProps<typeof OrchestrationConnectPrompt>,
+): React.JSX.Element => <OrchestrationConnectPrompt {...input} />
 
 function WorkspaceMainComponent({
   activeWorkspace,
@@ -55,6 +65,12 @@ function WorkspaceMainComponent({
   // The canvas is memoized: a new function here would re-render all of it on every render of this
   // component, which happens on every render of the shell. Bound to the shown workspace's id.
   const activeWorkspaceId = activeWorkspace?.id ?? null
+  const orchestrationSelectedLinkId = useOrchestrationLinkSelectionState(
+    state => state.selectedLinkId,
+  )
+  const selectOrchestrationLink = useCallback((linkId: string | null) => {
+    orchestrationLinkSelection.select(linkId)
+  }, [])
   const handleOpenSpaceContextMenu = useCallback(
     (spaceId: string, anchor: { x: number; y: number }) => {
       if (activeWorkspaceId === null) {
@@ -117,6 +133,10 @@ function WorkspaceMainComponent({
         focusNodeInput={focusNodeInput}
         focusSpaceId={focusSpaceId}
         focusSequence={focusSequence}
+        orchestrationEdgeTypes={orchestrationCanvasEdgeTypes}
+        orchestrationSelectedLinkId={orchestrationSelectedLinkId}
+        onOrchestrationLinkSelect={selectOrchestrationLink}
+        renderOrchestrationConnectPrompt={renderOrchestrationConnectPrompt}
       />
     </main>
   )

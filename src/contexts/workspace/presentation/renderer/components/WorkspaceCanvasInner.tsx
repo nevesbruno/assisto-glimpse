@@ -1,3 +1,5 @@
+import { useCallback } from 'react'
+import type * as React from 'react'
 import { useReactFlow, type Edge, type Node } from '@xyflow/react'
 import * as workspaceCanvasHooks from './workspaceCanvas/hooks'
 import { CanvasFlowHost } from './workspaceCanvas/CanvasFlowHost'
@@ -35,6 +37,10 @@ export function WorkspaceCanvasInner(props: WorkspaceCanvasInnerProps) {
     focusNodeInput,
     focusSpaceId,
     focusSequence,
+    orchestrationEdgeTypes = {},
+    orchestrationSelectedLinkId = null,
+    onOrchestrationLinkSelect,
+    renderOrchestrationConnectPrompt,
   } = props
   useCanvasCommitProbe('WorkspaceCanvasInner', props)
   const reactFlow = useReactFlow<Node<import('../types').TerminalNodeData>, Edge>()
@@ -256,6 +262,7 @@ export function WorkspaceCanvasInner(props: WorkspaceCanvasInnerProps) {
     handleViewportMoveEnd,
     minimapNodeColor,
     taskAgentEdges,
+    orchestrationLinks,
     spaceUi,
   } = workspaceCanvasHooks.useWorkspaceCanvasViewModel({
     agentSettings,
@@ -267,7 +274,23 @@ export function WorkspaceCanvasInner(props: WorkspaceCanvasInnerProps) {
     handlePaneContextMenu,
     handleNodeContextMenu,
     handleSelectionContextMenu,
+    selectedOrchestrationLinkId: orchestrationSelectedLinkId,
   })
+  const orchestrationConnect = workspaceCanvasHooks.useOrchestrationConnect({
+    projectId: workspaceId,
+    nodes: canvasState.flowNodes,
+    links: orchestrationLinks,
+  })
+  const handleOrchestrationEdgeClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      const linkId = (edge.data as { linkId?: unknown } | undefined)?.linkId
+      onOrchestrationLinkSelect?.(typeof linkId === 'string' ? linkId : null)
+    },
+    [onOrchestrationLinkSelect],
+  )
+  const clearOrchestrationLinkSelection = useCallback(() => {
+    onOrchestrationLinkSelect?.(null)
+  }, [onOrchestrationLinkSelect])
   // prettier-ignore
   const spaceExplorer = useCanvasSpaceExplorer({ workspaceId, canvasState, nodeStore, spaces, reactFlow, nodeDragSession, finalizeDraggedNodeDrop, agentSettings, expandNode: collapse.expandNode })
   return (
@@ -303,9 +326,14 @@ export function WorkspaceCanvasInner(props: WorkspaceCanvasInnerProps) {
         {...actionBarActions}
         committedNodes={canvasState.flowNodes}
         edges={taskAgentEdges}
+        edgeTypes={orchestrationEdgeTypes}
         nodeTypes={nodeTypes}
         onNodesChange={applyChanges}
         onNodeClick={handleNodeClick}
+        onEdgeClick={handleOrchestrationEdgeClick}
+        orchestrationConnect={orchestrationConnect}
+        renderOrchestrationConnectPrompt={renderOrchestrationConnectPrompt}
+        clearOrchestrationLinkSelection={clearOrchestrationLinkSelection}
         onNodeDragStart={handleNodeDragStart}
         onSelectionDragStart={handleSelectionDragStart}
         onNodeDragStop={handleNodeDragStop}

@@ -8,11 +8,14 @@ import { isAgentWorking } from '../helpers'
 export function resolveWorkspaceCanvasAgentEdges({
   nodes,
   links = [],
+  selectedLinkId = null,
   formatRoleEdgeLabel,
   formatLinkDegradedLabel = () => '',
 }: {
   nodes: Node<TerminalNodeData>[]
   links?: OrchestrationLinkDto[]
+  /** Link of the selected orchestration arrow; null when none is selected. */
+  selectedLinkId?: string | null
   formatRoleEdgeLabel: (roleName: string) => string
   formatLinkDegradedLabel?: () => string
 }): Edge[] {
@@ -126,17 +129,35 @@ export function resolveWorkspaceCanvasAgentEdges({
       const variant = isDegraded ? 'degraded' : isWorking ? 'active' : 'idle'
       const markerColor = isWorking ? 'rgba(121, 197, 255, 0.95)' : 'rgba(130, 168, 214, 0.78)'
       const degradedLabel = isDegraded ? formatLinkDegradedLabel() : ''
+      const peer = link.kind === 'peer'
+      const marker = {
+        type: MarkerType.ArrowClosed,
+        color: markerColor,
+        width: 22,
+        height: 22,
+      }
 
       return [
         {
           id: `orch-link-${link.id}`,
           source: orchestratorNode.id,
           target: executorNode.id,
-          type: 'default',
+          type: 'orchestrationLink',
           animated: isWorking,
-          className: `workspace-orchestration-edge workspace-orchestration-edge--${variant}`,
-          selectable: false,
-          focusable: false,
+          className: [
+            'workspace-orchestration-edge',
+            `workspace-orchestration-edge--${variant}`,
+            ...(peer ? ['workspace-orchestration-edge--peer'] : []),
+          ].join(' '),
+          selectable: true,
+          focusable: true,
+          selected: link.id === selectedLinkId,
+          data: {
+            linkId: link.id,
+            kind: link.kind,
+            targetTitle: executorNode.data.title,
+            roundsLimit: link.roundsLimit,
+          },
           ...(degradedLabel
             ? {
                 label: degradedLabel,
@@ -150,12 +171,8 @@ export function resolveWorkspaceCanvasAgentEdges({
                 },
               }
             : {}),
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: markerColor,
-            width: 22,
-            height: 22,
-          },
+          markerEnd: marker,
+          ...(peer ? { markerStart: marker } : {}),
         },
       ]
     })
@@ -166,6 +183,7 @@ export function resolveWorkspaceCanvasAgentEdges({
 export function useWorkspaceCanvasTaskAgentEdges(
   nodes: Node<TerminalNodeData>[],
   links: OrchestrationLinkDto[] = [],
+  selectedLinkId: string | null = null,
 ): Edge[] {
   const { t } = useTranslation()
 
@@ -173,8 +191,9 @@ export function useWorkspaceCanvasTaskAgentEdges(
     return resolveWorkspaceCanvasAgentEdges({
       nodes,
       links,
+      selectedLinkId,
       formatRoleEdgeLabel: roleName => t('roleNode.edgeLabel', { role: roleName }),
       formatLinkDegradedLabel: () => t('orchestration.link.degradedLabel'),
     })
-  }, [nodes, links, t])
+  }, [nodes, links, selectedLinkId, t])
 }

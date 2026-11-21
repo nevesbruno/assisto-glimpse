@@ -24,6 +24,7 @@ export function useWorkspaceCanvasViewModel({
   handlePaneContextMenu,
   handleNodeContextMenu,
   handleSelectionContextMenu,
+  selectedOrchestrationLinkId = null,
 }: {
   agentSettings: AgentSettings
   viewportRef: MutableRefObject<Viewport>
@@ -37,12 +38,14 @@ export function useWorkspaceCanvasViewModel({
     event: React.MouseEvent,
     selectedNodes: Node<TerminalNodeData>[],
   ) => void
+  selectedOrchestrationLinkId?: string | null
 }): {
   taskTitleProviderLabel: string
   taskTitleModelLabel: string
   handleViewportMoveEnd: (_event: MouseEvent | TouchEvent | null, nextViewport: Viewport) => void
   minimapNodeColor: typeof resolveWorkspaceMinimapNodeColor
   taskAgentEdges: ReturnType<typeof useWorkspaceCanvasTaskAgentEdges>
+  orchestrationLinks: ReturnType<typeof useOrchestrationLinks>
   spaceUi: ReturnType<typeof useWorkspaceCanvasSpaceUi>
 } {
   const { t } = useTranslation()
@@ -55,7 +58,11 @@ export function useWorkspaceCanvasViewModel({
   const minimapNodeColor = resolveWorkspaceMinimapNodeColor
 
   const orchestrationLinks = useOrchestrationLinks()
-  const taskAgentEdges = useWorkspaceCanvasTaskAgentEdges(flowNodes, orchestrationLinks)
+  const taskAgentEdges = useWorkspaceCanvasTaskAgentEdges(
+    flowNodes,
+    orchestrationLinks,
+    selectedOrchestrationLinkId,
+  )
 
   const spaceUi = useWorkspaceCanvasSpaceUi({
     workspacePath,
@@ -72,6 +79,7 @@ export function useWorkspaceCanvasViewModel({
       handleViewportMoveEnd,
       minimapNodeColor,
       taskAgentEdges,
+      orchestrationLinks,
       spaceUi,
     }),
     [
@@ -79,6 +87,7 @@ export function useWorkspaceCanvasViewModel({
       minimapNodeColor,
       spaceUi,
       taskAgentEdges,
+      orchestrationLinks,
       taskTitleModelLabel,
       taskTitleProviderLabel,
     ],

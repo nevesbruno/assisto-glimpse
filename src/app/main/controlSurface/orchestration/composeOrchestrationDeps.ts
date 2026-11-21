@@ -248,6 +248,8 @@ export function createExecutorNodePort(deps: {
   getPersistenceStore: () => Promise<PersistenceStore>
   topology: Pick<WorkerTopologyStore, 'listEndpoints' | 'listMounts'>
   now: () => Date
+  /** Live TUI session of the node, which wins over the stored resume id. */
+  liveSessionOf?: (nodeId: string) => string | null
 }): ExecutorNodePort {
   const locatorDeps: SpaceLocatorResolverDeps = {
     listEndpoints: async () => (await deps.topology.listEndpoints()).endpoints,
@@ -261,15 +263,27 @@ export function createExecutorNodePort(deps: {
       for (const workspace of state.workspaces) {
         const node = workspace.nodes.find(n => n.id === nodeId)
         if (node) {
-          const agent = node.agent as { provider?: string } | null
+          const agent = node.agent as {
+            provider?: string
+            resumeSessionId?: string | null
+            executionDirectory?: unknown
+          } | null
+          const provider = agent?.provider ?? ''
+          // `executionDirectory` exists only on an agent node; a terminal binding has no conversation.
+          const isAgentNode = typeof agent?.executionDirectory === 'string'
+          const liveSession = deps.liveSessionOf?.(nodeId) ?? null
           return {
             nodeId,
             projectId: workspace.id,
             // Empty string means the node sits outside any space (decision O3).
             spaceId: workspace.spaces.find(s => s.nodeIds.includes(nodeId))?.id ?? '',
-            provider: agent?.provider ?? '',
+            provider,
             title: node.title,
             cwd: node.executionDirectory ?? null,
+            sessionRef:
+              isAgentNode && provider.length > 0
+                ? (liveSession ?? agent?.resumeSessionId ?? null)
+                : null,
           }
         }
       }
