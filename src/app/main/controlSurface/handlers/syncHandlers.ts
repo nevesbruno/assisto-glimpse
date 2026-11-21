@@ -28,6 +28,7 @@ import type {
 } from '../../../../shared/contracts/dto'
 import { createAppError } from '../../../../shared/errors/appError'
 import type { ControlSurface } from '../controlSurface'
+import { grantProjectOf } from './grantProjectScope'
 import { registerOperation } from '../registerOperation'
 
 async function persistNextAppState(
@@ -187,6 +188,14 @@ export function registerSyncHandlers(
       }
 
       if (!targetWorkspace || targetSpaceIndex === null) {
+        throw createAppError('space.not_found', {
+          debugMessage: `note.create: unknown space id: ${targetSpaceId}`,
+        })
+      }
+
+      const grant = ctx.requestAuth?.kind === 'session-grant' ? ctx.requestAuth.grant : null
+      if (grant && targetWorkspace.id !== grantProjectOf(ctx) && !grant.nodeId) {
+        // Foreign creation needs a lineage root: a grant without a node cannot leave a child.
         throw createAppError('space.not_found', {
           debugMessage: `note.create: unknown space id: ${targetSpaceId}`,
         })

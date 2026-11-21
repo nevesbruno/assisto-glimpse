@@ -43,7 +43,7 @@ import {
 } from '../../../../contexts/workspace/application'
 import { normalizePersistedAppState } from '../../../../platform/persistence/sqlite/normalize'
 import { createRuntimeDeps } from './nodeControlRuntime'
-import { grantProjectOf, isNodeInGrantLineage } from './grantProjectScope'
+import { grantProjectOf, isNodeInGrantLineage, isNodeInGrantSubtree } from './grantProjectScope'
 
 async function invokeInternal<TResult>(
   controlSurface: ControlSurface,
@@ -118,19 +118,6 @@ async function nodeProjectScopeForGrant(
     return scope
   }
   return (await isNodeInGrantLineage(ctx, getPersistenceStore, nodeId)) ? undefined : scope
-}
-
-async function isNodeInGrantProject(
-  store: NodeControlAppStateStore,
-  nodeId: string,
-  scope: string,
-): Promise<boolean> {
-  const state = await store.readAppState()
-  return Boolean(
-    state?.workspaces.some(
-      workspace => workspace.id === scope && workspace.nodes.some(node => node.id === nodeId),
-    ),
-  )
 }
 
 function queued<T>(queueRef: { current: Promise<void> }, task: () => Promise<T>): Promise<T> {
@@ -211,8 +198,24 @@ export function registerNodeControlHandlers(
   })
   registerOperation(controlSurface, nodeManagedClaudeBindingOperation, {
     defaultErrorCode: 'persistence.unavailable',
-    handle: async (_ctx, input) => {
+    handle: async (ctx, input) => {
       const store = await deps.getPersistenceStore()
+      const controlStore = toNodeControlStateStore(store)
+      const scope = grantProjectOf(ctx)
+      if (scope !== undefined) {
+        const state = await controlStore.readAppState()
+        const owner = state?.workspaces.find(workspace =>
+          workspace.nodes.some(node => node.id === input.nodeId),
+        )?.id
+        if (
+          owner !== scope &&
+          !(await isNodeInGrantLineage(ctx, deps.getPersistenceStore, input.nodeId))
+        ) {
+          // Same scope as node.get: a foreign target outside the subtree stays absent and
+          // the binding is never read.
+          throw createAppError('node.not_found')
+        }
+      }
       if (!store.observeManagedClaudeNode) {
         throw createAppError('persistence.unavailable')
       }
@@ -256,7 +259,7 @@ export function registerNodeControlHandlers(
       if (!input.spawnedByNodeId) {
         return empty
       }
-      if (!(await isNodeInGrantProject(store, input.spawnedByNodeId, scope))) {
+      if (!(await isNodeInGrantSubtree(ctx, deps.getPersistenceStore, input.spawnedByNodeId))) {
         return empty
       }
       return await listNodesForNodeControl({ store, locatorDeps, input, projectScope: undefined })
@@ -294,6 +297,12 @@ export function registerNodeControlHandlers(
           scope !== undefined && typeof input.projectId === 'string' && input.projectId !== scope
         if (foreignCreate && !grantNodeId) {
           throw createAppError('node.not_found')
+        }
+        if (foreignCreate && input.near) {
+          const nearNodeId = input.near.nodeId
+          if (!(await isNodeInGrantSubtree(ctx, deps.getPersistenceStore, nearNodeId))) {
+            throw createAppError('node.not_found')
+          }
         }
         return await createNodeForNodeControl({
           store,

@@ -25,7 +25,7 @@ import { createAppError } from '../../../../shared/errors/appError'
 import { isWorkspaceNodeKind } from '../../../../shared/sync/persistedStateValidationPrimitives'
 import { assertNever } from '../../../../shared/utils/assertNever'
 import type { ControlSurface } from '../controlSurface'
-import { grantLineageNodeIds, grantProjectOf } from './grantProjectScope'
+import { assertProjectInGrant, grantLineageNodeIds, grantProjectOf } from './grantProjectScope'
 import { registerOperation } from '../registerOperation'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -146,6 +146,14 @@ export function registerSpaceHandlers(
   registerOperation(controlSurface, spaceUpdateOperation, {
     handle: async (ctx, input) => {
       const store = await getPersistenceStore()
+      if (grantProjectOf(ctx) !== undefined) {
+        // The carve-out is read and resolution only; a foreign space is never mutated.
+        const normalized = normalizePersistedAppState(await store.readAppState())
+        const owner = normalized?.workspaces.find(workspace =>
+          workspace.spaces.some(space => space.id === input.spaceId),
+        )?.id
+        assertProjectInGrant(ctx, owner, 'space.not_found')
+      }
       return updateSpace({
         store: {
           readAppState: async () => normalizePersistedAppState(await store.readAppState()),

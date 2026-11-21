@@ -8,7 +8,7 @@ import type { ControlSurface } from '../controlSurface'
 import type { PtyStreamHub } from '../ptyStream/ptyStreamHub'
 import { registerOperation } from '../registerOperation'
 import { assertAgentNodeInGrant, isAgentNodeInGrant } from './agentGrantScope'
-import { grantProjectOf, isNodeInGrantLineage } from './grantProjectScope'
+import { grantProjectOf, isNodeInGrantLineage, isNodeInGrantSubtree } from './grantProjectScope'
 import {
   agentHistoryClearOperation,
   agentGetOperation,
@@ -85,7 +85,7 @@ export function registerAgentRunStateHandlers(
         if (!input.spawnedByNodeId) {
           return empty
         }
-        if (!(await isAgentNodeInGrant(ctx, getPersistenceStore, input.spawnedByNodeId))) {
+        if (!(await isNodeInGrantSubtree(ctx, getPersistenceStore, input.spawnedByNodeId))) {
           return empty
         }
       }

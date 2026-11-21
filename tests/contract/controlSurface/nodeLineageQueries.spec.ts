@@ -6,6 +6,7 @@ import { afterEach, expect, it } from 'vitest'
 import { createControlSurface } from '../../../src/app/main/controlSurface/controlSurface'
 import { registerNodeControlHandlers } from '../../../src/app/main/controlSurface/handlers/nodeControlHandlers'
 import { registerSpaceHandlers } from '../../../src/app/main/controlSurface/handlers/spaceHandlers'
+import { registerSyncHandlers } from '../../../src/app/main/controlSurface/handlers/syncHandlers'
 import { registerProjectHandlers } from '../../../src/app/main/controlSurface/handlers/projectHandlers'
 import { registerSystemHandlers } from '../../../src/app/main/controlSurface/handlers/systemHandlers'
 import { registerAgentRunStateHandlers } from '../../../src/app/main/controlSurface/handlers/agentRunStateHandlers'
@@ -120,6 +121,7 @@ async function fixture(creatorId = callerId) {
   await topology.createMount({ projectId: projectB, endpointId: 'local', rootPath: root })
   registerNodeControlHandlers(surface, { topology, getPersistenceStore: async () => store })
   registerSpaceHandlers(surface, async () => store)
+  registerSyncHandlers(surface, async () => store)
   registerProjectHandlers(surface, async () => store)
   registerSystemHandlers(surface, { appVersion: null, hasNodeLineage: async () => true })
   const registry = new AgentRunStateRegistry({
@@ -185,7 +187,7 @@ async function fixture(creatorId = callerId) {
     const code = await run(args, f.io)
     return { code, out: f.out(), requests: f.requests, error: f.error }
   }
-  return { invoke, cli, rows, store }
+  return { invoke, cli, rows, store, surface, grant }
 }
 
 it.each(
@@ -198,13 +200,17 @@ it.each(
   '$domain list filters children in B without constraining creator $selector to B',
   async ({ domain, selector }) => {
     const creatorId = selector === '@parent' || selector === parentId ? parentId : callerId
+    // Fork security divergence: the list carve-out is the grant's own lineage subtree, not every
+    // node in its project. @parent resolves to the grant's parent, which is outside that subtree,
+    // so the list stays empty; every in-subtree selector keeps the upstream expectations.
+    const creatorInSubtree = creatorId === callerId
     const f = await fixture(creatorId)
     // Prove the actual Worker handler already selects B's children before exercising CLI resolution.
     const server = await f.invoke<ListNodesResult>('node.list', {
       projectId: projectB,
       spawnedByNodeId: creatorId,
     })
-    expect(server.nodes.map(n => n.id)).toEqual([childB, noteB])
+    expect(server.nodes.map(n => n.id)).toEqual(creatorInSubtree ? [childB, noteB] : [])
     const result = await f.cli([
       domain,
       'list',
@@ -218,7 +224,7 @@ it.each(
     expect(result.code, result.out).toBe(0)
     const returned = JSON.parse(result.out)
     expect(returned[domain === 'node' ? 'nodes' : 'agents']).toEqual(
-      (domain === 'node' ? [childB, noteB] : [childB]).map(id => ({
+      (creatorInSubtree ? (domain === 'node' ? [childB, noteB] : [childB]) : []).map(id => ({
         [domain === 'node' ? 'id' : 'nodeId']: id,
         spawnedBy: creatorId,
       })),
@@ -295,6 +301,99 @@ it('keeps the foreign project closed outside the lineage subtree', async () => {
   const got = await f.invoke<GetSpaceResult>('space.get', { spaceId: spaceB })
   expect(got.space.nodes.map(node => node.id)).toEqual(expect.arrayContaining([childB, noteB]))
   expect(got.space.nodes.map(node => node.id)).not.toContain(stranger)
+})
+
+it.each(['node', 'agent'] as const)(
+  '%s list stays empty when the creator is outside the lineage subtree',
+  async domain => {
+    // fixture(parentId) makes the grant's parent the creator of the B children; the grant's
+    // subtree starts at callerId, so the parent is outside it.
+    const f = await fixture(parentId)
+    if (domain === 'node') {
+      const result = await f.invoke<ListNodesResult>('node.list', {
+        projectId: projectB,
+        spawnedByNodeId: parentId,
+      })
+      expect(result.nodes).toEqual([])
+      return
+    }
+    const result = await f.invoke<{ agents: { nodeId: string | null }[] }>('agent.list', {
+      projectId: projectB,
+      spawnedByNodeId: parentId,
+    })
+    expect(result.agents).toEqual([])
+  },
+)
+
+it('refuses a foreign managed Claude binding outside the lineage subtree', async () => {
+  const f = await fixture(callerId)
+  await expect(f.invoke('node.managedClaudeBinding', { nodeId: 'unrelated-b' })).rejects.toThrow(
+    'node.not_found',
+  )
+  expect(await f.invoke('node.managedClaudeBinding', { nodeId: childB })).toMatchObject({
+    managedClaudeBinding: null,
+  })
+})
+
+it('refuses a foreign space update while the grant own space still updates', async () => {
+  const f = await fixture(callerId)
+  await expect(
+    f.invoke('space.update', { spaceId: spaceB, name: 'Taken' }, 'command'),
+  ).rejects.toThrow('space.not_found')
+  expect(
+    await f.invoke('space.update', { spaceId: 'space-a', name: 'Renamed' }, 'command'),
+  ).toMatchObject({ id: 'space-a', name: 'Renamed' })
+})
+
+it('refuses foreign note creation without a grant node and records the allowed child', async () => {
+  const f = await fixture(callerId)
+  const noNodeGrant = new SessionGrantRegistry(() => true).issue({
+    projectId: projectA,
+    spaceId: 'space-a',
+    nodeId: null,
+    sessionId: 'session-null',
+  }).grant
+  const denied = await f.surface.invoke(
+    { now: () => new Date(), requestAuth: { kind: 'session-grant', grant: noNodeGrant } },
+    { kind: 'command', id: 'note.create', payload: { spaceId: spaceB, text: 'x' } },
+  )
+  expect(denied).toMatchObject({ ok: false, error: { code: 'space.not_found' } })
+
+  const created = await f.invoke<{ nodeId: string; projectId: string }>(
+    'note.create',
+    { spaceId: spaceB, text: 'x' },
+    'command',
+  )
+  expect(created.projectId).toBe(projectB)
+  expect(f.rows.get(created.nodeId)?.spawnedBy).toBe(callerId)
+})
+
+it('refuses a foreign create whose near reference is outside the lineage subtree', async () => {
+  const f = await fixture(callerId)
+  await expect(
+    f.invoke(
+      'node.create',
+      {
+        kind: 'note',
+        projectId: projectB,
+        near: { nodeId: 'unrelated-b', target: 'root-canvas' },
+        data: { text: 'x' },
+      },
+      'command',
+    ),
+  ).rejects.toThrow('node.not_found')
+  expect(
+    await f.invoke(
+      'node.create',
+      {
+        kind: 'note',
+        projectId: projectB,
+        near: { nodeId: childB, target: 'root-canvas' },
+        data: { text: 'x' },
+      },
+      'command',
+    ),
+  ).toMatchObject({ projectId: projectB })
 })
 
 it('retains project membership checks for ordinary node targets', async () => {

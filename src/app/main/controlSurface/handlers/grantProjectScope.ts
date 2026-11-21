@@ -63,6 +63,22 @@ export async function grantLineageNodeIds(
   }
 }
 
+/** The grant's own node counts: it is the root of the subtree it created. */
+export async function isNodeInGrantSubtree(
+  ctx: ControlSurfaceContext,
+  readStore: (() => Promise<PersistenceStore>) | undefined,
+  nodeId: string | null | undefined,
+): Promise<boolean> {
+  const grant = ctx.requestAuth?.kind === 'session-grant' ? ctx.requestAuth.grant : null
+  if (!grant?.nodeId || !nodeId) {
+    return false
+  }
+  if (nodeId === grant.nodeId) {
+    return true
+  }
+  return (await grantLineageNodeIds(ctx, readStore)).has(nodeId)
+}
+
 export async function isNodeInGrantLineage(
   ctx: ControlSurfaceContext,
   readStore: (() => Promise<PersistenceStore>) | undefined,
