@@ -14,8 +14,20 @@ import {
   createCodexExecutorRuntimeFactory,
   type CodexFactoryDeps,
 } from '../../../../contexts/orchestration/infrastructure/codex/CodexExecutorRuntimeFactory'
+import {
+  createOpenCodeExecutorRuntimeFactory,
+  type OpenCodeFactoryDeps,
+} from '../../../../contexts/orchestration/infrastructure/opencode/OpenCodeExecutorRuntimeFactory'
 import { startCodexAppServer } from '../../../../contexts/orchestration/infrastructure/codex/CodexAppServerProcess'
 import { CodexJsonRpcClient } from '../../../../contexts/orchestration/infrastructure/codex/CodexJsonRpcClient'
+import {
+  startOpenCodeServeProcess,
+  type OpenCodeServeStartInput,
+} from '../../../../contexts/orchestration/infrastructure/opencode/OpenCodeServeProcess'
+import {
+  OpenCodeHttpClient,
+  type OpenCodeHttpClientOptions,
+} from '../../../../contexts/orchestration/infrastructure/opencode/OpenCodeHttpClient'
 import type { SqliteHandle } from '../../../../contexts/orchestration/infrastructure/persistence/sqliteHandle'
 import { resolveAgentExecutable } from '../../../../contexts/agent/infrastructure/cli/AgentExecutableResolver'
 import { normalizeAgentSettings } from '../../../../contexts/settings/domain/agentSettings'
@@ -49,6 +61,30 @@ export const realCodexOverrides: CodexFactoryOverrides = {
     const located = await resolveAgentExecutable({ provider: 'codex' })
     if (!located.executablePath) {
       throw Object.assign(new Error('codex executable not found'), {
+        code: 'executor.start_failed' as const,
+      })
+    }
+    const { stdout } = await run(located.executablePath, ['--version'])
+    return { executablePath: located.executablePath, version: stdout.trim() }
+  },
+}
+
+export type OpenCodeFactoryOverrides = Pick<
+  OpenCodeFactoryDeps,
+  'startProcess' | 'createClient' | 'resolveExecutable'
+>
+
+export const realOpenCodeOverrides: OpenCodeFactoryOverrides = {
+  startProcess: (input: OpenCodeServeStartInput) =>
+    startOpenCodeServeProcess(input, {
+      reserveLoopbackPort: () => reserveLoopbackPort('127.0.0.1'),
+    }),
+  createClient: (target: Pick<OpenCodeHttpClientOptions, 'url' | 'password'>) =>
+    new OpenCodeHttpClient(target),
+  resolveExecutable: async () => {
+    const located = await resolveAgentExecutable({ provider: 'opencode' })
+    if (!located.executablePath) {
+      throw Object.assign(new Error('opencode executable not found'), {
         code: 'executor.start_failed' as const,
       })
     }
@@ -97,10 +133,25 @@ async function readState(store: PersistenceStore): Promise<NodeControlAppState> 
 export function createRuntimeFactory(input: {
   provider: ExecutorRuntimeProvider
   overrides: CodexFactoryOverrides
+  overridesOpenCode?: OpenCodeFactoryOverrides
   approvedHooks: CodexFactoryDeps['approvedHooks']
   getPersistenceStore: () => Promise<PersistenceStore>
   createCodexFactory?: typeof createCodexExecutorRuntimeFactory
+  createOpenCodeFactory?: typeof createOpenCodeExecutorRuntimeFactory
+  /** Deterministic message id of the opencode adapter; the Worker id generator supplies it. */
+  uuidV5?: (name: string) => string
 }): ExecutorRuntimeFactory {
+  if (input.provider === 'opencode') {
+    const create = input.createOpenCodeFactory ?? createOpenCodeExecutorRuntimeFactory
+    const factory = create({
+      ...(input.overridesOpenCode ?? realOpenCodeOverrides),
+      ...(input.uuidV5 ? { uuidV5: input.uuidV5 } : {}),
+    })
+    return {
+      probe: () => factory.probe(),
+      start: spec => factory.start(spec),
+    }
+  }
   if (input.provider !== 'codex') {
     const unavailable = (): never => {
       throw Object.assign(new Error(`${input.provider} executor is not available`), {
@@ -142,7 +193,11 @@ export function createLiveSessions(deps: {
   })
   return {
     liveSessionOf: (nodeId: string): LiveExecutorSession | null => live.get(nodeId) ?? null,
-    bindSession: async (nodeId: string, sessionId: string): Promise<void> => {
+    bindSession: async (
+      nodeId: string,
+      sessionId: string,
+      provider: ExecutorRuntimeProvider,
+    ): Promise<void> => {
       const store = await deps.getPersistenceStore()
       const expectedRevision = await store.readAppStateRevision()
       const state = await readState(store)
@@ -159,7 +214,7 @@ export function createLiveSessions(deps: {
       if (!written.ok) {
         throw new Error(`Binding the TUI session to ${nodeId} failed: ${written.reason}`)
       }
-      live.set(nodeId, { sessionId, provider: 'codex', incarnation: randomUUID() })
+      live.set(nodeId, { sessionId, provider, incarnation: randomUUID() })
     },
     dispose: stopWatching,
   }

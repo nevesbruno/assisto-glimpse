@@ -223,9 +223,9 @@ const spawnCommand = defineCommand({
   options: {
     provider: {
       type: 'string',
-      valueName: 'codex',
-      choices: ['codex'],
-      description: 'Executor provider (default and only value: codex)',
+      valueName: 'provider',
+      choices: ['codex', 'opencode'],
+      description: 'Executor provider, codex or opencode (default: codex)',
     },
     prompt: {
       type: 'string',
@@ -240,7 +240,10 @@ const spawnCommand = defineCommand({
       description: 'Model passed to the executor provider',
     },
   },
-  examples: ['opencove orch spawn --provider codex --prompt "Add the retry test"'],
+  examples: [
+    'opencove orch spawn --provider codex --prompt "Add the retry test"',
+    'opencove orch spawn --provider opencode',
+  ],
   render: declaredOutput(
     ['executorNodeId', 'linkId', 'runtimeMode', 'duplicate', 'dispatch', 'admission'],
     { executorNodeId: 'node-1' },
@@ -260,7 +263,7 @@ const spawnCommand = defineCommand({
       dispatch: { dispatchId: string; round: number; roundsLimit: number } | null
     }>(result)
     const mode = r.runtimeMode === 'service' ? 'serviço' : r.runtimeMode
-    const head = `${r.executorNodeId} ligado (codex, ${mode})`
+    const head = `${r.executorNodeId} ligado (${mode})`
     return line(
       r.dispatch
         ? `${head}; despacho ${short(r.dispatch.dispatchId)} aceito, rodada ${r.dispatch.round}/${r.dispatch.roundsLimit}`

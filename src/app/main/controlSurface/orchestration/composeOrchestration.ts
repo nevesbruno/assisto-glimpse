@@ -22,7 +22,9 @@ import {
   createRuntimeFactory,
   readApprovedHooks,
   realCodexOverrides,
+  realOpenCodeOverrides,
   type CodexFactoryOverrides,
+  type OpenCodeFactoryOverrides,
 } from './composeOrchestrationDeps'
 import {
   createExecutorRunStateAdapter,
@@ -33,6 +35,7 @@ import {
   type OrchestrationEventSources,
 } from './composeOrchestrationEvents'
 import { createCodexOrphanReaper } from '../../../../contexts/orchestration/infrastructure/codex/CodexOrphanReaper'
+import { createOpenCodeOrphanReaper } from '../../../../contexts/orchestration/infrastructure/opencode/OpenCodeOrphanReaper'
 import { createOrchestrationBoot } from './composeOrchestrationBoot'
 import { createExecutorTuiLauncher } from './executorTuiLauncher'
 import { withCodexWriterLockRecovery } from './codexWriterLockRuntime'
@@ -56,8 +59,11 @@ export interface ComposeOrchestrationInput {
   /** Without it the service runs with no notices, no mirror and no health publication. */
   events?: OrchestrationEventSources
   codex?: CodexFactoryOverrides
+  openCode?: OpenCodeFactoryOverrides
   /** Seam of the tests: replaces the real Codex factory. */
   createCodexFactory?: Parameters<typeof createRuntimeFactory>[0]['createCodexFactory']
+  /** Seam of the tests: replaces the real opencode factory. */
+  createOpenCodeFactory?: Parameters<typeof createRuntimeFactory>[0]['createOpenCodeFactory']
   now?: () => Date
 }
 
@@ -77,6 +83,7 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
   db.exec(`PRAGMA busy_timeout = ${ORCHESTRATION_BUSY_TIMEOUT_MS}`)
   const now = input.now ?? (() => new Date())
   const codex = input.codex ?? realCodexOverrides
+  const openCode = input.openCode ?? realOpenCodeOverrides
   const sessions = createLiveSessions({
     getPersistenceStore: input.getPersistenceStore,
     onExit: input.ptyRuntime.onExit,
@@ -116,30 +123,41 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
       sources: input.events,
     })
   const approvedHooks = readApprovedHooks(db)
-  let codexPath: string | null = null
-  const resolveExecutable: CodexFactoryOverrides['resolveExecutable'] = async () => {
+  const executablePaths = new Map<ExecutorRuntimeProvider, string>()
+  const requirePath = (provider: ExecutorRuntimeProvider): string => {
+    const path = executablePaths.get(provider)
+    if (!path) {
+      throw new Error(`The ${provider} executable was not resolved before the TUI launch.`)
+    }
+    return path
+  }
+  const resolveCodexExecutable: CodexFactoryOverrides['resolveExecutable'] = async () => {
     const resolved = await codex.resolveExecutable()
-    codexPath = resolved.executablePath
+    executablePaths.set('codex', resolved.executablePath)
+    return resolved
+  }
+  const resolveOpenCodeExecutable: OpenCodeFactoryOverrides['resolveExecutable'] = async () => {
+    const resolved = await openCode.resolveExecutable()
+    executablePaths.set('opencode', resolved.executablePath)
     return resolved
   }
   const tui = createExecutorTuiLauncher({
     ptyRuntime: input.ptyRuntime,
-    resolveCodexExecutable: () => {
-      if (!codexPath) {
-        throw new Error('The codex executable was not resolved before the TUI launch.')
-      }
-      return codexPath
-    },
+    resolveCodexExecutable: () => requirePath('codex'),
+    resolveExecutable: requirePath,
     liveSessionOf: nodeId => sessions.liveSessionOf(nodeId)?.sessionId ?? null,
     bindSession: sessions.bindSession,
   })
   const runtimeFactory = (provider: ExecutorRuntimeProvider) => {
     const factory = createRuntimeFactory({
       provider,
-      overrides: { ...codex, resolveExecutable },
+      overrides: { ...codex, resolveExecutable: resolveCodexExecutable },
+      overridesOpenCode: { ...openCode, resolveExecutable: resolveOpenCodeExecutable },
       approvedHooks,
       getPersistenceStore: input.getPersistenceStore,
       createCodexFactory: input.createCodexFactory,
+      createOpenCodeFactory: input.createOpenCodeFactory,
+      uuidV5: ids.uuidV5,
     })
     if (provider !== 'codex') {
       return factory
@@ -201,7 +219,12 @@ export function composeOrchestration(input: ComposeOrchestrationInput): Composed
     runState,
     events: wiring?.events ?? { publishLinksUpdated: () => undefined },
     runtimeFactory,
-    reapOrphanServices: createCodexOrphanReaper(),
+    reapOrphanServices: async activeLinks => {
+      await Promise.all([
+        createCodexOrphanReaper()(activeLinks),
+        createOpenCodeOrphanReaper()(activeLinks),
+      ])
+    },
     readLiveNodeIds: createLiveNodeIdsReader(input.getPersistenceStore),
     isStopped: () => stopped,
     onBackgroundError: error =>
