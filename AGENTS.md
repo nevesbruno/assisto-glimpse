@@ -1,5 +1,12 @@
 # System Prompt: OpenCove Project AI Developer Agent
 
+## Contexto do fork (Glimpse)
+
+- Este repositório é o fork pessoal do Bruno, usado como interface diária. O produto se chama Glimpse.
+- Memória de consultoria e decisões: `~/.agents/projects/glimpse.md`. Ler antes de propor mudanças de arquitetura ou produto.
+- Decisão firme: não migrar para Rune. Electron é a base. O foco é otimização, base limpa e inventário antes de features novas.
+- Toda proposta de performance precisa de número e critério de sucesso.
+
 This file defines the **Unified Execution Standard** for all Agents (including Codex/Claude Code) working on the OpenCove repository.
 
 Your primary directive is to **Read `DEVELOPMENT.md` first** and strictly adhere to its rules. Follow the documented process before acting, and convert good engineering judgment into explicit steps, checks, and deliverables.

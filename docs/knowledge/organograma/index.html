@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Organograma do estado atual do Glimpse, com o que é base do fork e o que é trabalho próprio.">
+  <title>Organograma do Glimpse</title>
+  <link rel="icon" href="data:,">
+  <script>
+    (function () {
+      try {
+        var tema = localStorage.getItem('glimpse-organograma-tema');
+        if (tema === 'claro' || tema === 'escuro') {
+          document.documentElement.setAttribute('data-theme', tema === 'escuro' ? 'dark' : 'light');
+        }
+      } catch (erro) { /* sem armazenamento: segue o sistema */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+</head>
+<body>
+  <a class="skip" href="#conteudo">Pular para o conteúdo</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <p class="brand-name">Glimpse</p>
+        <p class="brand-sub">Organograma do estado atual</p>
+      </div>
+    </div>
+    <button type="button" id="btn-busca" class="search-btn" aria-haspopup="dialog" aria-label="Buscar no organograma (atalho barra ou Ctrl+K)">
+      <span>Buscar áreas, camadas, riscos</span>
+      <kbd>/</kbd>
+    </button>
+    <div class="tools">
+      <button type="button" id="btn-tema" class="icon-btn" aria-label="Alternar tema" title="Alternar tema">◐</button>
+      <button type="button" id="btn-imprimir" class="icon-btn" aria-label="Imprimir esta visão" title="Imprimir">⎙</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="abas" aria-label="Visões do organograma"></nav>
+
+  <div class="layout" id="layout">
+    <main id="conteudo" class="content" tabindex="-1"></main>
+    <aside id="painel" class="panel" aria-label="Detalhe do item selecionado" hidden></aside>
+  </div>
+
+  <div id="scrim" class="scrim" hidden></div>
+
+  <dialog id="busca" class="dialog" aria-label="Busca global">
+    <div class="search-field">
+      <input id="busca-entrada" class="search-input" type="search" role="combobox" aria-expanded="false" aria-controls="busca-lista" aria-autocomplete="list" aria-label="Buscar por nome, descrição, fonte ou grupo" placeholder="Nome, descrição, fonte ou grupo" autocomplete="off" spellcheck="false">
+      <kbd>Esc</kbd>
+    </div>
+    <ul id="busca-lista" class="search-list" role="listbox" aria-label="Resultados da busca"></ul>
+  </dialog>
+
+  <div id="anuncio" class="sr-only" aria-live="polite" role="status"></div>
+  <noscript><p class="empty">Este organograma precisa de JavaScript para desenhar as visões. Nenhum dado sai desta máquina.</p></noscript>
+
+  <script src="data/dados.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+:root {
+  color-scheme: light;
+
+  /* Papel, tinta e linhas */
+  --bg: #f1f3f6;
+  --paper: #ffffff;
+  --paper-soft: #f7f9fb;
+  --well: #e9edf2;
+  --ink: #1a2028;
+  --ink-2: #3b4654;
+  --muted: #56606c;
+  --muted-2: #5f6a76;
+  --line: #d8dee6;
+  --line-strong: #c4cdd8;
+  --focus: #2457a6;
+
+  /* Estados, cor de traço e fundo de pílula */
+  --executando: #2457a6;
+  --executando-bg: #e8eef9;
+  --executando-ink: #1f4a8f;
+
+  --aguardando: #8a6100;
+  --aguardando-bg: #fbf0d6;
+  --aguardando-ink: #765300;
+
+  --bloqueado: #a8322a;
+  --bloqueado-bg: #fae9e6;
+  --bloqueado-ink: #932a23;
+
+  --revisao: #6b4fa8;
+  --revisao-bg: #efeaf9;
+  --revisao-ink: #5c4295;
+
+  --concluido: #1c7a52;
+  --concluido-bg: #e5f4ec;
+  --concluido-ink: #166b47;
+
+  --fila: #66707c;
+  --fila-bg: #eef1f4;
+  --fila-ink: #56606c;
+
+  --falhou: #8f2b24;
+  --falhou-bg: #f7e7e4;
+  --falhou-ink: #7f261f;
+
+  /* Projetos */
+  --projeto-glimpse: #147a6b;
+  --projeto-assisto: #2f5fa8;
+  --projeto-automacoes: #9a6a00;
+
+  /* Prioridade */
+  --prioridade-alta: #a8322a;
+  --prioridade-alta-bg: #fae9e6;
+  --prioridade-media: #8a6100;
+  --prioridade-media-bg: #fbf0d6;
+  --prioridade-baixa: #56606c;
+  --prioridade-baixa-bg: #eef1f4;
+
+  /* Tipografia */
+  --font-serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+
+  --fs-xs: 12px;
+  --fs-sm: 12.5px;
+  --fs-base: 14px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+
+  /* Espaço e forma */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 8px;
+  --radius: 10px;
+  --radius-panel: 12px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(26, 32, 40, 0.05);
+  --shadow-panel: 0 1px 2px rgba(26, 32, 40, 0.04), 0 10px 28px rgba(26, 32, 40, 0.045);
+  --shadow-drawer: -18px 0 60px rgba(26, 32, 40, 0.18);
+
+  --topbar-h: 64px;
+  --rail-w: 340px;
+  --drawer-w: 440px;
+
+  --z-sticky: 10;
+  --z-scrim: 40;
+  --z-drawer: 50;
+  --z-toast: 60;
+}

@@ -70,4 +70,8 @@
 
 - `cases/README.md`：复盘案例索引。
 
+## Glimpse fork knowledge
+
+- `knowledge/README.md`: studies, measurements, decisions and the evolution plan for the Glimpse fork. This is fork-specific material, not upstream public documentation.
+
 新增公开文档前先判断它是否描述当前事实。若内容包含未实现方案、执行顺序、风险登记或内部决策记录，应放在内部文档区，而不是 `docs/`。
