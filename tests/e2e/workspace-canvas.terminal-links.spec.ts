@@ -1,3 +1,4 @@
+import { attachFailureFrame, isE2EDiagnosticsEnabled } from './diagnostics'
 import { expect, test, type ElectronApplication } from '@playwright/test'
 import { clearAndSeedWorkspace, launchApp, readCanvasViewport } from './workspace-canvas.helpers'
 import {
@@ -5,6 +6,7 @@ import {
   printTerminalLinkFixture,
   terminalLinkCellPoint,
 } from './workspace-canvas.terminal-links.helpers'
+import { recordTerminalLinkEvents } from './workspace-canvas.terminal-links.diagnostics'
 
 const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
 const actionsSelector = '[data-testid="terminal-link-actions"][role="dialog"]'
@@ -69,12 +71,14 @@ test.describe('Workspace Canvas - Terminal Links', () => {
           Math.abs(tooltipBounds!.y + tooltipBounds!.height - paneBounds!.y - paneBounds!.height),
         ).toBeLessThan(3)
         expect(tooltipBounds!.width).toBeLessThanOrEqual(paneBounds!.width * 0.81)
-        const hoverScreenshot = testInfo.outputPath(`terminal-link-hover-${theme}.png`)
-        await window.screenshot({ path: hoverScreenshot })
-        await testInfo.attach(`terminal-link-hover-${theme}`, {
-          path: hoverScreenshot,
-          contentType: 'image/png',
-        })
+        if (isE2EDiagnosticsEnabled()) {
+          const hoverScreenshot = testInfo.outputPath(`terminal-link-hover-${theme}.png`)
+          await window.screenshot({ path: hoverScreenshot })
+          await testInfo.attach(`terminal-link-hover-${theme}`, {
+            path: hoverScreenshot,
+            contentType: 'image/png',
+          })
+        }
         await window.mouse.click(point.x, point.y)
         const actions = window.locator(actionsSelector)
         await expect(actions).toBeVisible()
@@ -118,12 +122,14 @@ test.describe('Workspace Canvas - Terminal Links', () => {
         await expect(actions).toBeVisible()
         await expect(actions).toContainText(uri)
 
-        const screenshot = testInfo.outputPath(`terminal-link-actions-${theme}.png`)
-        await window.screenshot({ path: screenshot })
-        await testInfo.attach(`terminal-link-actions-${theme}`, {
-          path: screenshot,
-          contentType: 'image/png',
-        })
+        if (isE2EDiagnosticsEnabled()) {
+          const screenshot = testInfo.outputPath(`terminal-link-actions-${theme}.png`)
+          await window.screenshot({ path: screenshot })
+          await testInfo.attach(`terminal-link-actions-${theme}`, {
+            path: screenshot,
+            contentType: 'image/png',
+          })
+        }
         await actions.getByRole('button', { name: 'Copy', exact: true }).click()
         await expect
           .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
@@ -146,6 +152,9 @@ test.describe('Workspace Canvas - Terminal Links', () => {
         await window.waitForTimeout(350)
         expect(await readExternalLinks(electronApp)).toEqual([uri])
         await expect(actions).toBeHidden()
+      } catch (error) {
+        await attachFailureFrame(window, test.info())
+        throw error
       } finally {
         await electronApp.close()
       }
@@ -229,6 +238,9 @@ test.describe('Workspace Canvas - Terminal Links', () => {
         )
         .toBe(true)
       expect(await readExternalLinks(electronApp)).toEqual([])
+    } catch (error) {
+      await attachFailureFrame(window, test.info())
+      throw error
     } finally {
       await electronApp.close()
     }
@@ -243,6 +255,8 @@ test.describe('Workspace Canvas - Terminal Links', () => {
     const uri = 'https://example.com/hidden-target?source=osc8'
     const replacementUri = 'https://example.com/replaced-target?source=osc8'
     const displayedUri = 'https://example.com/displayed-label'
+    let failed = false
+    let finishDiagnostics: Awaited<ReturnType<typeof recordTerminalLinkEvents>> | undefined
     try {
       await captureExternalLinks(electronApp)
       await clearAndSeedWorkspace(window, [
@@ -254,6 +268,7 @@ test.describe('Workspace Canvas - Terminal Links', () => {
           height: 340,
         },
       ])
+      finishDiagnostics = await recordTerminalLinkEvents(window, nodeId)
       await printTerminalLinkFixture(
         window,
         nodeId,
@@ -296,12 +311,14 @@ test.describe('Workspace Canvas - Terminal Links', () => {
       await window.mouse.up()
       await expect(actions).toBeVisible()
       await expect(actions.locator('.terminal-link-card__target')).toHaveText(uri)
-      const screenshot = testInfo.outputPath('terminal-link-osc8-priority.png')
-      await window.screenshot({ path: screenshot })
-      await testInfo.attach('terminal-link-osc8-priority', {
-        path: screenshot,
-        contentType: 'image/png',
-      })
+      if (isE2EDiagnosticsEnabled()) {
+        const screenshot = testInfo.outputPath('terminal-link-osc8-priority.png')
+        await window.screenshot({ path: screenshot })
+        await testInfo.attach('terminal-link-osc8-priority', {
+          path: screenshot,
+          contentType: 'image/png',
+        })
+      }
       await actions.getByRole('button', { name: 'Open in browser', exact: true }).click()
       await expect.poll(() => readExternalLinks(electronApp)).toEqual([uri, uri])
 
@@ -329,8 +346,16 @@ test.describe('Workspace Canvas - Terminal Links', () => {
       await expect
         .poll(() => readExternalLinks(electronApp))
         .toEqual([uri, uri, uri, replacementUri])
+    } catch (error) {
+      failed = true
+      await attachFailureFrame(window, test.info())
+      throw error
     } finally {
-      await electronApp.close()
+      try {
+        await finishDiagnostics?.(testInfo, failed)
+      } finally {
+        await electronApp.close()
+      }
     }
   })
 
@@ -369,6 +394,9 @@ test.describe('Workspace Canvas - Terminal Links', () => {
       await expect.poll(receivedMouseInput).not.toBeNull()
       await expect(window.locator(actionsSelector)).toBeHidden()
       expect(await readExternalLinks(electronApp)).toEqual([uri])
+    } catch (error) {
+      await attachFailureFrame(window, test.info())
+      throw error
     } finally {
       await electronApp.close()
     }

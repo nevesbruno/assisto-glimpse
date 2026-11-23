@@ -11,6 +11,13 @@ export type AgentStandbyNotificationPullRequest = {
 /** The island shows at most this many cards; an older one beyond them is dropped. */
 export const AGENT_ISLAND_MAX_CARDS = 3
 
+/** Why a linked executor needs you; a common Agent that ended a turn has none. */
+export type ExecutorAlert = {
+  reason: 'permission' | 'unavailable'
+  /** What the executor asks to do, read from `blockedSummary`; null when it did not say. */
+  summary: string | null
+}
+
 /** One Agent that needs you, as its card and system notification tell it. */
 export type AgentStandbyNotification = {
   kind: 'agent-standby'
@@ -30,6 +37,7 @@ export type AgentStandbyNotification = {
   gitContext: AgentStandbyNotificationGitContext | null
   pullRequest: AgentStandbyNotificationPullRequest | null
   createdAt: number
+  alert?: ExecutorAlert | null
 }
 
 /** Which of a card's context chips Settings › Notifications shows. */

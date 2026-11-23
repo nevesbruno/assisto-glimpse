@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Mesa de coordenação do Glimpse, protótipo navegável com dados de exemplo.">
+  <title>Glimpse, coordenação</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#view">Pular para o conteúdo</a>
+
+  <div class="page">
+    <header class="topbar" aria-label="Cabeçalho da mesa">
+      <a class="brand" id="brand" href="#/agora"></a>
+      <span class="topbar-rule" aria-hidden="true"></span>
+      <h1 class="app-title" id="app-title"></h1>
+
+      <nav class="tabs" id="tabs" aria-label="Visões da mesa"></nav>
+
+      <div class="topbar-tools">
+        <div class="search" role="search">
+          <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+            <circle cx="8.5" cy="8.5" r="5.25"></circle>
+            <path d="M12.4 12.4 17 17"></path>
+          </svg>
+          <input
+            id="busca"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Buscar título, agente ou projeto"
+            aria-label="Buscar na mesa por título, agente ou projeto"
+          >
+          <kbd class="keycap" id="keycap" aria-hidden="true">/</kbd>
+        </div>
+
+        <button class="attention-chip" id="attention-chip" type="button"></button>
+      </div>
+    </header>
+
+    <section class="stats" id="stats" aria-label="Resumo da mesa"></section>
+
+    <div class="view-intro">
+      <p class="view-question" id="view-question"></p>
+      <p class="view-count" id="view-count" aria-live="polite"></p>
+    </div>
+
+    <main class="view" id="view" tabindex="-1"></main>
+
+    <footer class="page-foot" id="page-foot"></footer>
+  </div>
+
+  <div class="scrim" id="scrim" aria-hidden="true"></div>
+
+  <aside
+    class="drawer"
+    id="drawer"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="drawer-title"
+    aria-hidden="true"
+    inert
+  >
+    <div class="drawer-inner">
+      <header class="drawer-head">
+        <div class="drawer-topline">
+          <p class="drawer-kicker" id="drawer-kicker"></p>
+          <button class="icon-button" id="drawer-close" type="button" aria-label="Fechar detalhe">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M5 5 15 15M15 5 5 15"></path>
+            </svg>
+          </button>
+        </div>
+        <h2 class="drawer-title" id="drawer-title" tabindex="-1"></h2>
+        <div class="drawer-sub" id="drawer-sub"></div>
+      </header>
+      <div class="drawer-body" id="drawer-body"></div>
+      <footer class="drawer-actions" id="drawer-actions"></footer>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="data/dados.js"></script>
+  <script src="js/app.base.js"></script>
+  <script src="js/app.actions.js"></script>
+</body>
+</html>

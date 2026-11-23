@@ -2,13 +2,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createControlSurface } from '../../../src/app/main/controlSurface/controlSurface'
-import type { ControlSurfaceContext } from '../../../src/app/main/controlSurface/types'
 import { registerSessionHandlers } from '../../../src/app/main/controlSurface/handlers/sessionHandlers'
-import type { PtyStreamHub } from '../../../src/app/main/controlSurface/ptyStream/ptyStreamHub'
 import {
   createReadyTerminalAdmissionDeps,
   createTestAgentProviderRegistry,
 } from './controlSurfaceTestTerminalAvailability'
+import {
+  createApprovedWorkspacesStub,
+  createPtyRuntimeStub,
+  createPtyStreamHubStub,
+  createSessionLaunchTestContext,
+  createStubStore,
+  createTopologyStub,
+} from './controlSurfaceTestSessionLaunch'
 
 // This suite checks provider contribution dispatch. Platform shell wrapping has its own
 // resolver tests; using the host resolver here makes the command assertions Windows-dependent.
@@ -27,57 +33,17 @@ vi.mock('../../../src/contexts/agent/infrastructure/cli/AgentLaunchSpawnResolver
   }),
 }))
 
-const ctx: ControlSurfaceContext = {
-  now: () => new Date('2026-03-27T00:00:00.000Z'),
-  capabilities: {
-    webShell: false,
-    sync: {
-      state: true,
-      events: true,
-    },
-    sessionStreaming: {
-      enabled: true,
-      ptyProtocolVersion: 1,
-      replayWindowMaxBytes: 400_000,
-      roles: {
-        viewer: true,
-        controller: true,
-      },
-      webAuth: {
-        ticketToCookie: true,
-        cookieSession: true,
-      },
-    },
-  },
-}
+const ctx = createSessionLaunchTestContext()
 const originalUseRealAgents = process.env.OPENCOVE_TEST_USE_REAL_AGENTS
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   if (originalUseRealAgents === undefined) {
     delete process.env.OPENCOVE_TEST_USE_REAL_AGENTS
   } else {
     process.env.OPENCOVE_TEST_USE_REAL_AGENTS = originalUseRealAgents
   }
 })
-
-function createStubStore(state: unknown) {
-  return {
-    readWorkspaceStateRaw: async () => null,
-    writeWorkspaceStateRaw: async () => ({ ok: true, level: 'full', bytes: 0 }),
-    readAppState: async () => state,
-    writeAppState: async () => ({ ok: true, level: 'full', bytes: 1 }),
-    readNodeScrollback: async () => null,
-    writeNodeScrollback: async () => ({ ok: true, level: 'full', bytes: 0 }),
-    consumeRecovery: () => null,
-    dispose: () => undefined,
-  }
-}
-
-function createTopologyStub() {
-  return {
-    listMounts: async () => ({ projectId: 'ws1', mounts: [] }),
-  } as never
-}
 
 describe('control surface session launch agent', () => {
   it('allows launching agent sessions with an empty prompt', async () => {
@@ -111,34 +77,16 @@ describe('control surface session launch agent', () => {
     }
 
     const controlSurface = createControlSurface()
-    const ptyStreamHub: Pick<PtyStreamHub, 'registerSessionMetadata' | 'hasSession'> = {
-      registerSessionMetadata: () => undefined,
-      hasSession: () => false,
-    }
-
     registerSessionHandlers(controlSurface, {
       ...createReadyTerminalAdmissionDeps(),
       agentProviderRegistry: createTestAgentProviderRegistry(),
       userDataPath: '/tmp/opencove-test-user-data',
-      approvedWorkspaces: {
-        registerRoot: async () => undefined,
-        isPathApproved: async () => true,
-      },
+      approvedWorkspaces: createApprovedWorkspacesStub(),
       getPersistenceStore: async () => createStubStore(appState),
-      ptyRuntime: {
+      ptyRuntime: createPtyRuntimeStub({
         spawnSession: async () => ({ sessionId: 'pty-empty-prompt' }),
-        write: () => undefined,
-        resize: () => undefined,
-        kill: () => undefined,
-        onData: () => () => undefined,
-        onExit: () => () => undefined,
-        attach: () => undefined,
-        detach: () => undefined,
-        snapshot: () => '',
-        startSessionStateWatcher: () => undefined,
-        dispose: () => undefined,
-      },
-      ptyStreamHub: ptyStreamHub as unknown as PtyStreamHub,
+      }),
+      ptyStreamHub: createPtyStreamHubStub(),
       topology: createTopologyStub(),
     })
 
@@ -189,34 +137,16 @@ describe('control surface session launch agent', () => {
     }
 
     const controlSurface = createControlSurface()
-    const ptyStreamHub: Pick<PtyStreamHub, 'registerSessionMetadata' | 'hasSession'> = {
-      registerSessionMetadata: () => undefined,
-      hasSession: () => false,
-    }
-
     registerSessionHandlers(controlSurface, {
       ...createReadyTerminalAdmissionDeps(),
       agentProviderRegistry: createTestAgentProviderRegistry(),
       userDataPath: '/tmp/opencove-test-user-data',
-      approvedWorkspaces: {
-        registerRoot: async () => undefined,
-        isPathApproved: async () => true,
-      },
+      approvedWorkspaces: createApprovedWorkspacesStub(),
       getPersistenceStore: async () => createStubStore(appState),
-      ptyRuntime: {
+      ptyRuntime: createPtyRuntimeStub({
         spawnSession: async () => ({ sessionId: 'pty-cwd' }),
-        write: () => undefined,
-        resize: () => undefined,
-        kill: () => undefined,
-        onData: () => () => undefined,
-        onExit: () => () => undefined,
-        attach: () => undefined,
-        detach: () => undefined,
-        snapshot: () => '',
-        startSessionStateWatcher: () => undefined,
-        dispose: () => undefined,
-      },
-      ptyStreamHub: ptyStreamHub as unknown as PtyStreamHub,
+      }),
+      ptyStreamHub: createPtyStreamHubStub(),
       topology: createTopologyStub(),
     })
 
@@ -288,29 +218,12 @@ describe('control surface session launch agent', () => {
       ...createReadyTerminalAdmissionDeps(),
       agentProviderRegistry: createTestAgentProviderRegistry(),
       userDataPath: '/tmp/opencove-test-user-data',
-      approvedWorkspaces: {
-        registerRoot: async () => undefined,
-        isPathApproved: async () => true,
-      },
+      approvedWorkspaces: createApprovedWorkspacesStub(),
       getPersistenceStore: async () => createStubStore(appState),
-      ptyRuntime: {
+      ptyRuntime: createPtyRuntimeStub({
         spawnSession,
-        write: () => undefined,
-        resize: () => undefined,
-        kill: () => undefined,
-        onData: () => () => undefined,
-        onExit: () => () => undefined,
-        attach: () => undefined,
-        detach: () => undefined,
-        snapshot: () => '',
-        startSessionStateWatcher: () => undefined,
-        registerRemoteSession: () => 'remote-home-session',
-        dispose: () => undefined,
-      },
-      ptyStreamHub: {
-        registerSessionMetadata: () => undefined,
-        hasSession: () => false,
-      } as unknown as PtyStreamHub,
+      }),
+      ptyStreamHub: createPtyStreamHubStub(),
       topology: {
         listMounts: async () => ({
           projectId: 'ws1',
@@ -424,32 +337,16 @@ describe('control surface session launch agent', () => {
         ...createReadyTerminalAdmissionDeps(),
         agentProviderRegistry: registry,
         userDataPath: '/tmp/opencove-test-user-data',
-        approvedWorkspaces: {
-          registerRoot: async () => undefined,
-          isPathApproved: async () => true,
-        },
+        approvedWorkspaces: createApprovedWorkspacesStub(),
         // Saved full access, so the expected args include each provider's approval bypass.
         getPersistenceStore: async () =>
           createStubStore({
             settings: { agentFullAccess: true, codexReuseRunningAppServer: savedReuse },
           }),
-        ptyRuntime: {
+        ptyRuntime: createPtyRuntimeStub({
           spawnSession,
-          write: () => undefined,
-          resize: () => undefined,
-          kill: () => undefined,
-          onData: () => () => undefined,
-          onExit: () => () => undefined,
-          attach: () => undefined,
-          detach: () => undefined,
-          snapshot: () => '',
-          startSessionStateWatcher: () => undefined,
-          dispose: () => undefined,
-        },
-        ptyStreamHub: {
-          registerSessionMetadata: () => undefined,
-          hasSession: () => false,
-        } as unknown as PtyStreamHub,
+        }),
+        ptyStreamHub: createPtyStreamHubStub(),
         topology: createTopologyStub(),
       })
 

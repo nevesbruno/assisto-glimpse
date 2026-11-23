@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-/* eslint-disable no-await-in-loop -- debug repro intentionally uses bounded polling and sequential restart steps */
-
+import './lib/isolateHostEnvironment.mjs'
 import { _electron as electron } from '@playwright/test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

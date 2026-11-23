@@ -208,6 +208,7 @@ describe('control surface session streaming handlers', () => {
     })
 
     registerSessionStreamingHandlers(controlSurface, {
+      guardDirectInput: async () => undefined,
       terminalSpawnAdmission: terminalAdmissionDeps.terminalSpawnAdmission,
       approvedWorkspaces: {
         registerRoot: async () => undefined,

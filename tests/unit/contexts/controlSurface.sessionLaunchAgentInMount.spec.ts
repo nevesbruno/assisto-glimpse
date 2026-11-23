@@ -2,13 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { createControlSurface } from '../../../src/app/main/controlSurface/controlSurface'
 import { registerSessionHandlers } from '../../../src/app/main/controlSurface/handlers/sessionHandlers'
-import type { ControlSurfaceContext } from '../../../src/app/main/controlSurface/types'
-import type { PtyStreamHub } from '../../../src/app/main/controlSurface/ptyStream/ptyStreamHub'
 import { TerminalRuntimeAvailability } from '../../../src/contexts/terminal/application/TerminalRuntimeAvailability'
 import {
   createReadyTerminalAdmissionDeps,
   createTestAgentProviderRegistry,
 } from './controlSurfaceTestTerminalAvailability'
+import {
+  createApprovedWorkspacesStub,
+  createLocalMountTopology,
+  createPtyRuntimeStub,
+  createPtyStreamHubStub,
+  createSessionLaunchTestContext,
+} from './controlSurfaceTestSessionLaunch'
 
 const resolveWorkerAgentTestStubMock = vi.hoisted(() => vi.fn())
 const { captureGeminiSessionDiscoveryCursorMock } = vi.hoisted(() => ({
@@ -30,22 +35,10 @@ vi.mock('../../../src/app/main/controlSurface/remote/controlSurfaceHttpClient', 
   invokeControlSurface: invokeControlSurfaceMock,
 }))
 
-const ctx: ControlSurfaceContext = {
-  now: () => new Date('2026-03-27T00:00:00.000Z'),
-  capabilities: {
-    webShell: false,
-    sync: { state: true, events: true },
-    sessionStreaming: {
-      enabled: true,
-      ptyProtocolVersion: 1,
-      replayWindowMaxBytes: 400_000,
-      roles: { viewer: true, controller: true },
-      webAuth: { ticketToCookie: true, cookieSession: true },
-    },
-  },
-}
+const ctx = createSessionLaunchTestContext()
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   resolveWorkerAgentTestStubMock.mockReset()
   captureGeminiSessionDiscoveryCursorMock.mockReset()
   invokeControlSurfaceMock.mockReset()
@@ -66,42 +59,16 @@ describe('control surface session.launchAgentInMount', () => {
       terminalRecoverySpawnAdmission: availability,
       agentProviderRegistry: createTestAgentProviderRegistry(),
       userDataPath: '/tmp/opencove-test-user-data',
-      approvedWorkspaces: {
-        registerRoot: async () => undefined,
-        isPathApproved: async () => true,
-      },
+      approvedWorkspaces: createApprovedWorkspacesStub(),
       getPersistenceStore: async () =>
         ({
           readAppState: async () => ({ settings: {} }),
         }) as never,
-      ptyRuntime: {
+      ptyRuntime: createPtyRuntimeStub({
         spawnSession,
-        write: () => undefined,
-        resize: () => undefined,
-        kill: () => undefined,
-        onData: () => () => undefined,
-        onExit: () => () => undefined,
-        attach: () => undefined,
-        detach: () => undefined,
-        snapshot: () => '',
-        startSessionStateWatcher: () => undefined,
-        registerRemoteSession: () => 'remote-home-session',
-        dispose: () => undefined,
-      },
-      ptyStreamHub: {
-        registerSessionMetadata: () => undefined,
-        hasSession: () => false,
-      } as unknown as PtyStreamHub,
-      topology: {
-        resolveMountTarget: async () => ({
-          mountId: 'mount-local',
-          projectId: 'project-local',
-          targetId: 'target-local',
-          endpointId: 'local',
-          rootPath,
-          rootUri,
-        }),
-      } as never,
+      }),
+      ptyStreamHub: createPtyStreamHubStub(),
+      topology: createLocalMountTopology(rootPath, rootUri),
     })
 
     const launched = await controlSurface.invoke(ctx, {
@@ -169,32 +136,16 @@ describe('control surface session.launchAgentInMount', () => {
       ...createReadyTerminalAdmissionDeps(),
       agentProviderRegistry: createTestAgentProviderRegistry(),
       userDataPath: '/tmp/opencove-test-user-data',
-      approvedWorkspaces: {
-        registerRoot: async () => undefined,
-        isPathApproved: async () => true,
-      },
+      approvedWorkspaces: createApprovedWorkspacesStub(),
       getPersistenceStore: async () =>
         ({
           readAppState: async () => ({ settings: {} }),
         }) as never,
-      ptyRuntime: {
+      ptyRuntime: createPtyRuntimeStub({
         spawnSession: async () => ({ sessionId: 'unused-local-session' }),
-        write: () => undefined,
-        resize: () => undefined,
-        kill: () => undefined,
-        onData: () => () => undefined,
-        onExit: () => () => undefined,
-        attach: () => undefined,
-        detach: () => undefined,
-        snapshot: () => '',
-        startSessionStateWatcher: () => undefined,
         registerRemoteSession,
-        dispose: () => undefined,
-      },
-      ptyStreamHub: {
-        registerSessionMetadata,
-        hasSession: () => false,
-      } as unknown as PtyStreamHub,
+      }),
+      ptyStreamHub: createPtyStreamHubStub({ registerSessionMetadata }),
       topology: {
         resolveMountTarget: async () => ({
           mountId: 'mount-remote',
@@ -269,42 +220,16 @@ describe('control surface session.launchAgentInMount', () => {
       ...createReadyTerminalAdmissionDeps(),
       agentProviderRegistry: createTestAgentProviderRegistry(),
       userDataPath: '/tmp/opencove-test-user-data',
-      approvedWorkspaces: {
-        registerRoot: async () => undefined,
-        isPathApproved: async () => true,
-      },
+      approvedWorkspaces: createApprovedWorkspacesStub(),
       getPersistenceStore: async () =>
         ({
           readAppState: async () => ({ settings: {} }),
         }) as never,
-      ptyRuntime: {
+      ptyRuntime: createPtyRuntimeStub({
         spawnSession,
-        write: () => undefined,
-        resize: () => undefined,
-        kill: () => undefined,
-        onData: () => () => undefined,
-        onExit: () => () => undefined,
-        attach: () => undefined,
-        detach: () => undefined,
-        snapshot: () => '',
-        startSessionStateWatcher: () => undefined,
-        registerRemoteSession: () => 'remote-home-session',
-        dispose: () => undefined,
-      },
-      ptyStreamHub: {
-        registerSessionMetadata: () => undefined,
-        hasSession: () => false,
-      } as unknown as PtyStreamHub,
-      topology: {
-        resolveMountTarget: async () => ({
-          mountId: 'mount-local',
-          projectId: 'project-local',
-          targetId: 'target-local',
-          endpointId: 'local',
-          rootPath,
-          rootUri,
-        }),
-      } as never,
+      }),
+      ptyStreamHub: createPtyStreamHubStub(),
+      topology: createLocalMountTopology(rootPath, rootUri),
     })
 
     const launched = await controlSurface.invoke(ctx, {
@@ -370,42 +295,17 @@ describe('control surface session.launchAgentInMount', () => {
         ...createReadyTerminalAdmissionDeps(),
         agentProviderRegistry: createTestAgentProviderRegistry(),
         userDataPath: '/tmp/opencove-test-user-data',
-        approvedWorkspaces: {
-          registerRoot: async () => undefined,
-          isPathApproved: async () => true,
-        },
+        approvedWorkspaces: createApprovedWorkspacesStub(),
         getPersistenceStore: async () =>
           ({
             readAppState: async () => ({ settings: {} }),
           }) as never,
-        ptyRuntime: {
+        ptyRuntime: createPtyRuntimeStub({
           spawnSession: async () => ({ sessionId: 'pty-mounted-gemini' }),
-          write: () => undefined,
-          resize: () => undefined,
-          kill: () => undefined,
-          onData: () => () => undefined,
-          onExit: () => () => undefined,
-          attach: () => undefined,
-          detach: () => undefined,
-          snapshot: () => '',
           startSessionStateWatcher,
-          registerRemoteSession: () => 'remote-home-session',
-          dispose: () => undefined,
-        },
-        ptyStreamHub: {
-          registerSessionMetadata: () => undefined,
-          hasSession: () => false,
-        } as unknown as PtyStreamHub,
-        topology: {
-          resolveMountTarget: async () => ({
-            mountId: 'mount-local',
-            projectId: 'project-local',
-            targetId: 'target-local',
-            endpointId: 'local',
-            rootPath,
-            rootUri,
-          }),
-        } as never,
+        }),
+        ptyStreamHub: createPtyStreamHubStub(),
+        topology: createLocalMountTopology(rootPath, rootUri),
       })
 
       const launched = await controlSurface.invoke(ctx, {

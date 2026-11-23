@@ -4,10 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Dialog } from '@app/renderer/components/ui/Dialog'
 import { applyUiLanguage } from '@app/renderer/i18n'
 import type { UiTheme } from '@contexts/settings/domain/agentSettings'
-import { examplePlugin } from '@contexts/plugins/presentation/renderer/pluginPresentationTestFixture'
+import { examplePlugin } from '../../../../../tests/support/pluginPresentationTestFixture'
 import * as registry from '@contexts/plugins/presentation/renderer/usePluginRegistry'
 import * as themeApplication from '@contexts/plugins/presentation/renderer/themeApplication'
 import { ControlCenter } from './ControlCenter'
+import { orchestrationAttention } from '@contexts/orchestration/presentation/renderer/orchestrationAttentionStore'
 
 const actions = {
   onChangeUiTheme: vi.fn(),
@@ -99,6 +100,7 @@ describe('Control Center surfaces', () => {
     await applyUiLanguage('en')
     vi.useFakeTimers()
     vi.clearAllMocks()
+    orchestrationAttention.reset()
     vi.spyOn(registry, 'usePluginRegistry').mockReturnValue({ plugins: [], error: null })
     vi.spyOn(themeApplication, 'useThemeApplicationStatus').mockReturnValue({
       requestedId: 'dark',
@@ -111,6 +113,8 @@ describe('Control Center surfaces', () => {
 
   afterEach(() => {
     cleanup()
+    orchestrationAttention.reset()
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
     vi.clearAllTimers()
     vi.useRealTimers()
@@ -281,6 +285,46 @@ describe('Control Center surfaces', () => {
       expect(document.activeElement).not.toBe(trigger)
     },
   )
+
+  it('shows the pending count per executor and opens the approvals window', async () => {
+    const invoke = vi.fn(async (request: { id: string }) => {
+      if (request.id === 'orch.approval.list') {
+        return {
+          linksRevision: 1,
+          links: [
+            {
+              executorNodeId: 'exec-1',
+              approvals: [
+                { requestId: 'req-1', kind: 'command', summary: 'rm -rf build', turnRef: null },
+              ],
+              hooks: [],
+            },
+          ],
+        }
+      }
+      throw new Error(`unexpected ${request.id}`)
+    })
+    vi.stubGlobal('opencoveApi', { controlSurface: { invoke } })
+
+    render(<Harness />)
+    openControls()
+    await act(async () => {})
+
+    const count = screen.getByTestId('control-center-approvals-count-exec-1')
+    expect(count).toHaveTextContent('1')
+
+    fireEvent.click(screen.getByTestId('control-center-approvals-open-exec-1'))
+    await act(async () => {})
+    act(() => vi.runOnlyPendingTimers())
+
+    const window = screen.getByRole('dialog', { name: 'Pending approvals' })
+    expect(window).toHaveTextContent('rm -rf build')
+    expect(screen.queryByTestId('control-center')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('orchestration-approvals-back'))
+    act(() => vi.runOnlyPendingTimers())
+    expect(screen.queryByTestId('orchestration-approvals-window')).toBeNull()
+  })
 
   it('releases the mobile input lock and preserves settings when resizing to desktop', () => {
     setViewportWidth(360)

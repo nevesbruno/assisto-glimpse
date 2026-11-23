@@ -40,7 +40,7 @@ export function help(commands: Command[], path: string[]) {
         ]),
       ),
       '',
-      'Exit codes: 0 success; 1 operation failure; 2 invalid input; 3 unreachable; 4 unauthorized; 5 incompatible protocol; 6 ambiguous target; 124 timeout; 130 interrupted.',
+      'Exit codes: 0 success; 1 operation failure; 2 invalid input; 3 unreachable; 4 unauthorized; 5 incompatible protocol; 6 ambiguous target; 10 waiting observed; 11 agent exited during wait; 124 timeout; 130 interrupted.',
       '',
       'Run "opencove <group> --help" for commands in a group.',
       ...discovery,
@@ -61,7 +61,9 @@ export function help(commands: Command[], path: string[]) {
       exact.targetSpace === 'required'
         ? [
             exact.options?.space?.defaultSelf
-              ? '[--space <id> | <other-target-space-options>]'
+              ? exact.currentContainer
+                ? '[--near <selector> | --root-canvas | --space <id> | <other-target-space-options>]'
+                : '[--space <id> | <other-target-space-options>]'
               : '(--space <id> | <other-target-space-options>)',
           ]
         : []
@@ -85,16 +87,25 @@ export function help(commands: Command[], path: string[]) {
     if (Object.values(exact.options ?? {}).some(spec => spec.defaultSelf)) {
       lines.push(
         '',
-        exact.options?.space?.defaultSelf
-          ? 'When no target is given, inside OpenCove defaults to your own space; project options default to your own project.'
-          : 'When no project is given, inside OpenCove defaults to your own project.',
+        exact.operation === 'node.list'
+          ? 'Default target inside OpenCove: your current Space. Outside every Space, list all nodes in your project; use --root-canvas to list only root nodes. An explicit --project lists that project.'
+          : exact.currentContainer
+            ? 'Default target inside OpenCove: your current Space, or the root canvas when you are outside any Space. An explicit --project alone does not select a container; creation also needs --near, --root-canvas or a Space target.'
+            : exact.options?.space?.defaultSelf
+              ? 'When no target is given, inside OpenCove defaults to your own space; project options default to your own project.'
+              : 'When no project is given, inside OpenCove defaults to your own project.',
       )
     }
     if (exact.targetSpace) {
       lines.push(
         '',
-        `Target space (${exact.options?.space?.defaultSelf ? 'choose one; inside OpenCove defaults to your own space' : exact.targetSpace === 'required' ? 'choose exactly one' : 'optional; choose one'}):`,
+        exact.currentContainer
+          ? 'Target container (choose one):'
+          : `Target space (${exact.options?.space?.defaultSelf ? 'choose one; inside OpenCove defaults to your own space' : exact.targetSpace === 'required' ? 'choose exactly one' : 'optional; choose one'}):`,
         ...rows([
+          ...(exact.options?.['root-canvas']
+            ? [['--root-canvas', exact.options['root-canvas'].description] as [string, string]]
+            : []),
           ['--space <id>', selectorDescription(exact.options!.space)],
           [
             '--space-name <name> [--project <id>]',
@@ -109,22 +120,33 @@ export function help(commands: Command[], path: string[]) {
             '--project <id>',
             selectorDescription({
               ...exact.options!.project,
-              description: 'Narrow a space name, branch or path lookup to one project',
+              description:
+                exact.operation === 'node.list'
+                  ? 'Select the project to list, or narrow a Space lookup'
+                  : exact.currentContainer
+                    ? 'Select the root-canvas project, or narrow a Space lookup'
+                    : 'Narrow a space name, branch or path lookup to one project',
             }),
           ],
         ]),
+      )
+    }
+    if (exact.render?.defaultLimit) {
+      lines.push(
+        '',
+        `Shows up to ${exact.render.defaultLimit} results in Worker order. Use --full or --limit 0 for all; --limit <n> overrides the default.`,
       )
     }
     const entries: [string, string][] = []
     for (const [name, spec] of Object.entries(exact.options ?? {})) {
       if (
         exact.targetSpace &&
-        ['space', 'space-name', 'worker', 'branch', 'path', 'project'].includes(name)
+        ['root-canvas', 'space', 'space-name', 'worker', 'branch', 'path', 'project'].includes(name)
       ) {
         continue
       }
       entries.push([
-        option(name, spec),
+        `${spec.short ? '-' + spec.short + ', ' : ''}${option(name, spec)}`,
         `${selectorDescription(spec)}${spec.required ? (spec.defaultSelf ? ' (required outside OpenCove)' : ' (required)') : ''}`,
       ])
       if (spec.fileVariant) {
@@ -159,6 +181,12 @@ export function help(commands: Command[], path: string[]) {
           ? 'Field projection (--fields): queries accept raw output dot paths and item-relative aliases from dedicated commands with declared output fields; validated after the read. Commands do not support projection.'
           : `Field projection (--fields): not supported.${exact.render?.unavailable ? ' ' + exact.render.unavailable : ''}`,
     )
+    const fieldDescriptions = Object.entries(exact.render?.fieldDescriptions ?? {}).filter(
+      ([field]) => exact.render?.fields?.includes(field),
+    )
+    if (fieldDescriptions.length) {
+      lines.push('', 'Field descriptions:', ...rows(fieldDescriptions))
+    }
     if (exact.render?.examples) {
       lines.push(
         '',

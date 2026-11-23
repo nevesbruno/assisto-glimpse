@@ -68,7 +68,10 @@
   字重 400/500/600，间距 `--cove-spacing-*`（4px 网格），圆角 `--cove-radius-*`，页面级层级 `--cove-z-*`。
 - `pnpm ui:style-check` 按文件统计写死的字号、圆角、间距（≥ 4px）和页面级 z-index（≥ 10），
   计数只能下降，基线是 `scripts/ui-style-ratchet.json`。新增写死的值会失败；减少后运行
-  `pnpm ui:style-ratchet` 锁定新基线。基线由该命令生成，不手改。
+  `pnpm ui:style-ratchet` 锁定新基线。基线由该命令生成，不手改。该命令按规则总数与合并基线
+  （`git merge-base HEAD origin/main`）比较，总数上升或规则消失时拒绝写入；确实要记录时对每条规则加
+  `--accept-rise <规则>`，并在 PR 描述的 `## 📈 Ratchet rises` 段落写明理由（见 `DEVELOPMENT.md` 的“棘轮基线守卫”）。
+  移动或重命名文件但总数不变不需要标志。
 - 同一命令也统计被共享组件取代的原生标记（`scripts/ui-markup-ratchet.json`，同样只减不增）：
   原生元素上的 `title` 属性改用 `Tooltip`（`iframe` 的 `title` 是可访问名称，不计入）；
   共享组件目录之外的原生 `<button>` 改用 `Button`、`IconButton` 或 `MenuItem`；
@@ -214,7 +217,9 @@
 - 窗口标题栏用 `WindowHeader`（`workspace/.../components/shared/`），顺序固定：标记圆点、类别图块、
   标题（13px / 500）、状态、本类操作、折叠、关闭。各窗口只填这些位置，不自己排版。
   类别图块随主题的图标尺寸缩放（默认 20px 图块、12px 图标）。
-  整条标题栏就是拖动面，不留单独的拖动空白，标题一直占到右侧控件前。可改名的标题
+  整条标题栏就是拖动面，不留单独的拖动空白，标题一直占到右侧控件前。整条标题栏（包括标题文字）
+  悬停时都显示抓手光标，提示这里可以拖动窗口，抓起后变成抓紧的手；只有正在编辑的标题输入框
+  显示文本光标。可改名的标题
   （`InlineNodeTitleEditor`：任务、便签、终端、Agent）单击改名，按住 400ms 或移动超过 4px 就是抓起窗口，
   松开不改名；只读标题（文档、文件夹、网页、角色、插件窗口）单击选中窗口。类别图块是唯一只拖不改名的位置，
   测试用的 `dragSurfaceTestId` 也挂在它上面。窗口自己的点击处理要放过标题的点击（`isWindowTitleGesture`）。
@@ -484,7 +489,7 @@
 ### 6.3 提交前门禁（与 CI 对齐）
 
 - `git add -A`
-- `pnpm line-check:staged`
+- `pnpm line-check`
 - `pnpm pre-commit`
 
 ---

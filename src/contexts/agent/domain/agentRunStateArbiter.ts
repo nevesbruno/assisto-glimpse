@@ -1,6 +1,7 @@
 import type {
   AgentHookInstallState,
   AgentHookStateSource,
+  ExecutorStateSource,
   TerminalSessionState,
 } from '../../../shared/contracts/dto'
 
@@ -14,7 +15,7 @@ export const AGENT_HOOK_FRESHNESS_MS = 180_000
 export interface AgentRunStateSignal {
   state: TerminalSessionState
   observedAtMs: number
-  source?: AgentHookStateSource
+  source?: AgentHookStateSource | ExecutorStateSource
   degraded?: boolean
 }
 
@@ -28,7 +29,7 @@ export interface AgentRunStateAuthorityInput {
 }
 
 export interface AgentRunStateAuthorityDecision {
-  source: AgentHookStateSource | 'session_file' | 'launch' | null
+  source: AgentHookStateSource | ExecutorStateSource | 'session_file' | 'launch' | null
   state: TerminalSessionState | null
   degraded: boolean
   hookHealth: 'pending' | 'fresh' | 'stale' | 'unavailable' | 'not_applicable'

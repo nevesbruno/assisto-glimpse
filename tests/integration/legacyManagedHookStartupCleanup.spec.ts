@@ -119,6 +119,203 @@ describe('legacy managed hook startup cleanup', () => {
     })
     await expect(access(codexHooksPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  it('removes trust entries when the whole Codex hooks file is OpenCove-owned', async () => {
+    const home = await createTemporaryHome()
+    const codexHooksPath = join(home, '.codex', 'hooks.json')
+    const codexConfigPath = join(home, '.codex', 'config.toml')
+    const codexConfig = [
+      'model = "user-model"',
+      '',
+      '[hooks.state."/Users/test/.codex/hooks.json:session_start:0:0"]',
+      'trusted_hash = "sha256:obsolete-opencove"',
+      '',
+      '[projects."/workspace"]',
+      'trust_level = "trusted"',
+      '',
+    ].join('\n')
+    await Promise.all([
+      writeFile(
+        codexHooksPath,
+        JSON.stringify({ description: LEGACY_MANAGED_CODEX_HOOK_DESCRIPTION, hooks: {} }),
+      ),
+      writeFile(codexConfigPath, codexConfig),
+    ])
+
+    await expect(cleanupLegacyManagedHooksAtStartup(home)).resolves.toEqual({
+      removedCount: 2,
+      failures: [],
+    })
+    await expect(access(codexHooksPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    const cleanedToml = await readFile(codexConfigPath, 'utf8')
+    expect(cleanedToml).not.toContain('obsolete-opencove')
+    expect(cleanedToml).toContain('trust_level = "trusted"')
+  })
+
+  it('leaves a user-owned Codex hooks file and its trust entries untouched', async () => {
+    const home = await createTemporaryHome()
+    const codexHooksPath = join(home, '.codex', 'hooks.json')
+    const codexConfigPath = join(home, '.codex', 'config.toml')
+    const userHooks = {
+      description: 'My own hooks',
+      hooks: {
+        PreToolUse: [{ hooks: [{ type: 'command', command: '/Users/test/bin/my-hook' }] }],
+      },
+    }
+    const codexConfig = [
+      'model = "user-model"',
+      '',
+      '[hooks.state."/Users/test/.codex/hooks.json:pre_tool_use:0:0"]',
+      'trusted_hash = "sha256:user-owned"',
+      '',
+      '[projects."/workspace"]',
+      'trust_level = "trusted"',
+      '',
+    ].join('\n')
+    const userHooksText = `${JSON.stringify(userHooks, null, 2)}\n`
+    await Promise.all([
+      writeFile(codexHooksPath, userHooksText),
+      writeFile(codexConfigPath, codexConfig),
+    ])
+
+    await expect(cleanupLegacyManagedHooksAtStartup(home)).resolves.toEqual({
+      removedCount: 0,
+      failures: [],
+    })
+    await expect(readFile(codexHooksPath, 'utf8')).resolves.toBe(userHooksText)
+    await expect(readFile(codexConfigPath, 'utf8')).resolves.toBe(codexConfig)
+  })
+
+  it('leaves trust entries untouched when there is no Codex hooks file', async () => {
+    const home = await createTemporaryHome()
+    const codexConfigPath = join(home, '.codex', 'config.toml')
+    const codexConfig = [
+      'model = "user-model"',
+      '',
+      '[hooks.state."/Users/test/.codex/hooks.json:pre_tool_use:0:0"]',
+      'trusted_hash = "sha256:orphaned"',
+      '',
+    ].join('\n')
+    await writeFile(codexConfigPath, codexConfig)
+
+    await expect(cleanupLegacyManagedHooksAtStartup(home)).resolves.toEqual({
+      removedCount: 0,
+      failures: [],
+    })
+    await expect(readFile(codexConfigPath, 'utf8')).resolves.toBe(codexConfig)
+  })
+})
+
+describe('legacy managed hook startup cleanup trust scoping', () => {
+  const trust = (event: string, group: number, hash: string): string =>
+    `[hooks.state."/h/.codex/hooks.json:${event}:${String(group)}:0"]\ntrusted_hash = "${hash}"\n`
+
+  it('leaves config.toml untouched when hooks.json has no legacy hook', async () => {
+    const home = await createTemporaryHome()
+    const hooksPath = join(home, '.codex', 'hooks.json')
+    const configPath = join(home, '.codex', 'config.toml')
+    const config = `${trust('stop', 0, 'user')}\n${trust('pre_tool_use', 0, 'user2')}`
+    await writeFile(
+      hooksPath,
+      JSON.stringify({ hooks: { Stop: [{ hooks: [{ command: 'mine' }] }] } }),
+    )
+    await writeFile(configPath, config)
+
+    await expect(cleanupLegacyManagedHooksAtStartup(home)).resolves.toEqual({
+      removedCount: 0,
+      failures: [],
+    })
+    expect(await readFile(configPath, 'utf8')).toBe(config)
+  })
+
+  it('removes trust of the legacy group and of groups shifted after it, keeps the rest', async () => {
+    const home = await createTemporaryHome()
+    const hooksPath = join(home, '.codex', 'hooks.json')
+    const configPath = join(home, '.codex', 'config.toml')
+    const user = { hooks: [{ command: 'mine' }] }
+    await writeFile(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          Stop: [user],
+          PreToolUse: [user, { description: LEGACY_MANAGED_CODEX_HOOK_DESCRIPTION }, user],
+        },
+      }),
+    )
+    await writeFile(
+      configPath,
+      [
+        trust('stop', 0, 'a'),
+        trust('pre_tool_use', 0, 'b'),
+        trust('pre_tool_use', 1, 'c'),
+        trust('pre_tool_use', 2, 'd'),
+      ].join('\n'),
+    )
+
+    const report = await cleanupLegacyManagedHooksAtStartup(home)
+
+    expect(report).toEqual({ removedCount: 3, failures: [] })
+    const cleaned = await readFile(configPath, 'utf8')
+    expect(cleaned).toContain('"a"')
+    expect(cleaned).toContain('"b"')
+    expect(cleaned).not.toContain('"c"')
+    expect(cleaned).not.toContain('"d"')
+  })
+
+  it('does nothing to config.toml when hooks.json is malformed', async () => {
+    const home = await createTemporaryHome()
+    const configPath = join(home, '.codex', 'config.toml')
+    const config = trust('stop', 0, 'user')
+    await writeFile(join(home, '.codex', 'hooks.json'), '{ broken')
+    await writeFile(configPath, config)
+
+    const report = await cleanupLegacyManagedHooksAtStartup(home)
+
+    expect(report.failures).toHaveLength(1)
+    expect(await readFile(configPath, 'utf8')).toBe(config)
+  })
+
+  it('leaves config.toml byte-identical when its TOML is malformed', async () => {
+    const home = await createTemporaryHome()
+    const configPath = join(home, '.codex', 'config.toml')
+    const config = `${trust('stop', 0, 'x')}[broken\n`
+    await writeFile(
+      join(home, '.codex', 'hooks.json'),
+      JSON.stringify({ hooks: { Stop: [{ description: LEGACY_MANAGED_CODEX_HOOK_DESCRIPTION }] } }),
+    )
+    await writeFile(configPath, config)
+
+    await cleanupLegacyManagedHooksAtStartup(home)
+
+    expect(await readFile(configPath, 'utf8')).toBe(config)
+  })
+
+  it('runs once per installation: the marker blocks later executions', async () => {
+    const home = await createTemporaryHome()
+    const marker = join(home, 'userData', 'cleanup.done')
+    const hooksPath = join(home, '.codex', 'hooks.json')
+    const legacy = JSON.stringify({
+      hooks: { Stop: [{ description: LEGACY_MANAGED_CODEX_HOOK_DESCRIPTION }] },
+    })
+    await writeFile(hooksPath, legacy)
+
+    await cleanupLegacyManagedHooksAtStartup(home, marker)
+    await writeFile(hooksPath, legacy)
+    const second = await cleanupLegacyManagedHooksAtStartup(home, marker)
+
+    expect(second).toEqual({ removedCount: 0, failures: [] })
+    expect(await readFile(hooksPath, 'utf8')).toBe(legacy)
+  })
+
+  it('does not write the marker when a step failed, so the next startup retries', async () => {
+    const home = await createTemporaryHome()
+    const marker = join(home, 'cleanup.done')
+    await writeFile(join(home, '.codex', 'hooks.json'), '{ broken')
+
+    await cleanupLegacyManagedHooksAtStartup(home, marker)
+
+    await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
 })
 
 async function createTemporaryHome(): Promise<string> {

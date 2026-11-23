@@ -1,6 +1,6 @@
 import type * as React from 'react'
-import type { Edge, Node, NodeTypes, OnNodesChange, Viewport } from '@xyflow/react'
-import type { WorkspacePathOpener, WorkspacePathOpenerId } from '@shared/contracts/dto'
+import type { Edge, EdgeTypes, Node, NodeTypes, OnNodesChange, Viewport } from '@xyflow/react'
+import type { WorkspacePathOpenerId } from '@shared/contracts/dto'
 import type { LabelColor, NodeLabelColorOverride } from '@shared/types/labelColor'
 import type {
   ProjectRoleDefinition,
@@ -14,32 +14,20 @@ import type {
   WorkspaceSpaceState,
 } from '../../types'
 import type { WorkspaceArrangeStyle } from '../../utils/workspaceArrange'
-import type { WorkspaceSnapGuide } from '../../utils/workspaceSnap'
 import type { SpaceExplorerOpenDocumentBlock } from './hooks/useSpaceExplorer.guards'
 import type {
-  ContextMenuState,
-  NodeDeleteConfirmationState,
-  SelectionDraftState,
-  SpaceActionMenuState,
+  OrchestrationConnectPromptRenderInput,
   SpaceVisual,
   SpaceWorktreeMismatchDropWarningState,
-  SpaceTargetMountPickerState,
   SpaceWorktreeOperationPhase,
   SpaceWorktreeOperationState,
-  TaskCreatorState,
-  TaskEditorState,
-  RoleCreatorState,
   WorkspaceCanvasQuickPreviewState,
   WorkspaceCanvasProps,
 } from './types'
 import type { SpaceExplorerClipboardItem } from './view/WorkspaceSpaceExplorerOverlay.operations'
 import type { WorkspaceCanvasActionKind } from './view/WorkspaceCanvasActionBar'
 import type { CanvasLod } from './view/canvasLod'
-
-export type SelectionDraftUiState = Pick<
-  SelectionDraftState,
-  'startX' | 'startY' | 'currentX' | 'currentY' | 'phase'
->
+import type { OrchestrationConnectApi } from './hooks/useOrchestrationConnect'
 
 export interface WorkspaceCanvasViewProps {
   workspaceId: string
@@ -65,12 +53,19 @@ export interface WorkspaceCanvasViewProps {
   resolveDropTargetLabel: (point: { x: number; y: number }) => string | null
   nodes: Node<TerminalNodeData>[]
   edges: Edge[]
+  edgeTypes: EdgeTypes
   nodeTypes: NodeTypes
   onNodesChange: OnNodesChange<Node<TerminalNodeData>>
   onPaneClick: (event: React.MouseEvent | MouseEvent) => void
   onPaneContextMenu: (event: React.MouseEvent | MouseEvent) => void
   onNodeClick: (event: React.MouseEvent, node: Node<TerminalNodeData>) => void
   onNodeContextMenu: (event: React.MouseEvent, node: Node<TerminalNodeData>) => void
+  onEdgeClick: (event: React.MouseEvent, edge: Edge) => void
+  orchestrationConnect: OrchestrationConnectApi
+  renderOrchestrationConnectPrompt?: (
+    input: OrchestrationConnectPromptRenderInput,
+  ) => React.ReactNode
+  clearOrchestrationLinkSelection: () => void
   onSelectionContextMenu: (event: React.MouseEvent, selectedNodes: Node<TerminalNodeData>[]) => void
   onNodeDragStart: (
     event: React.MouseEvent,
@@ -89,11 +84,8 @@ export interface WorkspaceCanvasViewProps {
   isTrackpadCanvasMode: boolean
   useManualCanvasWheelGestures: boolean
   isShiftPressed: boolean
-  selectionDraft: SelectionDraftUiState | null
-  snapGuides: WorkspaceSnapGuide[] | null
   spaceVisuals: SpaceVisual[]
   spaceFramePreview: ReadonlyMap<string, WorkspaceSpaceRect> | null
-  selectedSpaceIds: string[]
   openExplorerSpaceId: string | null
   explorerClipboard: SpaceExplorerClipboardItem | null
   quickPreview: WorkspaceCanvasQuickPreviewState | null
@@ -123,34 +115,24 @@ export interface WorkspaceCanvasViewProps {
     spaceId: string,
     options?: { mode?: 'auto' | 'region' },
   ) => void
-  editingSpaceId: string | null
-  spaceRenameInputRef: React.RefObject<HTMLInputElement | null>
-  spaceRenameDraft: string
-  setSpaceRenameDraft: React.Dispatch<React.SetStateAction<string>>
   commitSpaceRename: (spaceId: string) => void
-  cancelSpaceRename: () => void
   activateSpaceTitle: (spaceId: string, lod: CanvasLod) => void
   setSpaceLabelColor: (spaceId: string, labelColor: LabelColor | null) => void
   selectedNodeCount: number
   isMinimapVisible: boolean
   minimapNodeColor: (node: Node<TerminalNodeData>) => string
-  setIsMinimapVisible: React.Dispatch<React.SetStateAction<boolean>>
   onMinimapVisibilityChange: (isVisible: boolean) => void
   spaces: WorkspaceSpaceState[]
   activateSpace: (spaceId: string) => void
   activateAllSpaces: () => void
   onOpenSpaceContextMenu?: (spaceId: string, anchor: { x: number; y: number }) => void
-  contextMenu: ContextMenuState | null
-  closeContextMenu: () => void
-  magneticSnappingEnabled: boolean
-  onToggleMagneticSnapping: () => void
   createTerminalNode: () => Promise<void>
   createNoteNodeFromContextMenu: () => void
   createWebsiteNodeFromContextMenu: () => void
   arrangeAll: (style?: WorkspaceArrangeStyle) => void
   arrangeCanvas: (style?: WorkspaceArrangeStyle) => void
   arrangeInSpace: (spaceId: string, style?: WorkspaceArrangeStyle) => void
-  openTaskCreator: () => void
+  createTaskFromContextMenu: () => void
   openRoleCreator: () => void
   openAgentLauncher: () => void
   openAgentLauncherForProvider: (provider: AgentNodeData['provider']) => void
@@ -167,10 +149,6 @@ export interface WorkspaceCanvasViewProps {
     options?: { anchor?: { x: number; y: number } | null; nodeIds?: string[] },
   ) => string | null
   createEmptySpaceAtPoint: (point: { x: number; y: number }) => void
-  spaceTargetMountPicker: SpaceTargetMountPickerState | null
-  setSpaceTargetMountPicker: React.Dispatch<
-    React.SetStateAction<SpaceTargetMountPickerState | null>
-  >
   confirmSpaceTargetMountPicker: () => void
   cancelSpaceTargetMountPicker: () => void
   clearNodeSelection: () => void
@@ -178,27 +156,14 @@ export interface WorkspaceCanvasViewProps {
   isConvertSelectedNoteToTaskDisabled: boolean
   convertSelectedNoteToTask: () => void
   setSelectedNodeLabelColorOverride: (labelColorOverride: NodeLabelColorOverride) => void
-  taskCreator: TaskCreatorState | null
   taskTitleProviderLabel: string
   taskTitleModelLabel: string
   taskTagOptions: string[]
-  setTaskCreator: React.Dispatch<React.SetStateAction<TaskCreatorState | null>>
-  closeTaskCreator: () => void
-  generateTaskTitle: () => Promise<void>
-  createTask: () => Promise<void>
-  roleCreator: RoleCreatorState | null
-  setRoleCreator: React.Dispatch<React.SetStateAction<RoleCreatorState | null>>
   closeRoleCreator: () => void
   createRole: () => void
-  taskEditor: TaskEditorState | null
-  setTaskEditor: React.Dispatch<React.SetStateAction<TaskEditorState | null>>
   closeTaskEditor: () => void
   generateTaskEditorTitle: () => Promise<void>
   saveTaskEdits: () => Promise<void>
-  nodeDeleteConfirmation: NodeDeleteConfirmationState | null
-  setNodeDeleteConfirmation: React.Dispatch<
-    React.SetStateAction<NodeDeleteConfirmationState | null>
-  >
   confirmNodeDelete: () => Promise<void>
   spaceWorktreeMismatchDropWarning: SpaceWorktreeMismatchDropWarningState | null
   cancelSpaceWorktreeMismatchDropWarning: () => void
@@ -206,10 +171,7 @@ export interface WorkspaceCanvasViewProps {
   agentSettings: WorkspaceCanvasProps['agentSettings']
   onChangePreserveWindowSizesOnArrange: WorkspaceCanvasProps['onChangePreserveWindowSizesOnArrange']
   workspacePath: string
-  spaceActionMenu: SpaceActionMenuState | null
-  availablePathOpeners: WorkspacePathOpener[]
   openSpaceActionMenu: (spaceId: string, anchor: { x: number; y: number }) => void
-  closeSpaceActionMenu: () => void
   copySpacePath: (spaceId: string) => Promise<void> | void
   openSpacePath: (spaceId: string, openerId: WorkspacePathOpenerId) => Promise<void> | void
   spaceWorktreeOperations: SpaceWorktreeOperationState[]

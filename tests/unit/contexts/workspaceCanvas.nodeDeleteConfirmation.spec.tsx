@@ -1,4 +1,4 @@
-import React, { useRef } from 'react'
+import React, { useRef, useState } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { Node } from '@xyflow/react'
@@ -7,6 +7,12 @@ import type {
   WorkspaceSpaceState,
 } from '../../../src/contexts/workspace/presentation/renderer/types'
 import { useWorkspaceCanvasNodeDeleteConfirmation } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useNodeDeleteConfirmation'
+import { useCanvasUi } from '../../../src/contexts/workspace/presentation/renderer/store/canvasStoreContext'
+import {
+  CANVAS_STORE_TEST_WORKSPACE_ID,
+  CanvasStoreTestProvider,
+} from '../../support/canvasStoreTestHarness'
+import { seedWorkspaceCanvasStore } from '../../support/workspaceCanvasStoreHarness'
 
 function createNoteNode(id: string, title: string): Node<TerminalNodeData> {
   return {
@@ -38,25 +44,13 @@ function createNoteNode(id: string, title: string): Node<TerminalNodeData> {
   }
 }
 
-function Harness({
-  nodes,
-  spaces,
-  closeNode,
-}: {
-  nodes: Node<TerminalNodeData>[]
-  spaces: WorkspaceSpaceState[]
-  closeNode: (nodeId: string) => Promise<void>
-}) {
-  const nodesRef = useRef(nodes)
-  const spacesRef = useRef(spaces)
+function Harness({ closeNode }: { closeNode: (nodeId: string) => Promise<void> }) {
   const requestNodeDeleteRef = useRef<(nodeIds: string[]) => void>(() => undefined)
-  const { nodeDeleteConfirmation, confirmNodeDelete, requestNodeClose } =
-    useWorkspaceCanvasNodeDeleteConfirmation({
-      nodesRef,
-      spacesRef,
-      closeNode,
-      requestNodeDeleteRef,
-    })
+  const { confirmNodeDelete, requestNodeClose } = useWorkspaceCanvasNodeDeleteConfirmation({
+    closeNode,
+    requestNodeDeleteRef,
+  })
+  const nodeDeleteConfirmation = useCanvasUi(ui => ui.nodeDeleteConfirmation)
 
   return (
     <>
@@ -92,26 +86,46 @@ function Harness({
   )
 }
 
+// The confirmation reads the document, so the nodes and the Spaces are seeded into the store
+// before the hook first renders.
+function SeededHarness({
+  nodes,
+  spaces,
+  closeNode,
+}: {
+  nodes: Node<TerminalNodeData>[]
+  spaces: WorkspaceSpaceState[]
+  closeNode: (nodeId: string) => Promise<void>
+}) {
+  useState(() => {
+    seedWorkspaceCanvasStore({ workspaceId: CANVAS_STORE_TEST_WORKSPACE_ID, nodes, spaces })
+    return null
+  })
+  return <Harness closeNode={closeNode} />
+}
+
 describe('workspace canvas node delete confirmation', () => {
   it('closes the last node in a space without prompting', async () => {
     const closeNode = vi.fn(async () => undefined)
 
     render(
-      <Harness
-        closeNode={closeNode}
-        nodes={[createNoteNode('note-1', 'Lonely note')]}
-        spaces={[
-          {
-            id: 'space-1',
-            name: 'Solo Space',
-            directoryPath: '/tmp/solo',
-            targetMountId: null,
-            labelColor: null,
-            nodeIds: ['note-1'],
-            rect: null,
-          },
-        ]}
-      />,
+      <CanvasStoreTestProvider>
+        <SeededHarness
+          closeNode={closeNode}
+          nodes={[createNoteNode('note-1', 'Lonely note')]}
+          spaces={[
+            {
+              id: 'space-1',
+              name: 'Solo Space',
+              directoryPath: '/tmp/solo',
+              targetMountId: null,
+              labelColor: null,
+              nodeIds: ['note-1'],
+              rect: null,
+            },
+          ]}
+        />
+      </CanvasStoreTestProvider>,
     )
 
     fireEvent.click(screen.getByTestId('request-close'))
@@ -126,21 +140,23 @@ describe('workspace canvas node delete confirmation', () => {
     const closeNode = vi.fn(async () => undefined)
 
     render(
-      <Harness
-        closeNode={closeNode}
-        nodes={[createNoteNode('note-1', 'First note'), createNoteNode('note-2', 'Second note')]}
-        spaces={[
-          {
-            id: 'space-1',
-            name: 'Pair Space',
-            directoryPath: '/tmp/pair',
-            targetMountId: null,
-            labelColor: null,
-            nodeIds: ['note-1', 'note-2'],
-            rect: null,
-          },
-        ]}
-      />,
+      <CanvasStoreTestProvider>
+        <SeededHarness
+          closeNode={closeNode}
+          nodes={[createNoteNode('note-1', 'First note'), createNoteNode('note-2', 'Second note')]}
+          spaces={[
+            {
+              id: 'space-1',
+              name: 'Pair Space',
+              directoryPath: '/tmp/pair',
+              targetMountId: null,
+              labelColor: null,
+              nodeIds: ['note-1', 'note-2'],
+              rect: null,
+            },
+          ]}
+        />
+      </CanvasStoreTestProvider>,
     )
 
     fireEvent.click(screen.getByTestId('request-close'))
@@ -155,21 +171,23 @@ describe('workspace canvas node delete confirmation', () => {
     const closeNode = vi.fn(async () => undefined)
 
     render(
-      <Harness
-        closeNode={closeNode}
-        nodes={[createNoteNode('note-1', 'First note'), createNoteNode('note-2', 'Second note')]}
-        spaces={[
-          {
-            id: 'space-1',
-            name: 'Pair Space',
-            directoryPath: '/tmp/pair',
-            targetMountId: null,
-            labelColor: null,
-            nodeIds: ['note-1', 'note-2'],
-            rect: null,
-          },
-        ]}
-      />,
+      <CanvasStoreTestProvider>
+        <SeededHarness
+          closeNode={closeNode}
+          nodes={[createNoteNode('note-1', 'First note'), createNoteNode('note-2', 'Second note')]}
+          spaces={[
+            {
+              id: 'space-1',
+              name: 'Pair Space',
+              directoryPath: '/tmp/pair',
+              targetMountId: null,
+              labelColor: null,
+              nodeIds: ['note-1', 'note-2'],
+              rect: null,
+            },
+          ]}
+        />
+      </CanvasStoreTestProvider>,
     )
 
     fireEvent.click(screen.getByTestId('request-delete'))
@@ -178,5 +196,33 @@ describe('workspace canvas node delete confirmation', () => {
       expect(screen.getByTestId('confirmation-state').textContent).toContain('"Pair Space"')
     })
     expect(closeNode).not.toHaveBeenCalled()
+  })
+
+  it('closes the confirmation after the delete is confirmed', async () => {
+    const closeNode = vi.fn(async () => undefined)
+
+    render(
+      <CanvasStoreTestProvider>
+        <SeededHarness
+          closeNode={closeNode}
+          nodes={[createNoteNode('note-1', 'First note'), createNoteNode('note-2', 'Second note')]}
+          spaces={[]}
+        />
+      </CanvasStoreTestProvider>,
+    )
+
+    fireEvent.click(screen.getByTestId('request-delete'))
+    await waitFor(() => {
+      expect(screen.getByTestId('confirmation-state').textContent).not.toBe('null')
+    })
+
+    fireEvent.click(screen.getByTestId('confirm-delete'))
+
+    await waitFor(() => {
+      expect(closeNode).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('confirmation-state').textContent).toBe('null')
+    })
   })
 })

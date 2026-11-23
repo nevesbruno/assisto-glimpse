@@ -1,3 +1,9 @@
+import { boundedInsert } from '../../../../shared/utils/boundedInsert'
+import {
+  getPromptSubmissionEvidence,
+  setPromptSubmissionEvidence,
+} from '../../../../shared/runtime/agentHook/claudePromptEvidence'
+import type { ClaudeBindingEvidence } from '../../../../shared/runtime/agentHook/claudeBindingEvidence'
 import { ClaudeTranscriptGeneration } from './ClaudeTranscriptGeneration'
 import { SessionTurnStateWatcher } from '../../../../contexts/agent/infrastructure/watchers/SessionTurnStateWatcher'
 import {
@@ -16,6 +22,8 @@ import type { ClaudeHookEnvelope } from './claudeHookProtocol'
 let generation = 0
 /** A credential owns launch roots, invocation validity, provider lifecycle and all file IO. */
 export class ClaudeHookTranscriptObserver implements PrivateHookObserver<ClaudeHookEnvelope> {
+  private credential?: object
+  private readonly earlySubmits = new Map<string, number>()
   private watcher?: SessionTurnStateWatcher
   private path?: string
   private disposed = false
@@ -30,36 +38,194 @@ export class ClaudeHookTranscriptObserver implements PrivateHookObserver<ClaudeH
   private readonly roots: ClaudeTranscriptRoots
   constructor(
     private readonly emit: (record: ClaudeTranscriptObservation) => void,
-    configDirectories: readonly string[],
+    private readonly configDirectories: readonly string[],
+    private readonly bindingEvidence?: (evidence: ClaudeBindingEvidence) => void,
+    private readonly closeBinding?: (credential: object) => void,
   ) {
     this.roots = claudeTranscriptRoots(configDirectories)
   }
 
-  observe(sessionId: string, envelope: ClaudeHookEnvelope, context: PrivateHookContext): boolean {
+  observe(
+    sessionId: string,
+    envelope: ClaudeHookEnvelope,
+    context: PrivateHookContext,
+  ): boolean | 'deferred' | 'state_only' {
     if (this.disposed || !context.isCurrent()) {
       return false
     }
-    const action = this.lifecycle.accept(envelope)
+    this.credential = context.credential ?? this
+    let decision:
+      | {
+          action: 'start' | 'end' | 'event' | 'ignore'
+          generation: number
+          deferred?: boolean
+          reply?: 'reject'
+        }
+      | undefined
+    let publication: boolean | undefined
+    const lifecycle = this.lifecycle
+    this.emit({
+      sessionId,
+      incarnation: context.incarnation,
+      providerSessionId: envelope.claudeSessionId,
+      generation: 0,
+      fileIdentity: '',
+      position: -1,
+      baseline: false,
+      conversation: {
+        get initialState() {
+          return lifecycle.checkpoint()
+        },
+        event: envelope,
+        publish: (acceptedGeneration, action = 'event', stateOnly = false, publishState = true) => {
+          publication = action !== 'ignore'
+          if (!publication) {
+            context.rejectReply?.()
+          }
+          if (this.disposed || !context.isCurrent() || (action === 'ignore' && !stateOnly)) {
+            return
+          }
+          if (action !== 'ignore') {
+            this.lifecycle.accept(envelope)
+          }
+          if (
+            this.commit(sessionId, envelope, context, action, acceptedGeneration, stateOnly) ||
+            stateOnly
+          ) {
+            if (publishState) {
+              context.publishState?.(acceptedGeneration)
+            }
+          }
+        },
+        decide: value => {
+          decision = value
+          if (value.reply === 'reject') {
+            context.rejectReply?.()
+          }
+        },
+      },
+    })
+    if (decision?.deferred) {
+      return publication === false || decision.reply === 'reject' ? false : 'deferred'
+    }
+    const accepted = this.commit(
+      sessionId,
+      envelope,
+      context,
+      decision?.action ?? this.lifecycle.accept(envelope),
+      decision?.generation,
+    )
+    return decision ? accepted : accepted || 'state_only'
+  }
+  private commit(
+    sessionId: string,
+    envelope: ClaudeHookEnvelope,
+    context: PrivateHookContext,
+    action: 'start' | 'end' | 'event' | 'ignore',
+    acceptedGeneration?: number,
+    stateOnly = false,
+  ): boolean {
+    if (this.disposed || !context.isCurrent()) {
+      return false
+    }
+    if (acceptedGeneration !== undefined) {
+      setPromptSubmissionEvidence(envelope, {
+        ...envelope,
+        conversationGeneration: acceptedGeneration,
+      })
+    }
+    this.bindingEvidence?.({
+      sessionId,
+      credential: context.credential ?? this,
+      incarnation: context.incarnation,
+      isCurrent: context.isCurrent,
+      configDirectories: this.configDirectories,
+      event: envelope,
+      action,
+    })
+    const delayedStart =
+      acceptedGeneration === undefined &&
+      envelope.hookEventName === 'SessionStart' &&
+      envelope.emittedAtMs !== undefined &&
+      (this.earlySubmits.get(envelope.claudeSessionId) ?? -Infinity) > envelope.emittedAtMs
+    if (
+      acceptedGeneration === undefined &&
+      envelope.hookEventName === 'UserPromptSubmit' &&
+      envelope.emittedAtMs !== undefined
+    ) {
+      if (this.earlySubmits.size >= 16) {
+        this.earlySubmits.delete(this.earlySubmits.keys().next().value!)
+      }
+      const at = envelope.emittedAtMs
+      if (this.earlySubmits.has(envelope.claudeSessionId)) {
+        this.earlySubmits.set(envelope.claudeSessionId, at)
+      } else {
+        boundedInsert(
+          this.earlySubmits.size,
+          16,
+          () => this.earlySubmits.set(envelope.claudeSessionId, at),
+          () => {},
+        )
+      }
+    }
     if (action === 'ignore') {
       return false
     }
+    this.emit({
+      sessionId,
+      incarnation: context.incarnation,
+      providerSessionId: envelope.claudeSessionId,
+      generation: this.currentGeneration,
+      fileIdentity: 'authenticated-conversation',
+      position: -1,
+      baseline: false,
+      origin: 'hook',
+      inputConversation: this.lifecycle.currentConversationId ?? null,
+    })
     this.hotUntil = Date.now() + 2_000
+    context = {
+      ...context,
+      conversationGeneration:
+        acceptedGeneration ?? getPromptSubmissionEvidence(envelope)?.conversationGeneration,
+    }
+    if (acceptedGeneration !== undefined) {
+      let binding: object | undefined
+      this.emit({
+        sessionId,
+        incarnation: context.incarnation,
+        providerSessionId: envelope.claudeSessionId,
+        generation: 0,
+        fileIdentity: 'capture',
+        position: -1,
+        baseline: true,
+        captureEpoch: envelope.hookEventName === 'SessionStart' ? envelope.emittedAtMs : undefined,
+        captureBinding: value => {
+          binding = value
+        },
+        captureConversation() {},
+      })
+      context = { ...context, conversationCapture: binding }
+    }
     if (action === 'start' || action === 'end') {
       this.detach()
       this.demand = false
       this.currentGeneration = ++generation
-      this.emit({
-        sessionId,
-        providerSessionId: envelope.claudeSessionId,
-        incarnation: context.incarnation,
-        generation: this.currentGeneration,
-        fileIdentity: `generation:${this.currentGeneration}`,
-        position: -1,
-        baseline: false,
-        origin: 'hook',
-        lifecycle: action,
-        setPollingDemand: this.pollingDemand(context, this.version),
-      })
+      if ((acceptedGeneration === undefined && !delayedStart) || stateOnly) {
+        this.emit({
+          sessionId,
+          providerSessionId: envelope.claudeSessionId,
+          incarnation: context.incarnation,
+          generation: this.currentGeneration,
+          conversationGeneration: context.conversationGeneration,
+          conversationCapture: context.conversationCapture,
+          fileIdentity: `generation:${this.currentGeneration}`,
+          position: -1,
+          baseline: false,
+          origin: 'hook',
+          lifecycle: action,
+          setPollingDemand: this.pollingDemand(context, this.version),
+        })
+      }
       if (action === 'end') {
         return true
       }
@@ -83,7 +249,12 @@ export class ClaudeHookTranscriptObserver implements PrivateHookObserver<ClaudeH
     if (this.watcher) {
       this.watcher.refresh()
     } else if (!this.pending && !this.retry) {
-      const bound = { incarnation: context.incarnation, isCurrent: context.isCurrent }
+      const bound = {
+        incarnation: context.incarnation,
+        isCurrent: context.isCurrent,
+        conversationGeneration: context.conversationGeneration,
+        conversationCapture: context.conversationCapture,
+      }
       void this.attach(
         sessionId,
         envelope.claudeSessionId,
@@ -142,6 +313,8 @@ export class ClaudeHookTranscriptObserver implements PrivateHookObserver<ClaudeH
             sessionId,
             providerSessionId,
             generation: current,
+            conversationGeneration: context.conversationGeneration,
+            conversationCapture: context.conversationCapture,
             origin: 'hook',
             incarnation: context.incarnation,
             setPollingDemand: this.pollingDemand(context, version),
@@ -191,6 +364,8 @@ export class ClaudeHookTranscriptObserver implements PrivateHookObserver<ClaudeH
       sessionId,
       providerSessionId,
       generation: current,
+      conversationGeneration: context.conversationGeneration,
+      conversationCapture: context.conversationCapture,
       origin: 'hook',
       incarnation: context.incarnation,
       fileIdentity: `unavailable:${current}`,
@@ -219,7 +394,12 @@ export class ClaudeHookTranscriptObserver implements PrivateHookObserver<ClaudeH
     this.watcher = undefined
   }
   dispose(): void {
+    if (this.credential) {
+      this.closeBinding?.(this.credential)
+    }
     this.disposed = true
+    this.earlySubmits.clear()
+    this.lifecycle.dispose()
     this.detach()
   }
 }

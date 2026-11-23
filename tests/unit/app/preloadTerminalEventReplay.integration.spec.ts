@@ -1,6 +1,7 @@
+import { createDesktopOpenCoveApi } from '@app/renderer/bootstrap/installDesktopOpenCoveApi'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { IPC_CHANNELS } from '../../../src/shared/contracts/ipc'
-import type { OpenCoveApi } from '../../../src/app/preload/index.d'
+import type { OpenCoveApi } from '../../../src/app/preload/api'
 
 type IpcListener = (event: unknown, payload: never) => void
 
@@ -29,7 +30,7 @@ describe('preload terminal event replay', () => {
       webUtils: { getPathForFile: vi.fn(() => '') },
     }))
     await import('../../../src/app/preload/index')
-    const api = window.opencoveApi as OpenCoveApi
+    const api: OpenCoveApi = createDesktopOpenCoveApi(window.__opencoveBridge)
     const emit = (channel: string, payload: unknown): void => {
       listeners.get(channel)?.forEach(listener => listener({}, payload as never))
     }

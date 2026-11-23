@@ -39,6 +39,7 @@ vi.mock('../../../src/contexts/agent/infrastructure/opencode/OpenCodeSqlite', as
 })
 import { listAgentSessions } from '../../../src/contexts/agent/infrastructure/cli/AgentSessionCatalog'
 import { clearSessionFileCache } from '../../../src/contexts/agent/infrastructure/cli/AgentSessionCatalog.cache'
+import { clearAgentSessionCatalogCache } from '../../../src/contexts/agent/infrastructure/cli/AgentSessionCatalog.singleFlight'
 import type { AgentSessionTitleCacheStore } from '../../../src/contexts/agent/infrastructure/cli/AgentSessionTitleCacheStore'
 
 function createFileEntry(name: string): Dirent {
@@ -88,6 +89,7 @@ describe('listAgentSessions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     clearSessionFileCache()
+    clearAgentSessionCatalogCache()
     process.env.HOME = '/Users/tester'
     osMock.homedir.mockReturnValue('/Users/tester')
     fsPromisesMock.readdir.mockResolvedValue([])
@@ -299,11 +301,13 @@ describe('listAgentSessions', () => {
     const openCallsAfterFirst = fsPromisesMock.open.mock.calls.length
     expect(openCallsAfterFirst).toBeGreaterThan(0)
 
-    // 指纹不变 → 命中缓存,不再打开文件
+    // 指纹不变 → 命中标题缓存,不再打开文件
+    clearAgentSessionCatalogCache()
     await listAgentSessions({ provider: 'claude-code', cwd, limit: 10 })
     expect(fsPromisesMock.open.mock.calls.length).toBe(openCallsAfterFirst)
 
     // 文件被追加(mtime/size 变化)→ 缓存失效,重新扫描
+    clearAgentSessionCatalogCache()
     fingerprint = { mtimeMs: Date.parse('2026-04-28T11:00:00.000Z'), size: 4096 }
     await listAgentSessions({ provider: 'claude-code', cwd, limit: 10 })
     expect(fsPromisesMock.open.mock.calls.length).toBeGreaterThan(openCallsAfterFirst)
@@ -362,6 +366,7 @@ describe('listAgentSessions', () => {
 
     // 丢弃 L1,迫使第二次只能依赖注入的 L2:命中则不应再打开文件。
     clearSessionFileCache()
+    clearAgentSessionCatalogCache()
     const result = await listAgentSessions(
       { provider: 'claude-code', cwd, limit: 10 },
       { titleCache },

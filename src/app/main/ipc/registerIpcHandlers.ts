@@ -14,7 +14,7 @@ import { registerAppUpdateIpcHandlers } from '../../../contexts/update/presentat
 import { createAppUpdateService } from '../../../contexts/update/infrastructure/main/AppUpdateService'
 import { registerReleaseNotesIpcHandlers } from '../../../contexts/releaseNotes/presentation/main-ipc/register'
 import { createReleaseNotesService } from '../../../contexts/releaseNotes/infrastructure/main/ReleaseNotesService'
-import { registerFilesystemIpcHandlers } from '../../../contexts/filesystem/presentation/main-ipc/register'
+import { registerFilesystemIpcHandlers } from '../../../contexts/filesystem/presentation/main-ipc'
 import { app } from 'electron'
 import type { PersistenceStore } from '../../../platform/persistence/sqlite/PersistenceStore'
 import { createPersistenceStore } from '../../../platform/persistence/sqlite/PersistenceStore'
@@ -247,8 +247,9 @@ export function registerIpcHandlers(deps?: {
 
   return {
     dispose: () => {
+      const pending: Array<void | Promise<void>> = []
       for (let index = disposables.length - 1; index >= 0; index -= 1) {
-        disposables[index]?.dispose()
+        pending.push(disposables[index]?.dispose())
       }
 
       const storePromise = persistenceStorePromise
@@ -278,6 +279,7 @@ export function registerIpcHandlers(deps?: {
         .catch(() => {
           // ignore
         })
+      return Promise.allSettled(pending).then(() => undefined)
     },
   }
 }

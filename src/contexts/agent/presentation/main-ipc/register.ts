@@ -1,3 +1,7 @@
+import { terminalEnvironment } from '../../../../shared/runtime/terminalEnvironment.mjs'
+import { agentTestStubArgs } from '../../../../shared/utils/agentTestStubArgs'
+import { getPublicTerminalSpawnCommand } from '../../../../platform/terminal/publicTerminalSpawnCommand'
+import { publicTerminalSpawnError } from '../../../../shared/errors/terminalSpawnError'
 import { getCommandExecutionEnvironment } from '../../../../platform/os/CommandEnvironmentService'
 import * as electron from 'electron'
 import { createServer } from 'node:net'
@@ -59,7 +63,10 @@ import {
 import { normalizePersistedAppState } from '../../../../platform/persistence/sqlite/normalize'
 import { AgentProviderRegistry } from '../../application/services/AgentProviderRegistry'
 import { createManagedAgentLaunchPlan } from '../../application/use-cases/createManagedAgentLaunchPlan'
-import { createBuiltinAgentProviderContributions } from '../../infrastructure/providers/catalog/BuiltinAgentProviderCatalog'
+import {
+  createAgentLaunchArtifactRoot,
+  createBuiltinAgentProviderContributions,
+} from '../../infrastructure/providers/catalog/BuiltinAgentProviderCatalog'
 import { rollbackAgentLaunchArtifacts } from '../../application/services/AgentLaunchArtifactOwner'
 import { AgentLaunchSessionRegistrationOwner } from '../../application/services/AgentLaunchSessionRegistrationOwner'
 
@@ -120,6 +127,7 @@ export function registerAgentIpcHandlers(
 ): IpcRegistrationDisposable {
   const providerRegistry = new AgentProviderRegistry(
     createBuiltinAgentProviderContributions({
+      artifactRoot: createAgentLaunchArtifactRoot(electron.app.getPath('userData')),
       appVersion,
       runtimeExecutable: process.execPath,
       runtimePlatform: process.platform,
@@ -345,7 +353,9 @@ export function registerAgentIpcHandlers(
 
       const launchStartedAtMs = Date.now()
       const command = testStub?.command ?? launchCommand.command
-      const args = testStub?.args ?? launchCommand.args
+      const args = testStub
+        ? agentTestStubArgs(testStub.args, launchCommand.args)
+        : launchCommand.args
 
       const opencodeTuiConfigPath =
         normalized.provider === 'opencode'
@@ -358,8 +368,8 @@ export function registerAgentIpcHandlers(
       const internalSessionEnv =
         opencodeServer && normalized.provider === 'opencode'
           ? {
-              OPENCOVE_OPENCODE_SERVER_HOSTNAME: opencodeServer.hostname,
-              OPENCOVE_OPENCODE_SERVER_PORT: String(opencodeServer.port),
+              [terminalEnvironment.opencodeServerHostname]: opencodeServer.hostname,
+              [terminalEnvironment.opencodeServerPort]: String(opencodeServer.port),
               XDG_STATE_HOME: resolveOpenCodeEmbeddedXdgStateHome(),
               ...(opencodeTuiConfigPath ? { OPENCODE_TUI_CONFIG: opencodeTuiConfigPath } : {}),
             }
@@ -367,7 +377,7 @@ export function registerAgentIpcHandlers(
 
       const sessionEnv =
         normalized.env || internalSessionEnv
-          ? { ...(normalized.env ?? {}), ...(internalSessionEnv ?? {}) }
+          ? { ...(internalSessionEnv ?? {}), ...(normalized.env ?? {}) }
           : undefined
       const launchEnv = { ...environment, ...managedLaunch.plan.env, ...(sessionEnv ?? {}) }
 
@@ -375,7 +385,12 @@ export function registerAgentIpcHandlers(
         ? await resolveAgentCliInvocation({
             command,
             args,
-          }).catch(error => rollbackAgentLaunchArtifacts(error, managedLaunch.artifacts))
+          }).catch(error =>
+            rollbackAgentLaunchArtifacts(
+              publicTerminalSpawnError(error, 'agent.launch_failed'),
+              managedLaunch.artifacts,
+            ),
+          )
         : null
 
       const resolvedSpawn = testStub
@@ -400,56 +415,65 @@ export function registerAgentIpcHandlers(
             command,
             args,
             executablePathOverride,
+            fileArguments: launchCommand.fileArguments,
             env: launchEnv,
-          }).catch(error => rollbackAgentLaunchArtifacts(error, managedLaunch.artifacts))
+          }).catch(error =>
+            rollbackAgentLaunchArtifacts(
+              publicTerminalSpawnError(error, 'agent.launch_failed'),
+              managedLaunch.artifacts,
+            ),
+          )
 
-      const mergedEnv =
-        normalized.env && Object.keys(normalized.env).length > 0
-          ? { ...(resolvedSpawn.env ?? process.env), ...normalized.env }
-          : resolvedSpawn.env
+      // Caller env already entered launchEnv before platform resolution. The resolver owns
+      // the final environment, including case-insensitive native argument transport keys.
+      const mergedEnv = resolvedSpawn.env
 
       const resumeSessionId = launchCommand.resumeSessionId
       const shouldStartStateWatcher =
         process.env.NODE_ENV !== 'test' ||
         process.env['OPENCOVE_TEST_ENABLE_SESSION_STATE_WATCHER'] === '1'
-      const { sessionId } = await launchSessionRegistrations.spawn({
-        spawn: async () =>
-          await ptyRuntime.spawnSession({
-            cwd: resolvedSpawn.cwd,
-            cols: normalized.cols ?? 80,
-            rows: normalized.rows ?? 24,
-            command: resolvedSpawn.command,
-            args: resolvedSpawn.args,
-            ...(mergedEnv ? { env: mergedEnv } : {}),
-          }),
-        artifacts: managedLaunch.artifacts,
-        retireExact: async spawnedSessionId => await ptyRuntime.kill(spawnedSessionId),
-        onRegistered: spawned => {
-          managedLaunch.plan.onStarted?.(spawned.sessionId)
-          if (shouldStartStateWatcher) {
-            ptyRuntime.startSessionStateWatcher({
-              sessionId: spawned.sessionId,
-              provider: normalized.provider,
-              cwd: normalized.cwd,
-              launchMode: launchCommand.launchMode,
-              resumeSessionId,
-              startedAtMs: launchStartedAtMs,
-              ...(geminiDiscoveryCursor !== undefined ? { geminiDiscoveryCursor } : {}),
-              opencodeBaseUrl: opencodeServer
-                ? `http://${opencodeServer.hostname}:${opencodeServer.port}`
-                : null,
-            })
-          }
-        },
-      })
+      const { sessionId } = await launchSessionRegistrations
+        .spawn({
+          spawn: async () =>
+            await ptyRuntime.spawnSession({
+              cwd: resolvedSpawn.cwd,
+              sessionKind: 'agent',
+              cols: normalized.cols ?? 80,
+              rows: normalized.rows ?? 24,
+              command: resolvedSpawn.command,
+              args: resolvedSpawn.args,
+              ...(mergedEnv ? { env: mergedEnv } : {}),
+            }),
+          artifacts: managedLaunch.artifacts,
+          retireExact: async spawnedSessionId => await ptyRuntime.kill(spawnedSessionId),
+          onRegistered: spawned => {
+            managedLaunch.plan.onStarted?.(spawned.sessionId)
+            if (shouldStartStateWatcher) {
+              ptyRuntime.startSessionStateWatcher({
+                sessionId: spawned.sessionId,
+                provider: normalized.provider,
+                cwd: normalized.cwd,
+                launchMode: launchCommand.launchMode,
+                resumeSessionId,
+                startedAtMs: launchStartedAtMs,
+                ...(geminiDiscoveryCursor !== undefined ? { geminiDiscoveryCursor } : {}),
+                opencodeBaseUrl: opencodeServer
+                  ? `http://${opencodeServer.hostname}:${opencodeServer.port}`
+                  : null,
+              })
+            }
+          },
+        })
+        .catch(error => {
+          throw publicTerminalSpawnError(error, 'agent.launch_failed')
+        })
 
       const result: LaunchAgentResult = {
         sessionId,
         provider: normalized.provider,
         profileId: resolvedSpawn.profileId,
         runtimeKind: resolvedSpawn.runtimeKind,
-        command: resolvedSpawn.command,
-        args: resolvedSpawn.args,
+        ...getPublicTerminalSpawnCommand(resolvedSpawn),
         launchMode: launchCommand.launchMode,
         effectiveModel: launchCommand.effectiveModel,
         resumeSessionId,

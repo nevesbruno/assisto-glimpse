@@ -1,5 +1,6 @@
 import path from 'node:path'
 import type { TerminalProfile, TerminalRuntimeKind } from '../../shared/contracts/dto'
+import type { TerminalSpawnCommand } from './publicTerminalSpawnCommand'
 
 export interface TerminalProfileResolverDeps {
   platform: NodeJS.Platform
@@ -13,11 +14,14 @@ export interface TerminalProfileResolverDeps {
 
 export interface ResolvedTerminalSpawn {
   command: string
+  /** Private process argv; use the public command projection for responses and session metadata. */
   args: string[]
   cwd: string
   env: NodeJS.ProcessEnv
   profileId: string | null
   runtimeKind: TerminalRuntimeKind
+  /** Logical command for public metadata when platform argv contains private env values. */
+  publicCommand?: TerminalSpawnCommand
 }
 
 export interface InternalTerminalProfile extends TerminalProfile {
@@ -59,7 +63,7 @@ function isWslUncPath(value: string): boolean {
   return normalized.startsWith('\\\\wsl$\\') || normalized.startsWith('\\\\wsl.localhost\\')
 }
 
-function convertWindowsPathToWslPath(cwd: string, distro: string): string | null {
+export function convertWindowsPathToWslPath(cwd: string, distro: string): string | null {
   const normalized = cwd.trim()
   const uncPrefix = normalized.toLowerCase().startsWith('\\\\wsl$\\')
     ? '\\\\wsl$\\'
@@ -92,6 +96,7 @@ function convertWindowsPathToWslPath(cwd: string, distro: string): string | null
   return null
 }
 
+// @compat terminal-profile-legacy-runtime-kind
 export function inferLegacyRuntimeKind(
   shell: string,
   platform: NodeJS.Platform,
@@ -313,14 +318,4 @@ export function isPowerShellCommand(command: string): boolean {
   )
 }
 
-function quotePowerShellLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`
-}
-
-export function buildPowerShellExecArgs(command: string, args: string[], cwd: string): string[] {
-  const invocation = [quotePowerShellLiteral(command), ...args.map(quotePowerShellLiteral)].join(
-    ' ',
-  )
-  const script = `Set-Location -LiteralPath ${quotePowerShellLiteral(cwd)}; & ${invocation}; exit $LASTEXITCODE`
-  return ['-NoLogo', '-Command', script]
-}
+export { buildPowerShellExecLaunch } from './windowsNativeLaunch'

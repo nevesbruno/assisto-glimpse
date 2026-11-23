@@ -1,0 +1,71 @@
+import type { AppErrorCode, AppErrorDescriptor } from '../contracts/dto'
+import { initialPromptErrorPresentation } from './initialPromptFeedback'
+
+const APPLICATION_REASONS = {
+  initial_prompt_contains_nul: {
+    code: 'common.invalid_input',
+    message:
+      'This prompt contains a null character. Remove it and try again. Your text has been kept.',
+  },
+  invalid_spawn_arguments: {
+    code: 'common.invalid_input',
+    message: 'The launch settings contain a null character. Remove null characters and try again.',
+  },
+  wsl_arguments_unsupported: {
+    code: 'common.invalid_input',
+    message:
+      'WSL cannot use these launch settings. Choose a distribution name without spaces or quotes, and paths without quotes.',
+  },
+  invalid_spawn_environment: {
+    code: 'common.invalid_input',
+    message:
+      'The launch environment contains a null character. Remove null characters from environment variable names and values, then try again.',
+  },
+  initial_prompt_unsupported: {
+    code: 'common.invalid_input',
+    message:
+      'This prompt could run a provider command instead of starting a conversation. Rephrase the task, or open a blank session and enter provider controls there. Your text has been kept.',
+  },
+  native_wsl_worker_required: {
+    code: 'common.unavailable',
+    message: 'To create this terminal, connect to a Worker running inside WSL.',
+  },
+  wsl_input_file_unavailable: {
+    code: 'common.unavailable',
+    message:
+      'OpenCove cannot open an input file in this WSL profile. Choose a profile that can access the file.',
+  },
+} as const satisfies Record<string, { code: AppErrorCode; message: string }>
+export type TerminalSpawnApplicationReason = keyof typeof APPLICATION_REASONS
+
+export function terminalSpawnApplicationDescriptor(
+  reason: TerminalSpawnApplicationReason,
+): AppErrorDescriptor & { debugMessage: string } {
+  const entry = APPLICATION_REASONS[reason]
+  return { code: entry.code, details: { reason }, debugMessage: entry.message }
+}
+
+/** Rebuild known code/reason pairs; preserve only bounded prompt display metadata, not wire prose. */
+export function publicTerminalSpawnApplicationError(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return undefined
+  }
+  const { code, details, params } = error as AppErrorDescriptor
+  if (!details || typeof details !== 'object') {
+    return undefined
+  }
+  const { reason } = details as { reason?: unknown }
+  if (typeof reason !== 'string' || !Object.hasOwn(APPLICATION_REASONS, reason)) {
+    return undefined
+  }
+  const descriptor = terminalSpawnApplicationDescriptor(reason as TerminalSpawnApplicationReason)
+  const feedback = initialPromptErrorPresentation({ code, details, params })
+  if (feedback && code === descriptor.code) {
+    return {
+      ...descriptor,
+      params: feedback.params,
+      debugMessage: `${feedback.message} ${feedback.hint}`,
+    }
+  }
+  return code === descriptor.code ? descriptor : undefined
+}

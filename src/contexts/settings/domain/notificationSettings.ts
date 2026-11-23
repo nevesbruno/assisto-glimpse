@@ -30,5 +30,12 @@ export function normalizeNotificationSettings(
       0,
       100,
     ),
+    executorAlertRepeatEnabled: flag('executorAlertRepeatEnabled'),
+    executorAlertRepeatMinutes: normalizeIntegerInRange(
+      value.executorAlertRepeatMinutes,
+      fallback.executorAlertRepeatMinutes,
+      1,
+      60,
+    ),
   }
 }

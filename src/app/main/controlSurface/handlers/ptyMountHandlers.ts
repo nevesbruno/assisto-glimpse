@@ -1,6 +1,8 @@
+import { spawnForbiddenDetails } from '../../../../shared/errors/agentSpawnError'
+import { getPublicTerminalSpawnCommand } from '../../../../platform/terminal/publicTerminalSpawnCommand'
 import { ptySpawnInMountOperation } from '../../../../shared/contracts/controlSurface/operations/domains/pty'
 import { registerOperation } from '../registerOperation'
-import { fromFileUri } from '../../../../contexts/filesystem/domain/fileUri'
+import { fromFileUri } from '../../../../contexts/filesystem/domain'
 import type { ApprovedWorkspaceStore } from '../../../../contexts/workspace/infrastructure/approval/ApprovedWorkspaceStore'
 import { createAppError, OpenCoveAppError } from '../../../../shared/errors/appError'
 import type { SpawnTerminalInput, SpawnTerminalResult } from '../../../../shared/contracts/dto'
@@ -13,7 +15,8 @@ import type { MultiEndpointPtyRuntime } from '../ptyStream/multiEndpointPtyRunti
 import type { PtyStreamHub } from '../ptyStream/ptyStreamHub'
 import { invokeControlSurface } from '../remote/controlSurfaceHttpClient'
 import type { TerminalAgentActivityEnvironmentService } from '../../../../contexts/agent/infrastructure/terminal-activity/TerminalAgentActivityEnvironmentService'
-import { spawnTerminalWithActivity } from './terminalAgentActivitySpawn'
+import { assertProjectInGrant } from './grantProjectScope'
+import { composeTerminalSpawnGuard, spawnTerminalWithActivity } from './terminalAgentActivitySpawn'
 const terminalProfileResolver = new TerminalProfileResolver()
 
 function normalizeOptionalString(value: unknown): string | null {
@@ -92,6 +95,12 @@ export function registerPtyMountHandlers(
           debugMessage: `Unknown mountId: ${payload.mountId}`,
         })
       }
+      assertProjectInGrant(
+        ctx,
+        target.projectId,
+        'common.invalid_input',
+        `Unknown mountId: ${payload.mountId}`,
+      )
       deps.terminalSpawnAdmission.assertSpawnAllowed(
         target.projectId,
         ctx.terminalRecoverySpawnScope,
@@ -105,6 +114,11 @@ export function registerPtyMountHandlers(
       })
 
       const cwd = resolvePathFromUriOrThrow(cwdUri, 'pty.spawnInMount cwdUri')
+      ctx.terminalSpawnLifecycle?.assertExecution?.({
+        cwd,
+        mountId: target.mountId,
+        endpointId: target.endpointId,
+      })
       const cols = payload.cols ?? 80
       const rows = payload.rows ?? 24
       const profileId = normalizeOptionalString(payload.profileId)
@@ -112,6 +126,11 @@ export function registerPtyMountHandlers(
 
       const startedAt = ctx.now().toISOString()
 
+      if (ctx.requestAuth?.kind === 'session-grant' && target.endpointId !== 'local') {
+        throw createAppError('common.forbidden', {
+          details: spawnForbiddenDetails('remote_spawning_unsupported'),
+        })
+      }
       if (target.endpointId === 'local') {
         const isApproved = await deps.approvedWorkspaces.isPathApproved(cwd)
         if (!isApproved) {
@@ -140,6 +159,8 @@ export function registerPtyMountHandlers(
 
         ctx.assertActive?.()
         const { sessionId } = await spawnTerminalWithActivity(deps.ptyRuntime, {
+          assertActive: composeTerminalSpawnGuard(ctx),
+          onSpawned: ctx.terminalSpawnLifecycle?.onSpawned,
           activity: deps.terminalAgentActivity,
           args: resolvedSpawn.args,
           cols,
@@ -156,8 +177,7 @@ export function registerPtyMountHandlers(
           kind: 'terminal',
           startedAt,
           cwd: resolvedSpawn.cwd,
-          command: resolvedSpawn.command,
-          args: resolvedSpawn.args,
+          ...getPublicTerminalSpawnCommand(resolvedSpawn),
           cols,
           rows,
         })
@@ -188,7 +208,7 @@ export function registerPtyMountHandlers(
         ...(payload.env ? { env: payload.env } : {}),
       }
 
-      ctx.assertActive?.()
+      composeTerminalSpawnGuard(ctx)()
       const remoteResult = await invokeRemoteValue<SpawnTerminalResult>({
         endpoint,
         kind: 'command',

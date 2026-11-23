@@ -344,3 +344,48 @@ describe('persisted app-state boundary validation', () => {
     expect(isValidState(state)).toBe(false)
   })
 })
+
+describe('orchestration links mirror', () => {
+  const link = {
+    id: '7f3a2c1e-5b4d-4e6f-8a9b-0c1d2e3f4a5b',
+    projectId: 'p1',
+    spaceId: 's1',
+    orchestratorNodeId: 'n1',
+    executorNodeId: 'n2',
+    kind: 'executor',
+    origin: 'orchestrator_spawn',
+    runtimeMode: 'service',
+    provider: 'codex',
+    state: 'active',
+    closeReason: null,
+    health: 'ready',
+    roundsUsed: 0,
+    roundsLimit: 3,
+    createdAt: '2026-11-09T00:00:00.000Z',
+    updatedAt: '2026-11-09T00:00:00.000Z',
+    revision: 1,
+  }
+
+  it('accepts a state without the mirror and a state with a valid one', () => {
+    expect(isValidState(validState())).toBe(true)
+    expect(
+      isValidState({ ...validState(), orchestrationLinks: { linksRevision: 2, links: [link] } }),
+    ).toBe(true)
+  })
+
+  it('rejects a malformed mirror', () => {
+    for (const orchestrationLinks of [
+      null,
+      { linksRevision: -1, links: [] },
+      { linksRevision: 1, links: [{ ...link, state: 'bogus' }] },
+    ]) {
+      expect(isValidState({ ...validState(), orchestrationLinks })).toBe(false)
+    }
+  })
+
+  it('keeps the mirror through merge normalization', () => {
+    const state = { ...validState(), orchestrationLinks: { linksRevision: 2, links: [link] } }
+    const normalized = normalizePersistedAppStateForMerge(state, value => value as TestSettings)
+    expect(normalized?.orchestrationLinks).toEqual(state.orchestrationLinks)
+  })
+})

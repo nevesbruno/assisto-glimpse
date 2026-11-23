@@ -9,10 +9,10 @@ import {
   type StandardWindowSizeBucket,
 } from '@contexts/settings/domain/agentSettings'
 import { resolveSpaceWorkingDirectory } from '@contexts/space/application/resolveSpaceWorkingDirectory'
-import type { AgentNodeData, Point, TerminalNodeData, WorkspaceSpaceState } from '../../../types'
+import type { AgentNodeData, Point, TerminalNodeData } from '../../../types'
 import { resolveLaunchedAgentResumeBinding } from '../../../utils/agentResumeBinding'
 import { resolveNodePlacementAnchorFromViewportCenter, toErrorMessage } from '../helpers'
-import type { ContextMenuState, CreateNodeInput, ShowWorkspaceCanvasMessage } from '../types'
+import type { CreateNodeInput, ShowWorkspaceCanvasMessage } from '../types'
 import {
   assignNodeToSpaceAndExpand,
   findContainingSpaceByAnchor,
@@ -24,23 +24,21 @@ import {
   resolveAgentExecutableOverride,
   resolveWorkspaceAgentLaunchBinding,
 } from './useWorkspaceAgentLaunch.shared'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
+import {
+  useCanvasDocumentCommands,
+  useCanvasUiCommands,
+  useReadCanvasDocument,
+  useReadCanvasUi,
+} from '../../../store/canvasStoreContext'
 
 interface UseAgentLauncherParams {
   agentSettings: AgentSettings
   workspaceId: string
   workspacePath: string
   environmentVariables?: Record<string, string>
-  nodesRef: React.MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: (
-    updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-    options?: { syncLayout?: boolean },
-  ) => void
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
   onShowMessage?: ShowWorkspaceCanvasMessage
-  contextMenu: ContextMenuState | null
-  setContextMenu: (next: ContextMenuState | null) => void
   createNodeForSession: (input: CreateNodeInput) => Promise<Node<TerminalNodeData> | null>
   standardWindowSizeBucket: StandardWindowSizeBucket
   buildAgentNodeTitle: (
@@ -54,14 +52,8 @@ export function useWorkspaceCanvasAgentLauncher({
   workspaceId,
   workspacePath,
   environmentVariables,
-  nodesRef,
-  setNodes,
-  spacesRef,
-  onSpacesChange,
-  onRequestPersistFlush,
+  updateCanvasDocument,
   onShowMessage,
-  contextMenu,
-  setContextMenu,
   createNodeForSession,
   standardWindowSizeBucket,
   buildAgentNodeTitle,
@@ -73,6 +65,10 @@ export function useWorkspaceCanvasAgentLauncher({
     provider?: AgentNodeData['provider'],
   ) => Promise<void>
 } {
+  const ui = useCanvasUiCommands()
+  const readUi = useReadCanvasUi()
+  const documentCommands = useCanvasDocumentCommands()
+  const readDocument = useReadCanvasDocument()
   const { t } = useTranslation()
   const launching = useRef(false)
 
@@ -100,7 +96,7 @@ export function useWorkspaceCanvasAgentLauncher({
         )
         const model = resolveAgentModel(agentSettings, provider)
         const executablePathOverride = resolveAgentExecutableOverride(agentSettings, provider)
-        const anchorSpace = findContainingSpaceByAnchor(spacesRef.current, cursorAnchor)
+        const anchorSpace = findContainingSpaceByAnchor(readDocument().spaces, cursorAnchor)
         const mergedEnv = buildMergedAgentLaunchEnv(agentSettings, provider, environmentVariables)
         let initialBinding: Awaited<ReturnType<typeof resolveWorkspaceAgentLaunchBinding>>
         try {
@@ -110,9 +106,7 @@ export function useWorkspaceCanvasAgentLauncher({
             currentMountId: anchorSpace?.targetMountId ?? null,
             executionDirectory: resolveSpaceWorkingDirectory(anchorSpace, workspacePath),
             targetSpace: anchorSpace,
-            spacesRef,
-            onSpacesChange,
-            onRequestPersistFlush,
+            updateSpaces: documentCommands.updateSpaces,
             mountQueryFailurePolicy: anchorSpace ? 'ignore' : 'throw',
           })
         } catch (error) {
@@ -145,9 +139,7 @@ export function useWorkspaceCanvasAgentLauncher({
               currentMountId: null,
               executionDirectory: initialBinding.executionDirectory,
               targetSpace: anchorSpace,
-              spacesRef,
-              onSpacesChange,
-              onRequestPersistFlush,
+              updateSpaces: documentCommands.updateSpaces,
               mountQueryFailurePolicy: anchorSpace ? 'ignore' : 'throw',
             })
             return nextBinding.mountId && nextBinding.mountId !== failedMountId ? nextBinding : null
@@ -159,6 +151,9 @@ export function useWorkspaceCanvasAgentLauncher({
         const created = await createNodeForSession({
           nodeId: canvasNodeId,
           sessionId: launched.sessionId,
+          ...(launched.managedClaudeLifecycle
+            ? { managedClaudeLifecycle: launched.managedClaudeLifecycle }
+            : {}),
           profileId: launched.profileId,
           runtimeKind: launched.runtimeKind as CreateNodeInput['runtimeKind'],
           terminalGeometry: launchGeometry.terminalGeometry,
@@ -174,8 +169,12 @@ export function useWorkspaceCanvasAgentLauncher({
             prompt: '',
             model,
             effectiveModel: launched.effectiveModel,
-            launchMode: 'new',
-            ...resolveLaunchedAgentResumeBinding(provider, 'new', launched.resumeSessionId),
+            launchMode: launched.launchMode ?? 'new',
+            ...resolveLaunchedAgentResumeBinding(
+              provider,
+              launched.launchMode ?? 'new',
+              launched.resumeSessionId,
+            ),
             executionDirectory: launched.executionDirectory,
             expectedDirectory: launched.executionDirectory,
             directoryMode: 'workspace',
@@ -199,13 +198,11 @@ export function useWorkspaceCanvasAgentLauncher({
           createdNode: created,
           targetSpaceId: anchorSpace.id,
           targetSpaceSnapshot: anchorSpace,
-          spacesRef,
-          nodesRef,
-          setNodes,
-          onSpacesChange,
+          updateCanvasDocument,
         })
 
-        onRequestPersistFlush?.()
+        // The assignment is one write of the nodes and the Spaces; the flush follows it.
+        documentCommands.requestPersistFlush()
       } catch (error) {
         onShowMessage?.(
           t('messages.agentLaunchFailed', { message: toErrorMessage(error) }),
@@ -219,15 +216,13 @@ export function useWorkspaceCanvasAgentLauncher({
       agentSettings,
       buildAgentNodeTitle,
       createNodeForSession,
+      documentCommands,
       environmentVariables,
-      nodesRef,
-      onRequestPersistFlush,
       onShowMessage,
-      onSpacesChange,
-      setNodes,
-      spacesRef,
+      readDocument,
       standardWindowSizeBucket,
       t,
+      updateCanvasDocument,
       workspaceId,
       workspacePath,
     ],
@@ -235,14 +230,15 @@ export function useWorkspaceCanvasAgentLauncher({
 
   const openAgentLauncherForProvider = useCallback(
     (provider: AgentNodeData['provider']) => {
+      const contextMenu = readUi().contextMenu
       if (!contextMenu || contextMenu.kind !== 'pane') {
         return
       }
       const anchor = resolvePaneNodeCreationAnchor(contextMenu)
-      setContextMenu(null)
+      ui.closeContextMenu()
       void launchAgentAtFlowPosition(anchor, provider)
     },
-    [contextMenu, launchAgentAtFlowPosition, setContextMenu],
+    [launchAgentAtFlowPosition, readUi, ui],
   )
 
   const openAgentLauncher = useCallback(() => {

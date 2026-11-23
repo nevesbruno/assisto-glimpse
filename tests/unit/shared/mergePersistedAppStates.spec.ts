@@ -424,3 +424,15 @@ it('canonicalizes trimmed task links and absent worker bindings before comparing
     workerBinding: { endpointId: 'remote', mountId: 'mount' },
   })
 })
+
+it('lets the Worker orchestration mirror prevail over the window value', () => {
+  const rect = { x: 0, y: 0, width: 100, height: 100 }
+  const plain = createState({ rect, nodeTitle: 'a' })
+  const mirror = (linksRevision: number) => ({ linksRevision, links: [] })
+  const worker = { ...plain, orchestrationLinks: mirror(5) }
+  const window = { ...plain, orchestrationLinks: mirror(1) }
+  expect(mergePersistedAppStates(worker, window).orchestrationLinks).toEqual(mirror(5))
+  expect(mergePersistedAppStates(worker, window, plain).orchestrationLinks).toEqual(mirror(5))
+  expect(mergePersistedAppStates(plain, window).orchestrationLinks).toBeUndefined()
+  expect(mergePersistedAppStates(plain, window, plain).orchestrationLinks).toBeUndefined()
+})

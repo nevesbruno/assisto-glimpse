@@ -4,6 +4,7 @@ import {
   createWorkspaceDir,
   openAuthedCanvas,
   readSharedState,
+  terminalTranscript,
   webCanvasBaseUrl,
   writeAppState,
   invokeValue,
@@ -21,8 +22,7 @@ test.describe('Worker web canvas', () => {
     page,
   }) => {
     const workspacePath = await createWorkspaceDir('full-canvas-auth')
-    await writeAppState(
-      page.request,
+    await writeAppState(page.request, () =>
       buildAppState({
         workspacePath,
         workspaceName: 'full-web-demo',
@@ -67,8 +67,7 @@ test.describe('Worker web canvas', () => {
     page,
   }) => {
     const workspacePath = await createWorkspaceDir('note-sync')
-    await writeAppState(
-      page.request,
+    await writeAppState(page.request, () =>
       buildAppState({
         workspacePath,
         spaces: [
@@ -132,8 +131,7 @@ test.describe('Worker web canvas', () => {
 
   test('does not rollback local note edits while applying sync refreshes', async ({ page }) => {
     const workspacePath = await createWorkspaceDir('note-no-rollback')
-    await writeAppState(
-      page.request,
+    await writeAppState(page.request, () =>
       buildAppState({
         workspacePath,
         spaces: [
@@ -192,8 +190,7 @@ test.describe('Worker web canvas', () => {
 
   test('preserves local selection while applying sync refreshes', async ({ page }) => {
     const workspacePath = await createWorkspaceDir('selection-refresh')
-    await writeAppState(
-      page.request,
+    await writeAppState(page.request, () =>
       buildAppState({
         workspacePath,
         spaces: [
@@ -242,46 +239,49 @@ test.describe('Worker web canvas', () => {
     expect(currentState).toBeTruthy()
 
     const newNoteId = `external-note-${Date.now()}`
-    const nextState = JSON.parse(JSON.stringify(currentState)) as NonNullable<typeof currentState>
-    const targetWorkspace = nextState.workspaces[0]
-    const targetSpace = targetWorkspace.spaces.find(space => space.id === 'space-1')
-    expect(targetSpace).toBeTruthy()
+    await writeAppState(page.request, nextState => {
+      if (!nextState) {
+        throw new Error('Missing shared state')
+      }
+      const targetWorkspace = nextState.workspaces[0]
+      const targetSpace = targetWorkspace.spaces.find(space => space.id === 'space-1')
+      expect(targetSpace).toBeTruthy()
 
-    targetWorkspace.nodes.push({
-      id: newNoteId,
-      title: 'note',
-      titlePinnedByUser: false,
-      position: { x: 520, y: 180 },
-      width: 360,
-      height: 260,
-      kind: 'note',
-      labelColorOverride: null,
-      profileId: null,
-      runtimeKind: null,
-      status: null,
-      startedAt: null,
-      endedAt: null,
-      exitCode: null,
-      lastError: null,
-      scrollback: null,
-      executionDirectory: null,
-      expectedDirectory: null,
-      agent: null,
-      task: {
-        text: 'external refresh note',
-      },
+      targetWorkspace.nodes.push({
+        id: newNoteId,
+        title: 'note',
+        titlePinnedByUser: false,
+        position: { x: 520, y: 180 },
+        width: 360,
+        height: 260,
+        kind: 'note',
+        labelColorOverride: null,
+        profileId: null,
+        runtimeKind: null,
+        status: null,
+        startedAt: null,
+        endedAt: null,
+        exitCode: null,
+        lastError: null,
+        scrollback: null,
+        executionDirectory: null,
+        expectedDirectory: null,
+        agent: null,
+        task: {
+          text: 'external refresh note',
+        },
+      })
+      targetSpace!.nodeIds.push(newNoteId)
+
+      return nextState
     })
-    targetSpace!.nodeIds.push(newNoteId)
-
-    await writeAppState(page.request, nextState)
 
     await expect(terminalWrapper).toHaveClass(/selected/)
   })
 
   test('reconnects terminal sessions after a page reload', async ({ page }) => {
     const workspacePath = await createWorkspaceDir('terminal-reconnect')
-    await writeAppState(
-      page.request,
+    await writeAppState(page.request, () =>
       buildAppState({
         workspacePath,
         spaces: [
@@ -333,8 +333,7 @@ test.describe('Worker web canvas', () => {
     page,
   }) => {
     const workspacePath = await createWorkspaceDir('terminal-multi-client')
-    await writeAppState(
-      page.request,
+    await writeAppState(page.request, () =>
       buildAppState({
         workspacePath,
         spaces: [
@@ -391,8 +390,7 @@ test.describe('Worker web canvas', () => {
 
   test('launches agent sessions from the context menu and streams output', async ({ page }) => {
     const workspacePath = await createWorkspaceDir('agent-launch')
-    await writeAppState(
-      page.request,
+    await writeAppState(page.request, () =>
       buildAppState({
         workspacePath,
         spaces: [],
@@ -414,7 +412,7 @@ test.describe('Worker web canvas', () => {
       }),
     )
 
-    await openAuthedCanvas(page)
+    await openAuthedCanvas(page, '/?opencoveTerminalTestApi=1')
 
     const pane = page.locator('.workspace-canvas .react-flow__pane')
     await expect(pane).toBeVisible()
@@ -427,7 +425,7 @@ test.describe('Worker web canvas', () => {
     const terminal = page.locator('.terminal-node').first()
     await expect(terminal).toBeVisible()
     await expect(terminal.locator('.xterm')).toBeVisible()
-    await expect(terminal).toContainText('[opencove-test-agent] codex new')
+    await expect(terminalTranscript(terminal)).toContainText('[opencove-test-agent] codex new')
     await expect(terminal).toContainText('gpt-5.2-codex')
   })
 })

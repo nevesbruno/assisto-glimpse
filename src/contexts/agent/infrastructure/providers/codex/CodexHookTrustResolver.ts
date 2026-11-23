@@ -21,16 +21,26 @@ export async function resolveCodexHookTrust(input: CodexHookTrustInput): Promise
   try {
     const response = await requestHooksList(input)
     return createCodexHookTrustConfiguration(response, input.hookCommand)
-  } catch {
+  } catch (error) {
+    logHookTrustNull(`hook trust unavailable: ${describeError(error)}`)
     return null
   }
+}
+
+function logHookTrustNull(reason: string): void {
+  process.stderr.write(`[opencove] codex hook pre-trust skipped, ${reason}\n`)
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export function createCodexHookTrustConfiguration(
   response: unknown,
   expectedCommand: string,
 ): string | null {
-  const matches = readHookEntries(response).filter(
+  const listed = readHookEntries(response)
+  const matches = listed.filter(
     hook =>
       hook.command === expectedCommand &&
       hook.handlerType === 'command' &&
@@ -41,7 +51,13 @@ export function createCodexHookTrustConfiguration(
       typeof hook.key === 'string' &&
       hook.key.length > 0,
   )
-  if (matches.length === 0 || matches.some(hook => hook.enabled === false)) {
+  if (matches.length === 0) {
+    logHookTrustNull(`no session hook matched the relay command (${listed.length} hooks listed)`)
+    return null
+  }
+  const disabled = matches.filter(hook => hook.enabled === false).length
+  if (disabled > 0) {
+    logHookTrustNull(`hook disabled (${disabled} of ${matches.length} matched hooks)`)
     return null
   }
   const entries = matches.flatMap(hook => {
@@ -49,7 +65,11 @@ export function createCodexHookTrustConfiguration(
     const trustedHash = serializeCodexTomlLiteralString(hook.currentHash as string)
     return key && trustedHash ? [`${key}={trusted_hash=${trustedHash}}`] : []
   })
-  return entries.length === matches.length ? `hooks.state={${entries.join(',')}}` : null
+  if (entries.length !== matches.length) {
+    logHookTrustNull(`count mismatch (${matches.length} matched, ${entries.length} trusted)`)
+    return null
+  }
+  return `hooks.state={${entries.join(',')}}`
 }
 
 async function requestHooksList(input: CodexHookTrustInput): Promise<unknown> {

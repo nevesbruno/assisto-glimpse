@@ -81,15 +81,11 @@ it('projects object paths relative to the printed object, including absent optio
   ).toBe(0)
   expect(JSON.parse(f.out())).toEqual({ node: { id: 'n' } })
 })
-it.each([
-  [['node', 'update', 'note', '--node', 'n', '--text', '-value'], '--text', true],
-  [['node', 'update', 'note', '--node', 'n', '--title', '-value'], '--title', false],
-])('suggests only real value options %j', async (args, flag, file) => {
+it.each(['text', 'title'])('accepts a literal dash-prefixed --%s value', async flag => {
   const f = fixture()
-  expect(await run(args as string[], f.io)).toBe(2)
-  expect(f.error().hint).toContain(`${flag}=-value`)
-  expect(f.error().hint.includes(`${flag}-file`)).toBe(file)
-  expect(f.fetch).not.toHaveBeenCalled()
+  expect(await run(['node', 'update', 'note', '--node', 'n', `--${flag}`, '-value'], f.io)).toBe(0)
+  const request = JSON.parse(String(f.fetch.mock.calls[0][1]?.body))
+  expect(flag === 'text' ? request.payload.data.text : request.payload.title).toBe('-value')
 })
 const issues = [
   {
@@ -108,6 +104,7 @@ it('formats server validation issues as structured JSON', async () => {
   expect(await run(['node', 'get', '--node', 'n'], f.io)).toBe(2)
   expect(f.error()).toEqual({
     code: 'common.invalid_input',
+    retryable: false,
     message: 'Invalid input for node.get: nodeId: expected string',
     details: { issues },
   })
@@ -149,7 +146,7 @@ it('filters operations offline and maps dedicated commands without expanding def
       `${op.id} ${op.summary}`.toLowerCase().includes('create'),
     ),
   ).toBe(true)
-  expect(Object.keys(result[0])).toEqual(['id', 'kind', 'contract', 'summary', 'scope'])
+  expect(Object.keys(result[0])).toEqual(['id', 'kind', 'contract', 'summary', 'scope', 'access'])
   const g = fixture()
   expect(
     await run(
@@ -184,7 +181,6 @@ it('matches summaries and returns an empty projected operation search', async ()
 it('declares table support consistently in every command help', async () => {
   for (const command of commands) {
     const f = fixture()
-    // eslint-disable-next-line no-await-in-loop
     expect(await run([...command.path, '--help'], f.io)).toBe(0)
     expect(f.out()).toContain(
       `Table output (-o table): ${command.render?.columns?.length ? 'supported' : 'not supported'}.`,
@@ -200,7 +196,7 @@ it('fills space table projectId from the envelope', async () => {
   expect(await run(['space', 'list', '-o', 'table'], f.io)).toBe(0)
   expect(f.out()).toBe('ID  NAME  PROJECTID\ns   Main  p\n')
 })
-it.each(['node list', 'node get', 'node update task', 'space list', 'api ops'])(
+it.each(['node list', 'node get', 'node update task', 'space list', 'api ops', 'api schema'])(
   'help golden %s',
   async path => {
     const f = fixture()
@@ -225,19 +221,20 @@ it('rejects unknown object fields even alongside a valid field', async () => {
   expect(f.error().message).toContain('Available fields: id')
   expect(f.fetch).not.toHaveBeenCalled()
 })
-it('does not suggest a file variant for a file option itself', async () => {
+it('accepts a dash-prefixed file path without treating it as an option', async () => {
   const f = fixture()
+  f.io.readTextFile = vi.fn(async () => 'File contents')
   expect(await run(['node', 'update', 'note', '--node', 'n', '--text-file', '-value'], f.io)).toBe(
-    2,
+    0,
   )
-  expect(f.error().hint).toContain('--text-file=-value')
-  expect(f.error().hint).not.toContain('--text-file-file')
+  expect(f.io.readTextFile).toHaveBeenCalledWith('-value')
+  expect(JSON.parse(String(f.fetch.mock.calls[0][1]?.body)).payload.data.text).toBe('File contents')
 })
 it('rejects unknown api ops projection fields before producing output', async () => {
   const f = fixture()
   expect(await run(['api', 'ops', '--fields', 'id,invented'], f.io)).toBe(2)
   expect(f.error().message).toContain(
-    'Available fields: id, kind, contract, summary, cliCommand, scope, allowed',
+    'Available fields: id, kind, contract, summary, cliCommand, scope, access, allowed, reason, policyVersion, rejectedFields',
   )
   expect(f.out()).toBe('')
 })
@@ -333,6 +330,7 @@ it.each([
     })
     expect(f.error()).toEqual({
       code,
+      retryable: false,
       message: expect.stringMatching(/is unavailable$/),
       details: { reason: 'offline', ...target },
       hint: 'Run "opencove endpoint list" to find available targets.',

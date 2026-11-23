@@ -1,0 +1,88 @@
+:root {
+  color-scheme: light dark;
+
+  --paper: oklch(0.975 0.006 255);
+  --paper-2: oklch(0.955 0.008 255);
+  --surface: oklch(0.995 0.003 255);
+  --ink: oklch(0.22 0.02 260);
+  --ink-2: oklch(0.38 0.02 260);
+  --muted: oklch(0.52 0.015 260);
+  --line: oklch(0.86 0.012 260);
+  --line-strong: oklch(0.72 0.018 260);
+  --accent: oklch(0.45 0.13 265);
+  --accent-ink: oklch(0.98 0.005 255);
+
+  --base: oklch(0.52 0.09 250);
+  --base-bg: oklch(0.95 0.02 250);
+  --fork: oklch(0.5 0.12 155);
+  --fork-bg: oklch(0.95 0.03 155);
+  --misto: oklch(0.56 0.13 75);
+  --misto-bg: oklch(0.96 0.04 75);
+  --morto: oklch(0.52 0.14 25);
+  --morto-bg: oklch(0.95 0.03 25);
+  --risco: oklch(0.5 0.17 25);
+  --risco-bg: oklch(0.95 0.04 25);
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 10px 30px oklch(0.2 0.02 260 / 0.06);
+  --shadow-panel: 0 20px 60px oklch(0.2 0.02 260 / 0.18);
+
+  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: ui-serif, Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --step-0: 0.95rem;
+  --step-1: 1.1rem;
+  --step-2: 1.35rem;
+  --step-3: 1.8rem;
+  --step-4: 2.6rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  --max: 1440px;
+}
+
+[data-theme="dark"] {
+  --paper: oklch(0.18 0.015 260);
+  --paper-2: oklch(0.21 0.016 260);
+  --surface: oklch(0.235 0.018 260);
+  --ink: oklch(0.94 0.01 255);
+  --ink-2: oklch(0.82 0.012 255);
+  --muted: oklch(0.66 0.015 255);
+  --line: oklch(0.32 0.02 260);
+  --line-strong: oklch(0.46 0.02 260);
+  --accent: oklch(0.76 0.1 250);
+  --accent-ink: oklch(0.18 0.02 260);
+
+  --base: oklch(0.72 0.08 250);
+  --base-bg: oklch(0.26 0.03 250);
+  --fork: oklch(0.74 0.1 155);
+  --fork-bg: oklch(0.26 0.035 155);
+  --misto: oklch(0.78 0.11 80);
+  --misto-bg: oklch(0.27 0.04 75);
+  --morto: oklch(0.74 0.12 25);
+  --morto-bg: oklch(0.27 0.04 25);
+  --risco: oklch(0.74 0.14 25);
+  --risco-bg: oklch(0.28 0.05 25);
+
+  --shadow: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 10px 30px oklch(0 0 0 / 0.25);
+  --shadow-panel: 0 20px 60px oklch(0 0 0 / 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

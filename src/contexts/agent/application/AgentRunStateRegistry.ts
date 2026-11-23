@@ -1,5 +1,11 @@
-import { subscribeAgentRuns, type RetainedEvent } from './AgentRunSubscriptions'
-import type { AgentTurnArchive, ArchiveMembership, ArchiveClearResult } from './AgentTurnArchive'
+import { clearAgentRunHistory, revokeAgentRunHistory } from './AgentRunHistoryMaintenance'
+import { observeRunConversation } from './AgentRunConversationIngress'
+import {
+  subscribeAgentRuns,
+  type RetainedEvent,
+  type ContextualPublication,
+} from './AgentRunSubscriptions'
+import type { AgentTurnArchive, ArchiveMembership } from './AgentTurnArchive'
 import { readExactArchivedTurn } from './AgentTurnArchiveRead'
 import { AgentSubmissionEvidence } from './AgentSubmissionEvidence'
 import { ClaudeTurnContinuation } from './ClaudeTurnContinuation'
@@ -9,11 +15,16 @@ import { AgentTurnHistory, type FinalMessageSelector } from './AgentTurnHistory'
 import type { PromptSubmissionEvidence } from '../../../shared/runtime/agentHook/claudePromptEvidence'
 import {
   projectRunStateFence,
+  disposeRunConversation,
+  setRunRuntimeContext,
+  runBinding,
   readRunPromptIdentity,
+  readRunInputTarget,
   claimRunNodeBinding,
   publishRunTransition,
   readRunFinalMessage,
-  matchesAgentRunFilter,
+  acceptsRunObservation,
+  listAgentRunSnapshots,
   type AgentRunEntry as Entry,
   type AgentRunBinding as Binding,
 } from './AgentRunStateEntry'
@@ -25,22 +36,10 @@ import {
   type AgentRunObservation,
   type AgentRunSnapshot,
 } from '../domain/agentRunState'
-
 import type { AgentRunEvent as AgentRuntimeEvent } from '../../../shared/contracts/dto/agentRunState'
 export type { AgentRunEvent as AgentRuntimeEvent } from '../../../shared/contracts/dto/agentRunState'
-export interface AgentRuntimeFilter {
-  types?: AgentRuntimeEvent['type'][]
-  nodeId?: string
-  spaceId?: string
-  projectId?: string
-  state?: AgentRunSnapshot['state']
-}
-export interface AgentRuntimeResync {
-  type: 'resync_required'
-  epoch: string
-  seq: number
-  query: 'agent.list'
-}
+import type { AgentRuntimeFilter, AgentRuntimeResync } from './AgentRunSubscriptionTypes'
+export type { AgentRuntimeFilter, AgentRuntimeResync } from './AgentRunSubscriptionTypes'
 
 /** Worker lifetime owner. Uses an injected scheduler; no persistence, transport or renderer dependencies. */
 export class AgentRunStateRegistry {
@@ -94,6 +93,7 @@ export class AgentRunStateRegistry {
       return
     }
     existing?.cancelExpiry?.()
+    disposeRunConversation(existing)
     if (existing) {
       this.releaseNodeBinding(existing)
     }
@@ -103,10 +103,11 @@ export class AgentRunStateRegistry {
         archive: this.ports.archive,
         membership: this.ports.membership,
         now: this.ports.now,
-        // Resolve once at acceptance: launches take priority; otherwise capture the end-time binding.
+        providerScopedPrompts: () => entry.conversation !== undefined,
         nodeId: () => entry.launchNodeId ?? entry.model.snapshot.nodeId,
         remote: () => entry.remote,
       }),
+      conversationSchedule: this.ports.schedule,
       continuation: new ClaudeTurnContinuation(),
       token: `${input.incarnation}:${++this.tokenSequence}`,
       bindingGeneration: 0,
@@ -123,18 +124,11 @@ export class AgentRunStateRegistry {
       'agent.state_changed',
       undefined,
       false,
-      existing ? this.binding(existing) : undefined,
+      existing ? runBinding(existing) : undefined,
     )
     notifyDisplaced()
     this.notifyFence(entry)
     this.flushDelivery()
-  }
-  private binding(entry: Entry): Binding {
-    return {
-      nodeId: entry.model.snapshot.nodeId,
-      projectId: entry.projectId,
-      spaceId: entry.spaceId,
-    }
   }
   bind(
     sessionId: string,
@@ -152,7 +146,7 @@ export class AgentRunStateRegistry {
       return
     }
     entry.bindingGeneration++
-    const previousBinding = this.binding(entry)
+    const previousBinding = runBinding(entry)
     this.releaseNodeBinding(entry)
     entry.model.snapshot = { ...entry.model.snapshot, nodeId: binding.nodeId }
     entry.projectId = binding.projectId
@@ -196,7 +190,23 @@ export class AgentRunStateRegistry {
     if (!entry) {
       return
     }
+    if (
+      entry.model.incarnation !== observation.incarnation ||
+      !this.acceptsObservation(sessionId, observation.source, evidence)
+    ) {
+      return
+    }
+    if (observation.source === 'exit') {
+      disposeRunConversation(entry)
+    }
     this.update(entry, observation, evidence)
+  }
+  acceptsObservation(
+    sessionId: string,
+    source: AgentRunObservation['source'],
+    evidence?: PromptSubmissionEvidence,
+  ): boolean {
+    return acceptsRunObservation(this.entries.get(sessionId), source, evidence)
   }
   observeClaudeTranscript(
     sessionId: string,
@@ -207,9 +217,15 @@ export class AgentRunStateRegistry {
     if (!entry || entry.model.incarnation !== incarnation) {
       return
     }
-    entry.continuation.transcript(record, entry.history, this.ports.now())
-    this.update(entry, null)
+    observeRunConversation(entry, record, {
+      now: this.ports.now,
+      update: () => this.update(entry, null),
+      publish: (...args) => this.publish(...args),
+      notify: () => this.notifyFence(entry),
+      flush: () => this.flushDelivery(),
+    })
   }
+
   private update(
     entry: Entry,
     observation: AgentRunObservation | null,
@@ -250,37 +266,10 @@ export class AgentRunStateRegistry {
     }
   }
   clearHistory(nodeId: string) {
-    const ids = new Set([nodeId])
-    let memoryRemoved = 0
-    for (const entry of this.entries.values()) {
-      memoryRemoved += entry.history.clearNodes(ids)
-    }
-    let archive: ArchiveClearResult = { status: 'unavailable' }
-    try {
-      archive = this.ports.archive?.clearNode(nodeId) ?? archive
-    } catch {
-      /* Clear private memory even when optional storage fails. */
-    }
-    // A remote agent keeps its replies on the Worker that runs it; this Worker cannot clear them.
-    const remote =
-      [...this.entries.values()].some(
-        entry => entry.remote && entry.model.snapshot.nodeId === nodeId,
-      ) || this.ports.isRemote?.({ nodeId }) === true
-    return { nodeId, memoryRemoved, archive, ...(remote ? { remote } : {}) }
+    return clearAgentRunHistory(() => this.entries.values(), nodeId, this.ports)
   }
-
   revokeNodes(nodeIds: readonly string[], revokeArchive = true): void {
-    const ids = new Set(nodeIds)
-    for (const entry of this.entries.values()) {
-      entry.history.revokeNodes(ids)
-    }
-    try {
-      if (revokeArchive) {
-        this.ports.archive?.revokeNodes(nodeIds)
-      }
-    } catch {
-      /* Runtime history remains usable. */
-    }
+    revokeAgentRunHistory(this.entries.values(), nodeIds, this.ports.archive, revokeArchive)
   }
 
   get(locator: { sessionId: string } | { nodeId: string }): AgentRunSnapshot | null {
@@ -289,6 +278,15 @@ export class AgentRunStateRegistry {
         ? this.entries.get(locator.sessionId)
         : this.nodeBindings.get(locator.nodeId)
     return entry ? structuredClone(entry.model.snapshot) : null
+  }
+
+  /** Project recorded by the admitted launch, the Worker-local counterpart of the grant scope. */
+  projectOf(locator: { sessionId: string } | { nodeId: string }): string | undefined {
+    const entry =
+      'sessionId' in locator
+        ? this.entries.get(locator.sessionId)
+        : this.nodeBindings.get(locator.nodeId)
+    return entry?.projectId
   }
 
   readFence(locator: { sessionId: string } | { nodeId: string }): RunStateFence | null {
@@ -315,6 +313,9 @@ export class AgentRunStateRegistry {
       this.ports.epoch,
     )
   }
+  inputTarget(fence: RunStateFence) {
+    return readRunInputTarget(this.entries.get(fence.snapshot.sessionId), fence, this.ports.epoch)
+  }
   watchSubmissionEvidence(
     fence: RunStateFence,
     listener: (receipt: RunStateReceipt) => void,
@@ -327,18 +328,11 @@ export class AgentRunStateRegistry {
     context: Pick<Entry, 'remote' | 'launchKind' | 'hookCoverage' | 'hookInstallState'>,
   ): void {
     const entry = this.entries.get(sessionId)
-    if (
-      !entry ||
-      (entry.remote === context.remote &&
-        entry.launchKind === context.launchKind &&
-        entry.hookInstallState === context.hookInstallState &&
-        entry.hookCoverage === context.hookCoverage)
-    ) {
-      return
+    if (entry && setRunRuntimeContext(entry, context)) {
+      this.notifyFence(entry)
     }
-    Object.assign(entry, context)
-    this.notifyFence(entry)
   }
+
   private notifyFence(entry: Entry, receipt: Omit<RunStateReceipt, 'fence'> = {}): void {
     entry.cursor = this.fences.nextCursor()
     this.fences.emit(entry.model.snapshot.sessionId, {
@@ -358,6 +352,7 @@ export class AgentRunStateRegistry {
       return false
     }
     entry.cancelExpiry?.()
+    disposeRunConversation(entry)
     this.entries.delete(input.sessionId)
     this.fences.emit(input.sessionId, { fence: null })
     this.releaseNodeBinding(entry)
@@ -382,20 +377,7 @@ export class AgentRunStateRegistry {
       epoch: this.ports.epoch,
       seq: this.sequence,
       ...(this.ports.archive ? { turnArchive: true } : {}),
-      agents: [...this.entries.values()]
-        .filter(
-          entry =>
-            entry.model.snapshot.state !== 'exited' &&
-            matchesAgentRunFilter(
-              {
-                event: { snapshot: entry.model.snapshot } as AgentRuntimeEvent,
-                projectId: entry.projectId,
-                spaceId: entry.spaceId,
-              },
-              { ...filter, types: undefined },
-            ),
-        )
-        .map(entry => structuredClone(entry.model.snapshot)),
+      agents: listAgentRunSnapshots(this.entries.values(), filter),
     }
   }
 
@@ -416,6 +398,25 @@ export class AgentRunStateRegistry {
     )
   }
 
+  watermark() {
+    return { epoch: this.ports.epoch, seq: this.sequence }
+  }
+  subscribeContextual(
+    cursor: { epoch: string; afterSeq: number },
+    listener: (event: ContextualPublication) => void,
+  ): () => void {
+    return subscribeAgentRuns(
+      this.events,
+      this.subscribers,
+      this.ports.epoch,
+      this.sequence,
+      cursor,
+      {},
+      () => {},
+      listener,
+    )
+  }
+
   dispose(): void {
     for (const listener of this.disposeListeners) {
       listener()
@@ -426,6 +427,7 @@ export class AgentRunStateRegistry {
     this.subscribers.clear()
     for (const entry of this.entries.values()) {
       entry.cancelExpiry?.()
+      disposeRunConversation(entry)
     }
     this.entries.clear()
     this.nodeBindings.clear()

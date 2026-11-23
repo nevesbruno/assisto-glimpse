@@ -1,8 +1,9 @@
 import React from 'react'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, screen } from '@testing-library/react'
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { DEFAULT_AGENT_SETTINGS } from '../../../src/contexts/settings/domain/agentSettings'
 import { WorkspaceCanvasView } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/WorkspaceCanvasView'
+import { renderWithCanvasStore } from '../../support/canvasStoreTestHarness'
 
 vi.mock('@xyflow/react', () => {
   return {
@@ -97,7 +98,8 @@ vi.mock(
   '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/view/WorkspaceSpaceActionMenu',
   () => {
     return {
-      WorkspaceSpaceActionMenu: () => null,
+      WorkspaceSpaceActionMenu: ({ menu }: { menu: unknown }) =>
+        menu ? <div className="workspace-context-menu" data-testid="space-action-menu" /> : null,
     }
   },
 )
@@ -107,15 +109,6 @@ vi.mock(
   () => {
     return {
       WorkspaceSpaceRegionsOverlay: () => null,
-    }
-  },
-)
-
-vi.mock(
-  '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/windows/TaskCreatorWindow',
-  () => {
-    return {
-      TaskCreatorWindow: () => null,
     }
   },
 )
@@ -172,12 +165,23 @@ function createBaseProps(
     handleCanvasWheelCapture: () => undefined,
     nodes: [],
     edges: [],
+    edgeTypes: {},
     nodeTypes: {},
     onNodesChange: () => undefined,
     onPaneClick: () => undefined,
     onPaneContextMenu: () => undefined,
     onNodeClick: () => undefined,
     onNodeContextMenu: () => undefined,
+    onEdgeClick: () => undefined,
+    orchestrationConnect: {
+      prompt: { hintKey: null, confirmation: null },
+      isValidConnection: () => false,
+      onConnect: () => undefined,
+      onConnectEnd: () => undefined,
+      accept: async () => undefined,
+      cancel: () => undefined,
+    },
+    clearOrchestrationLinkSelection: () => undefined,
     onSelectionContextMenu: () => undefined,
     onNodeDragStart: () => undefined,
     onSelectionDragStart: () => undefined,
@@ -188,65 +192,41 @@ function createBaseProps(
     isTrackpadCanvasMode: false,
     useManualCanvasWheelGestures: false,
     isShiftPressed: false,
-    selectionDraft: null,
     snapGuides: null,
     spaceVisuals: [],
     spaceFramePreview: null,
-    selectedSpaceIds: [],
     handleSpaceDragHandlePointerDown: () => undefined,
-    editingSpaceId: null,
-    spaceRenameInputRef: React.createRef<HTMLInputElement>(),
-    spaceRenameDraft: '',
-    setSpaceRenameDraft: () => undefined,
     commitSpaceRename: () => undefined,
-    cancelSpaceRename: () => undefined,
     activateSpaceTitle: () => undefined,
     selectedNodeCount: 0,
     isMinimapVisible: false,
     minimapNodeColor: () => '#000000',
-    setIsMinimapVisible: () => undefined,
     onMinimapVisibilityChange: () => undefined,
     spaces: [],
     activateSpace: () => undefined,
     activateAllSpaces: () => undefined,
-    contextMenu: null,
-    closeContextMenu: () => undefined,
-    magneticSnappingEnabled: true,
-    onToggleMagneticSnapping: () => undefined,
     createTerminalNode: async () => undefined,
     createNoteNodeFromContextMenu: () => undefined,
     arrangeAll: () => undefined,
     arrangeCanvas: () => undefined,
     arrangeInSpace: () => undefined,
-    openTaskCreator: () => undefined,
+    createTaskFromContextMenu: () => undefined,
     openAgentLauncher: () => undefined,
     createSpaceFromSelectedNodes: () => undefined,
     clearNodeSelection: () => undefined,
     canConvertSelectedNoteToTask: false,
     isConvertSelectedNoteToTaskDisabled: false,
     convertSelectedNoteToTask: () => undefined,
-    taskCreator: null,
     taskTitleProviderLabel: '',
     taskTitleModelLabel: '',
     taskTagOptions: [],
-    setTaskCreator: () => undefined,
-    closeTaskCreator: () => undefined,
-    generateTaskTitle: async () => undefined,
-    createTask: async () => undefined,
-    taskEditor: null,
-    setTaskEditor: () => undefined,
     closeTaskEditor: () => undefined,
     generateTaskEditorTitle: async () => undefined,
     saveTaskEdits: async () => undefined,
-    nodeDeleteConfirmation: null,
-    setNodeDeleteConfirmation: () => undefined,
     confirmNodeDelete: async () => undefined,
     agentSettings: DEFAULT_AGENT_SETTINGS,
     workspacePath: '/tmp',
-    spaceActionMenu: null,
-    availablePathOpeners: [],
     openSpaceActionMenu: () => undefined,
-    closeSpaceActionMenu: () => undefined,
     copySpacePath: () => undefined,
     openSpacePath: () => undefined,
     spaceWorktreeOperations: [],
@@ -273,33 +253,45 @@ describe('WorkspaceCanvasView global pointer/click handlers', () => {
   })
 
   it('closes the context menu when left-clicking outside of it', async () => {
-    const closeContextMenu = vi.fn()
-
-    render(
-      <WorkspaceCanvasView
-        {...createBaseProps({
-          contextMenu: { kind: 'selection', x: 12, y: 12 },
-          closeContextMenu,
-          spaces: [switcherSpace],
-        })}
-      />,
+    const { commands, readUi } = renderWithCanvasStore(
+      <WorkspaceCanvasView {...createBaseProps({ spaces: [switcherSpace] })} />,
     )
+    act(() => {
+      commands.openContextMenu({ kind: 'selection', x: 12, y: 12 })
+    })
 
     await act(async () => {})
 
     const menuButton = screen.getByTestId('workspace-context-menu-button')
     fireEvent(menuButton, new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
-    expect(closeContextMenu).not.toHaveBeenCalled()
+    expect(readUi().contextMenu).not.toBeNull()
 
     const dummyInput = screen.getByTestId('workspace-dummy-input')
     fireEvent(dummyInput, new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
-    expect(closeContextMenu).toHaveBeenCalled()
+    expect(readUi().contextMenu).toBeNull()
+  })
+
+  it('leaves only the pane menu in the DOM after one act when it opens over the Space menu', async () => {
+    const { commands } = renderWithCanvasStore(
+      <WorkspaceCanvasView {...createBaseProps({ spaces: [switcherSpace] })} />,
+    )
+    act(() => {
+      commands.openSpaceActionMenu({ spaceId: 'space-1', x: 20, y: 20 })
+    })
+    expect(screen.getByTestId('space-action-menu')).toBeInTheDocument()
+
+    act(() => {
+      commands.openContextMenu({ kind: 'pane', x: 30, y: 30, flowX: 30, flowY: 30 })
+    })
+
+    expect(screen.queryByTestId('space-action-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-context-menu-button')).toBeInTheDocument()
   })
 
   it('clears selection when a node is selected and user clicks an editable target', async () => {
     const clearNodeSelection = vi.fn()
 
-    render(
+    renderWithCanvasStore(
       <WorkspaceCanvasView
         {...createBaseProps({
           selectedNodeCount: 1,
@@ -322,7 +314,7 @@ describe('WorkspaceCanvasView global pointer/click handlers', () => {
   it('registers a non-passive wheel capture listener when manual canvas wheel gestures are enabled', async () => {
     const addEventListenerSpy = vi.spyOn(HTMLDivElement.prototype, 'addEventListener')
 
-    render(
+    renderWithCanvasStore(
       <WorkspaceCanvasView
         {...createBaseProps({
           useManualCanvasWheelGestures: true,

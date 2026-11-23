@@ -16,7 +16,7 @@ Control Surface 是 OpenCove 对外能力入口。Desktop、CLI、Web UI 和 rem
 
 - Desktop IPC：Renderer 通过 preload 白名单调用 Main。
 - HTTP `/invoke`：Worker Control Surface 的 command / query 调用。
-- HTTP `/events`：server-sent event stream。
+- HTTP `/events`：server-sent event stream；`format=cli-v1&stream=agent` 的可恢复只读表示见 [CLI event stream v1](../cli/EVENT_STREAM_PROTOCOL.md)。
 - WebSocket `/pty`：PTY attach、input、resize、controller-bound Agent re-exec、role/control event。
 - Worker Web access listener：同源 Full Web Canvas、debug shell、cookie auth 与上述 HTTP/WS routes。
 
@@ -153,6 +153,54 @@ Canvas node control:
 - `node.delete`
 - `canvas.focus`
 
+Orchestration (`orch.*`, handlers in `handlers/orchestrationHandlers.ts`; the attention read lives
+in `handlers/orchestrationAttentionHandlers.ts`):
+
+- `orch.spawn`, `orch.dispatch`, `orch.status`, `orch.cancel`, `orch.interrupt`, `orch.close`
+- `orch.link.create`, `orch.link.close`, `orch.link.list`, `orch.link.extend`
+- `orch.approval.list`, `orch.approval.respond`, `orch.hooks.approve`
+
+The handlers receive the orchestration service as a dependency that the Worker composes; until it
+is composed every `orch.*` call fails with `common.unavailable`. A session grant is an agent
+principal whose `provider` is read from the app state at call time, never from the grant or from
+the synced links mirror; any other credential is the user. `orch.link.close`, `orch.link.create`,
+`orch.link.extend`, `orch.approval.respond` and `orch.hooks.approve` are admin scope.
+`orch.approval.list` is interact scope: the user sees every visible link without a target; an agent
+principal needs its own `executorNodeId` and receives `orch.not_linked` without one.
+
+Errors: `orch.*` codes map one to one. `orch.dispatch_in_flight` (also `orch.cancel` and the close
+operations) carries the blocking dispatch as `details: { dispatchId, state, round }`; the other
+dispatch refusals carry no details. An invalid dispatch text becomes `common.invalid_input` and an
+invalid dispatch transition `common.unexpected`. `orch.dispatch` and `orch.hooks.approve` also
+declare `common.invalid_input`.
+
+Results: `orch.dispatch`, `orch.spawn` and `orch.status` return the dispatch, spawn and status DTOs
+of `shared/contracts/dto/orchestration.ts`; `orch.approval.list` returns
+`{ linksRevision, links: [{ executorNodeId, approvals, hooks }] }` with the approval summary cut to
+500 characters (`shared/contracts/dto/orchestrationAttention.ts`); `orch.cancel` returns the
+dispatch view; `orch.link.list` returns `{ linksRevision, links }`; `orch.link.extend` returns
+`{ linkId, roundsLimit }`; `orch.hooks.approve` returns `{ approved, restart: 'done' | 'scheduled' }`
+(`orchestrationHooksApproveResultSchema`); `orch.interrupt`, `orch.close`, `orch.link.close` and
+`orch.approval.respond` return `{ ok: true }`.
+
+`orch.dispatch` refuses `fresh: true` with `common.invalid_input` and the message "fresh indisponível
+na fase 2". `orch.link.create` links two existing nodes, starts the service and always relaunches the
+TUI of the executor node onto it, even when that node already has a live PTY; a failure closes the
+link with `spawn_failed`. It returns `{ linkId, runtimeMode }`.
+
+Q1 (decision of 2026-11-11, option C): the relaunch above stays as it is. Asking for confirmation on
+the canvas before the relaunch is left to the next phase (F3-02). Linking a node again must not leave
+it `exited`; that is a wave 5 fix (cards D1 and D2). D2: on relink the kill of the old TUI is
+deferred by about 3 s so the renderer receives the new session first; closing the link kills it
+immediately.
+
+`orch.not_linked` is also the error for a selector that matches no node (`--to` with no node), for a
+node of another project and for a node without a link. Card E kept the code (decision O1, so the
+agent principal still cannot tell these cases apart, A4 and U-09) and changed only the message. The
+text comes from `NOT_LINKED_MESSAGE` in `handlers/orchestrationHandlers.support.ts`: "No linked
+executor matches the selector. Find the executor node id with "opencove orch link list"." It travels
+as `debugMessage`. `node.not_found` is not used by `orch.*`.
+
 Project, workspace, sync, worktree and integrations are also exposed through dedicated handlers where implemented.
 
 ## Topology And Mounts
@@ -277,12 +325,92 @@ storage and constant-time digest comparison. Its owner must supply authoritative
 liveness. `requestAuth` accepts an injected registry and represents successful verification as
 `{ kind: 'session-grant', grant }`. An invalid explicit bearer does not fall back to a cookie.
 
-The authorization invariant is fail closed: a grant may invoke only registry operations with
-`read` or `interact` scope. `admin`, unknown IDs, `worker.*`, and ticket issuance are forbidden.
-The HTTP handler returns `403 / common.forbidden`; invalid or revoked credentials return 401.
-The same scope check runs in internal dispatch to preserve the fence across nested invocations.
-`system.whoami` is a schema-backed read operation returning explicit identity fields and build
-identity, never token values or token hashes.
+A session grant is a guardrail for agents running as the same OS user, not an OS sandbox.
+It prevents prompt-injected or confused agents from using the documented API to make decisions
+that belong to a human. **Project isolation is not yet enforced**; cross-project reads and
+mutations remain possible and are the separate S1b work.
+
+`http/sessionGrantPolicy.ts` is the exhaustive, fail-closed authority table. Unknown IDs,
+`admin`, `worker.*` and `auth.*` operations are denied. Both HTTP admission and internal
+`controlSurface.invoke` use it; constrained checks run after validation and before execution.
+The read/interact tier remains a ceiling, not an authorization heuristic.
+
+Grants allow the listed canvas, filesystem, worktree and session operations, including Space
+creation and node updates. Launches and prompts are constrained. Use `api ops` and `api schema`
+inside OpenCove to inspect current access; schema fields do not grant permission.
+The table below is a selective index, not the exhaustive policy. Endpoint/mount administration,
+project addition/root approval and plugin distribution or execution require a human decision.
+
+| Denied operations | Reason |
+| --- | --- |
+| `endpoint.prepare/register/registerManagedSsh/remove/repair/updateManagedSsh/readDirectory`, `mount.create/promote/remove` | Endpoint and mount administration belongs to the user |
+| `project.add`, `workspace.approveRoot` | Project addition and root approval require a human decision |
+| Plugin install/update/apply/rollback/discover/reload/enable/remove and repository operations | Plugin distribution belongs to the user; consult the policy for exact IDs |
+| `session.writeNode` | Send messages with `agent.prompt`; only the user answers permission prompts and dialogs in OpenCove |
+| `sync.state`, `sync.readWorkspaceStateRaw` | Application settings can contain private credentials |
+| `sync.writeState`, `sync.writeWorkspaceStateRaw` | Settings, permission policy and persisted roots belong to the user |
+| `sync.writeNodeScrollback`, `sync.writeAgentNodePlaceholderScrollback` | OpenCove owns saved terminal history |
+| `session.attachAgentStateWatcher`, `session.detachAgentStateWatcher`, `session.prepareOrRevive` | OpenCove owns observation and recovery |
+| `workspace.allocateProjectPlaceholder`, `workspace.ensureDirectory` | Project setup and root approval belong to the user; use filesystem operations within approved roots |
+| `plugin.command.run`, `plugin.invoke`, `plugin.host.request`, `plugin.sidebar.items`, `plugin.view.open`, `plugin.window.open` | These paths can execute code with plugin authority |
+| `plugin.storage.set`, `plugin.preferences.set`, `plugin.view.preferences.set` | Installation-wide plugin state belongs to the user |
+
+Grant launches (`session.launchAgent`, `session.launchAgentInMount`) accept only target fields
+(`spaceId` / `cwd` or `mountId` / `cwdUri`), `prompt`, `provider`, `model`, `agentFullAccess`, `cols`, `rows`.
+Explicit `agentFullAccess` overrides saved permissions in either direction for one agent; omission
+inherits Settings. `node.create` stores the optional boolean on the agent node, and relaunch,
+resume and recovery resolve `node.agent.agentFullAccess ?? settings.agentFullAccess` without
+changing Settings. `node.update` cannot change it. Existing nodes require no migration.
+Explicit `env`, `executablePathOverride`, `resumeSessionId`,
+`codexReuseRunningAppServer`, `mode` and unknown fields are refused, including null/false values.
+Grant launches also refuse nonempty prompts whose trimmed text is a single whitespace-free token,
+including ordinary words, because providers may dispatch them as commands. Describe the task in a sentence.
+This check also applies to nested agent creation and runs before remote bearer forwarding.
+The launch owner reads the user’s configured environment and resolves explicit Full Access over
+the saved default. Home’s remote launch preparation preserves that resolved value and its saved
+`codexReuseRunningAppServer` so the destination Worker cannot replace them with its own defaults.
+Grant runtime admission remains local-only as described below. Trusted callers retain their
+existing override behavior. This changes runtime policy only: no executable-rule impact on the
+architecture harness dependency and API rules.
+
+Launch responses and session listings describe the public command. Private process arguments
+and environment transport, including WSL environment assignments, stay out of session metadata.
+Home omits arguments from older Workers' WSL wrapper metadata when no public command is available.
+Process failures retain their error code without returning private launch details.
+Known application refusals retain their typed reason and fixed recovery guidance; arbitrary
+process error payloads remain private for every caller.
+
+Provider planners own argv safety for every caller: Codex uses `--`; Claude Code uses `--`
+plus exact root-command/alias refusal and refuses dash-prefixed prompts (raw flag readers bypass parsing).
+Pi refuses its package/config command names and leading `-`/`@`; it creates no prompt files.
+OpenCode/Gemini use typed string options (attached for leading dashes); Kimi retains its required string value and full-access gate.
+Accepted text is trimmed only at the edges; resume never replays it. UI preflight precedes task status changes and session replacement; Main enforces the same pure policy.
+Grant launches and deliveries reject provider command prefixes, exit aliases, all `@` references and Codex `$name` skill mentions, including inline, quoted, escaped and linked candidates.
+Claude Code prefixes are ! / # &, Codex/OpenCode/Pi/Gemini ! /, and Kimi /; surrounding provider whitespace is inspected without rewriting the message.
+Refusals occur before spawn/input/delivery records and retain editable text. UI callers keep composer semantics after argv admission.
+These checks are not a live-composer literal guarantee: existing drafts, Claude bash mode and user-installed Pi input handlers are separate delivery-safety work (S1e).
+See [initial prompt behavior](../agent/INITIAL_PROMPTS.md) for compatibility limits and recovery guidance.
+
+
+Forbidden envelopes include `details.reason` (`operation_denied` or `field_denied`),
+`operationId`, a human-readable `message`, and `field` for launch restrictions. Invalid or
+revoked credentials return 401; policy refusals return `common.forbidden` (HTTP admission uses
+403). CLI authorization failures exit 4 without suggesting a broader credential.
+`system.whoami` returns the actual tier and identity, never credentials. For grant callers,
+`system.operations` adds `policyVersion` and per-operation `access` (`allowed`, `denied`,
+`constrained`), with denial reasons and `rejectedFields` reasons for constrained launches.
+Grant calls to `system.operation.describe` include the same access information and `policyVersion`
+beside the full input schema. Inside OpenCove, CLI schema output keeps the schema and adds these
+access annotations; schema fields alone do not authorize their use. Older Workers show unknown
+access. Outside OpenCove, schema export stays offline without asserting caller permissions.
+The CLI operation catalog reports `access: unknown` offline or with older Workers and omits
+`allowed`; constrained operations also omit `allowed`.
+
+CLI environment credentials are paired with `OPENCOVE_CONTROL_URL`. An explicit `--endpoint`
+requires `--token`; profile discovery never borrows an environment token. `pty attach` sends
+Authorization in a header and requests viewer access, keeping tokens out of URLs.
+These changes stay within the existing process and dependency boundaries: no executable-rule impact.
+
 
 Invariants:
 
@@ -305,6 +433,12 @@ records. Session grants cannot supply arbitrary canvas node IDs. Recovery carrie
 identity in an in-process context. This context propagates across nested spawn operations, isolated
 per asynchronous invocation. Caller environment variables never determine identity.
 
+`node.create` accepts request-only `near: {nodeId, target}` (`reference-container` or `root-canvas`).
+The workspace owner revalidates reference geometry and target identity before launch and on every CAS attempt;
+frame, membership and ancestor growth share one creation write. Runtime launch is never replayed.
+CLI dispatch requires `nodeNearPlacementV1`, including raw API calls. Near does not change authenticated
+creator identity, grants or remote routing; details: [near placement](../cli/CANVAS_NODE_CONTROL.md#near-placement-v1).
+
 For remote mounts, the Home Worker forwards its resolved identity with the existing private Worker
 bearer. The hosting Worker accepts this delegation only from bearer-authenticated callers, creates
 its local session/grant binding, and injects its own private Control Surface URL. The Home Worker does
@@ -315,7 +449,44 @@ administrative bearer, not a new permission available to grant or cookie callers
 control, write, resize and agent reexec messages are refused. SSE and WebSocket connections subscribe
 to revocation; SSE membership is removed synchronously and sockets are terminated. Pending HTTP
 bodies and persistence preparation are followed by authoritative liveness checks before dispatch.
-Project scoping remains a follow-up; a scope tier is not a project isolation boundary.
+A scope tier alone is not a project isolation boundary; project scoping is described below.
+
+Direct input to a linked executor: `agent.prompt` and `session.writeNode` from an agent principal
+(a session grant) aimed at a node that is the executor of an active link are refused with
+`orch.use_dispatch` before any write to the PTY; the guard lives in
+`handlers/directInputGuard.ts`. The orchestrator uses `orch.dispatch` instead, and user
+credentials are not affected.
+
+### Project scope for session grants
+
+A session grant carries a `projectId` and is confined to it (`grantProjectOf`,
+`handlers/grantProjectScope.ts`). User, bearer and IPC callers have no grant and are unchanged.
+Covered operations:
+
+- `node.list`, `node.get`, `node.create`, `node.update`, `node.delete` and `canvas.focus`: the
+  node state is narrowed to the grant project (`scopeNodeControlState`); `node.list` returns only
+  that project.
+- `session.*`, including `session.prepareOrRevive` (checked before reconcile) and
+  `session.attachAgentStateWatcher` / `session.detachAgentStateWatcher` (no watcher is started or
+  disposed for a foreign target).
+- `agent.*`, including `agent.prompt`, get, list, finalMessage, history clear and delivery.
+  `agent.listSessions` returns an empty list unless `cwd` is inside the grant project root, and also
+  when `cwd` falls inside another workspace nested under that root.
+- `space.*`, including `space.create` (the target project must be the grant project).
+- `pty.spawnInMount`, `launchAgentInMount` and spawn by identity: a `workspaceId` or `spaceId`
+  of another project is refused; with no target, the grant project is the implicit identity,
+  never the UI active project.
+
+Rules:
+
+- A refusal for a target of another project is indistinguishable from an absent target: same
+  error code, message and `debugMessage`.
+- Fail closed: without a persisted store to resolve ownership, the grant is denied.
+- Ownership comes from persisted state, so a node or session not yet persisted is invisible to
+  its own grant.
+
+Known limits: `pty.spawn` reveals recovery state before the scope check; `approved_path_required`
+precedes the scope check in `agent.listSessions`; `isInside` does not resolve symlinks.
 
 ### Prompt delivery
 
@@ -329,3 +500,87 @@ watermark; the callback never invokes enqueuing Hub APIs. Response disconnect an
 propagate cancellation to the service. Internal receipt fields stay out of public snapshots.
 See [Prompt delivery](../agent/PROMPT_DELIVERY.md) for the precise promise and limitations.
 This adds an operation and internal ports within existing dependency boundaries; no executable-rule impact.
+
+## 节点血缘查询
+
+`features.nodeLineageV1` 表示 Worker 安装了 lineage repository 与 `node.resolveCallerSelector`。
+该 strict-schema read query 接受 `{selector:"@parent", expectedCallerNodeId?:string}`；
+expected ID 仅为身份 mismatch fence，parent 始终由 verified grant 推导。无身份、root、已删除父节点
+分别返回 `node.parent_unavailable` 的 caller_identity_required、no_parent、parent_deleted，均不可自动重试。
+节点不存在返回 node.not_found，身份不符返回 common.forbidden。父节点不限 kind，具体操作继续检查权限与运行状态。
+`node.list`、`agent.list` 的 spawnedByNodeId 仅筛选直接子节点，在客户端 limit 之前执行。
+公开 node query 返回 spawnedBy、lineageDepth、lineageStatus；agent CLI/context 从 node metadata 投影。
+现有 @self fallback 与 Space 语义不变。此功能不声明 spawn cap 或 PR2 admission 支持。
+无新增跨层依赖规则：no executable-rule impact。
+
+
+### Bounded grant runtime creation
+
+Policy `s1d-v4` permits grant runtime creation only through `node.create` with a current,
+locally owned agent/terminal caller bound to the authenticated session. The existing node mutation
+queue owns admission through launch and commit settlement. Depth is at most 3 (user root = 1),
+with at most six distinct live or pending grant-created runtime descendants per immutable root.
+Agent and terminal descendants share the budget across Spaces/projects. Human, task Run and recovery
+launches remain exempt; their recovered descendant bindings contribute to subsequent admission.
+
+`AgentSpawnAdmissionOwner` retains pending identities and immutable lineage until all related runtime
+incarnations exit. Engine-returned session IDs are captured before callbacks. Kill, revocation, node
+deletion and failed requests are not completion evidence. An unknown dispatch fences its tree until
+that exact PTY host confirms completion. Every physical attempt, including a retry after a confirmed
+host exit, classifies its own outcome. Shutdown still records exact-child completion; a shutdown
+request alone cannot release unknown occupancy. An uncertain node commit with a known live session retains
+one occupied slot. Admission permits are private, single-use, Worker-local objects; raw session/PTY
+routes reject grants without a matching internal permit. Permits never enter wire identities,
+remote forwarding, environment or SQLite.
+
+Grant runtime targets must remain local, including after mount re-resolution. Admission and execution
+fences compare directories with the same path identity rules. Windows comparison
+normalizes slashes, UNC hostname case, drive-letter case and trailing separators while preserving
+roots and directory-component case. It does not resolve symlinks or aliases. Delegated grants
+cannot create roots on the executing Worker. Historical remote bindings cannot prove completion
+through disconnection or saved status. At admission after startup or a persistence revision change, a read-only lineage audit
+finds unaccounted orphan rows whose node/session/endpoint association was lost; affected roots fail closed.
+Creation branches that never launch runtimes record that fact in the admission owner for the Worker
+lifetime. Deleting their notes, tasks or websites does not make the census incomplete. Actual local,
+remote or unknown runtime observations still take precedence over that creation fact. After a restart,
+unclassified local or non-runtime orphans remain conservative fences because existing lineage rows do
+not retain kind or endpoint. No reservation or endpoint history is persisted. The user can
+inspect/stop historical runtimes and start a new canvas root for further delegation. Local surviving
+nodes count only from actual runtime bindings, never their persisted status/session ID alone.
+Observed remote roots retain their fence independently of node membership. Worker-local forwarding
+observations also fence ambiguous remote incarnations even when a node was previously local and
+is deleted before the next admission; no observation callback crosses the wire. Local runtime provenance
+survives completion for the Worker lifetime, so a deleted, authoritatively exited local session is
+not mistaken for an unknown remote orphan. Warm-start bindings seeded from an active hub observation
+are retained until exact runtime completion; public registry disappearance cannot release them.
+Internal post-spawn, failed-commit and deletion cleanup uses a trusted exact-session runtime port,
+without the public session lookup gate. Public `session.kill` authorization remains unchanged.
+
+The additive `boundedAgentSpawningV1` capability requires the installed admission/runtime owner and
+lineage transaction support. CLI negotiation uses its existing per-run authenticated identity cache
+and shared dispatcher, covering `api call`; bearer launches and non-runtime work are exempt. Raw grant
+launches receive migration guidance before CLI selector resolution, including terminals outside a Space.
+
+### Managed Claude delivery 协议
+
+invoke envelope 可包含 `clientFeatures: { managedClaudeResumeBindingV1: true }`。
+该声明由实际支持协议的客户端发出，经 HTTP、IPC 和专用 launch adapter 校验/传递；
+nested in-process invocation 继承声明。它不是认证，也不授予 ownership。
+owned runtime 的 public kill/stop 和 managed restart 均在副作用及 reserve 前检查声明；
+拒绝使用 typed `agent.managed_launch_rejected`，reason 为 `clientUpgradeRequired`、
+`workerUpgradeRequired` 或 `writesDisabled`，分别指向窗口升级、Worker 升级或管理员解除冻结。
+
+客户端在可能产生 adoption 的操作开始时统一协商 Worker delivery 能力，不能只检查已 owned 的节点。
+新建节点在旧 Worker 上省略 managed intent，继续使用 legacy session；Claude 节点的重启、显式会话切换、
+task reuse 和 cold prepare 在缺少能力时报告 Worker 升级提示，保留原节点与会话数据，在升级后可重试。
+这些检查先于旧 runtime 清理、task 关系修改或 prepare 请求；workspace 的打开、保存和刷新始终不受该检查影响。
+本段沿用现有边界与 allowlist：no executable-rule impact。
+
+每次 SSE 连接先注册 subscription 和关闭清理，再严格读取 atomic snapshot 的 durable tip，
+无条件发送 `resync_required`，包括 cursor 相等、超前、缺失与 Worker 重启后的空 buffer。
+读取失败关闭连接；撤销/断开后的完成结果作废。Desktop bridge 不因缺少 ownership 协议拒绝连接，
+Web 的 `open` 也向现有 canonical refresh coordinator 发出请求。低 revision 只触发丢弃与重读，
+不能据此推断 store replacement 或自动重建 baseline。
+
+synthetic rebind 仅用于 continuity 验收：需要 test mode、显式测试开关及 private bearer；
+不注册 production operation，不提供 `/clear` qualification。release capability/default 由后续启用变更决定。

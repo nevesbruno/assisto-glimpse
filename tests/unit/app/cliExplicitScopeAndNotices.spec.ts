@@ -95,7 +95,11 @@ it.each(['project', 'node'])(
           : [project, { ...project, id: 'second' }],
     }
     expect(await run([kind, 'list', '-o', 'table', '--limit', '1', '--fields', 'id'], f.io)).toBe(0)
-    expect(notices).toEqual([`Showing 1 of 2 ${kind}s; use --limit 0 for all.\n`])
+    expect(notices).toEqual([
+      kind === 'node'
+        ? 'Showing 1 of 2 nodes; 1 omitted. Use --full or --limit 0 for all, or --limit <n> to choose a limit.\n'
+        : `Showing 1 of 2 ${kind}s; use --limit 0 for all.\n`,
+    ])
     expect(f.out().trim().split('\n')).toHaveLength(2)
     expect(f.out()).not.toContain('Showing')
   },
@@ -162,7 +166,7 @@ it('notices a cut catalog table once and keeps JSON object truncation metadata',
   const notices: string[] = []
   f.io.stderr.write = text => notices.push(text)
   expect(await run(['api', 'ops', '--prefix', 'node', '-o', 'table', '--limit', '1'], f.io)).toBe(0)
-  expect(notices).toEqual(['Showing 1 of 5 operations; use --limit 0 for all.\n'])
+  expect(notices).toEqual(['Showing 1 of 7 operations; use --limit 0 for all.\n'])
   const g = identityFixture(false)
   const jsonNotices: string[] = []
   g.io.stderr.write = text => jsonNotices.push(text)

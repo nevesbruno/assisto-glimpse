@@ -238,8 +238,8 @@ describe('headless PTY runtime', () => {
       ])
       expect(observedExit).toEqual([{ sessionId: 'session-1', exitCode: 0 }])
       expect(watcherNoteInteraction).toHaveBeenCalledWith('session-1', '\r')
-      expect(watcherDisposeSession).toHaveBeenCalledWith('session-1')
-      expect(watcherDisposeSession).toHaveBeenCalledWith('session-2')
+      expect(watcherDisposeSession).toHaveBeenCalledWith('session-1', true)
+      expect(watcherDisposeSession).toHaveBeenCalledWith('session-2', true)
       expect(processEngine.write).toHaveBeenCalledWith('session-1', '\r')
       expect(processEngine.write).toHaveBeenCalledWith('session-1', '\u001b[1;1R')
       expect(processEngine.probeForeground).toHaveBeenCalledWith('session-1')
@@ -408,6 +408,36 @@ describe('headless PTY runtime', () => {
         defaultProfileId: 'powershell',
       })
       expect(listProfiles).toHaveBeenCalledTimes(1)
+    } finally {
+      runtime.dispose()
+    }
+  })
+
+  it('hands the injected session discovery to the session state watcher', async () => {
+    vi.resetModules()
+
+    const createSessionStateWatcherController = vi.fn(() => ({
+      start: vi.fn(),
+      noteInteraction: vi.fn(),
+      disposeSession: vi.fn(),
+      dispose: vi.fn(),
+    }))
+    vi.doMock('../../../src/contexts/terminal/presentation/main-ipc/sessionStateWatcher', () => ({
+      createSessionStateWatcherController,
+    }))
+
+    const { createHeadlessPtyRuntime } = await import('../../../src/app/worker/headlessPtyRuntime')
+    const sessionDiscovery = { kind: 'injected-session-discovery' }
+
+    const runtime = createHeadlessPtyRuntime({
+      processEngine: new FakeTerminalProcessEngine(),
+      sessionDiscovery: sessionDiscovery as never,
+    })
+
+    try {
+      expect(createSessionStateWatcherController).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionDiscovery }),
+      )
     } finally {
       runtime.dispose()
     }

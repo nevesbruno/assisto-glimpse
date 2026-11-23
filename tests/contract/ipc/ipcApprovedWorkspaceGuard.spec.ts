@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
-import { IPC_CHANNELS } from '../../../src/shared/constants/ipc'
+import { IPC_CHANNELS } from '../../../src/shared/contracts/ipc'
 import type { ApprovedWorkspaceStore } from '../../../src/contexts/workspace/infrastructure/approval/ApprovedWorkspaceStore'
 import type { PersistenceStore } from '../../../src/platform/persistence/sqlite/PersistenceStore'
 import type { PtyRuntime } from '../../../src/contexts/terminal/presentation/main-ipc/runtime'
@@ -79,7 +79,7 @@ describe('IPC approved workspace guards', () => {
     vi.resetModules()
 
     const { handlers, ipcMain } = createIpcHarness()
-    vi.doMock('electron', () => ({ ipcMain }))
+    vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
 
     const runtime = createPtyRuntimeMock()
     const store = createApprovedWorkspaceStoreMock({ isPathApproved: false })
@@ -108,7 +108,7 @@ describe('IPC approved workspace guards', () => {
     vi.resetModules()
 
     const { handlers, ipcMain } = createIpcHarness()
-    vi.doMock('electron', () => ({ ipcMain }))
+    vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
 
     const runtime = createPtyRuntimeMock()
     const store = createApprovedWorkspaceStoreMock({ isPathApproved: true })
@@ -142,7 +142,7 @@ describe('IPC approved workspace guards', () => {
 
     try {
       const { handlers, ipcMain } = createIpcHarness()
-      vi.doMock('electron', () => ({ ipcMain }))
+      vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
 
       const runtime = createPtyRuntimeMock()
       const store = createApprovedWorkspaceStoreMock({ isPathApproved: false })
@@ -192,7 +192,7 @@ describe('IPC approved workspace guards', () => {
 
     try {
       const { handlers, ipcMain } = createIpcHarness()
-      vi.doMock('electron', () => ({ ipcMain }))
+      vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
 
       const runtime = createPtyRuntimeMock()
       const store = createApprovedWorkspaceStoreMock({ isPathApproved: true })
@@ -233,7 +233,7 @@ describe('IPC approved workspace guards', () => {
 
     try {
       const { handlers, ipcMain } = createIpcHarness()
-      vi.doMock('electron', () => ({ ipcMain }))
+      vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
       vi.doMock('../../../src/contexts/agent/infrastructure/cli/AgentLaunchSpawnResolver', () => ({
         resolveAgentLaunchSpawn: vi.fn(async ({ cwd, command, args, env }) => ({
           command,
@@ -296,7 +296,7 @@ describe('IPC approved workspace guards', () => {
 
     try {
       const { handlers, ipcMain } = createIpcHarness()
-      vi.doMock('electron', () => ({ ipcMain }))
+      vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
 
       const runtime = createPtyRuntimeMock()
       const store = createApprovedWorkspaceStoreMock({ isPathApproved: true })
@@ -363,7 +363,7 @@ describe('IPC approved workspace guards', () => {
 
     try {
       const { handlers, ipcMain } = createIpcHarness()
-      vi.doMock('electron', () => ({ ipcMain }))
+      vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
 
       const store = createApprovedWorkspaceStoreMock({ isPathApproved: false })
 
@@ -407,7 +407,7 @@ describe('IPC approved workspace guards', () => {
 
     try {
       const { handlers, ipcMain } = createIpcHarness()
-      vi.doMock('electron', () => ({ ipcMain }))
+      vi.doMock('electron', () => ({ app: { getPath: () => process.cwd() }, ipcMain }))
 
       const store = createApprovedWorkspaceStoreMock({ isPathApproved: true })
 

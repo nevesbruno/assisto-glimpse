@@ -1,3 +1,4 @@
+import { getPublicTerminalSpawnCommand } from '../../../../platform/terminal/publicTerminalSpawnCommand'
 import { registerOperation } from '../registerOperation'
 import {
   sessionSnapshotOperation,
@@ -10,7 +11,7 @@ import { registerSessionInputHandlers } from './sessionInputHandlers'
 import { resolveDefaultShell } from '../../../../platform/process/pty/defaultShell'
 import { TerminalProfileResolver } from '../../../../platform/terminal/TerminalProfileResolver'
 import { createAppError } from '../../../../shared/errors/appError'
-import { toFileUri } from '../../../../contexts/filesystem/domain/fileUri'
+import { toFileUri } from '../../../../contexts/filesystem/domain'
 import type {
   GetSessionPresentationSnapshotResult,
   GetSessionSnapshotResult,
@@ -30,7 +31,8 @@ import type { PtyStreamHub } from '../ptyStream/ptyStreamHub'
 import type { WorkerTopologyStore } from '../topology/topologyStore'
 import { resolveSpaceMountContext } from '../../../../contexts/space/application/resolveSpaceMountContext'
 import type { TerminalAgentActivityEnvironmentService } from '../../../../contexts/agent/infrastructure/terminal-activity/TerminalAgentActivityEnvironmentService'
-import { spawnTerminalWithActivity } from './terminalAgentActivitySpawn'
+import { composeTerminalSpawnGuard, spawnTerminalWithActivity } from './terminalAgentActivitySpawn'
+import type { DirectInputGuard } from './directInputGuard'
 
 const terminalProfileResolver = new TerminalProfileResolver()
 
@@ -62,6 +64,7 @@ export function registerSessionStreamingHandlers(
     topology: WorkerTopologyStore
     terminalSpawnAdmission: TerminalSpawnAdmission
     terminalAgentActivity?: TerminalAgentActivityEnvironmentService
+    guardDirectInput: DirectInputGuard
   },
 ): void {
   registerSessionInputHandlers(controlSurface, deps)
@@ -204,6 +207,8 @@ export function registerSessionStreamingHandlers(
           })
 
       const { sessionId } = await spawnTerminalWithActivity(deps.ptyRuntime, {
+        assertActive: composeTerminalSpawnGuard(ctx),
+        onSpawned: ctx.terminalSpawnLifecycle?.onSpawned,
         activity: deps.terminalAgentActivity,
         args: resolvedSpawn.args,
         cols,
@@ -221,8 +226,7 @@ export function registerSessionStreamingHandlers(
         kind: 'terminal',
         startedAt,
         cwd: resolvedSpawn.cwd,
-        command: resolvedSpawn.command,
-        args: resolvedSpawn.args,
+        ...getPublicTerminalSpawnCommand(resolvedSpawn),
         cols,
         rows,
       })
@@ -231,8 +235,7 @@ export function registerSessionStreamingHandlers(
         sessionId,
         startedAt,
         cwd: resolvedSpawn.cwd,
-        command: resolvedSpawn.command,
-        args: resolvedSpawn.args,
+        ...getPublicTerminalSpawnCommand(resolvedSpawn),
         executionContext: resolveExecutionContextDto(workingDirectory, {
           projectId,
           spaceId: payload.spaceId,
@@ -254,6 +257,11 @@ export function registerSessionStreamingHandlers(
 
   registerOperation(controlSurface, ptySpawnOperation, {
     handle: async (ctx, payload): Promise<SpawnTerminalResult> => {
+      ctx.terminalSpawnLifecycle?.assertExecution?.({
+        cwd: payload.cwd,
+        mountId: null,
+        endpointId: 'local',
+      })
       deps.terminalSpawnAdmission.assertSpawnAllowed(
         payload.workspaceId ?? null,
         ctx.terminalRecoverySpawnScope,
@@ -283,6 +291,8 @@ export function registerSessionStreamingHandlers(
           })
 
       const { sessionId } = await spawnTerminalWithActivity(deps.ptyRuntime, {
+        assertActive: composeTerminalSpawnGuard(ctx),
+        onSpawned: ctx.terminalSpawnLifecycle?.onSpawned,
         activity: deps.terminalAgentActivity,
         args: resolvedSpawn.args,
         cols: payload.cols,
@@ -299,8 +309,7 @@ export function registerSessionStreamingHandlers(
         kind: 'terminal',
         startedAt: new Date().toISOString(),
         cwd: resolvedSpawn.cwd,
-        command: resolvedSpawn.command,
-        args: resolvedSpawn.args,
+        ...getPublicTerminalSpawnCommand(resolvedSpawn),
         cols: payload.cols,
         rows: payload.rows,
       })

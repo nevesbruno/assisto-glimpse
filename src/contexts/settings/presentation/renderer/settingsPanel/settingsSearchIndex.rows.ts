@@ -57,6 +57,18 @@ export const ROW_SEARCH_ENTRY_DEFINITIONS: CoreSettingsSearchEntryDefinition[] =
       titleKey: 'settingsPanel.notifications.agentStandbyBanner.showPullRequest',
     },
   ]),
+  ...rowsIn('general', 'settings-section-notifications', [
+    {
+      id: 'general.executor-alert.repeat',
+      titleKey: 'orchestration.attention.repeatLabel',
+      keywords: ['alert', 'repeat', 'executor', '提醒', '重复'],
+    },
+    {
+      id: 'general.executor-alert.repeat-every',
+      titleKey: 'orchestration.attention.repeatEveryLabel',
+      keywords: ['alert', 'repeat', 'interval', '提醒', '间隔'],
+    },
+  ]),
   ...rowsIn('canvas-windows', 'settings-section-canvas-node-focus', [
     {
       id: 'canvas.focus.visible-center',

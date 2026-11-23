@@ -58,8 +58,6 @@ export default function App(): React.JSX.Element {
     isSettingsOpen,
     settingsOpenPageId,
     focusRequest,
-    setWorkspaces,
-    setActiveWorkspaceId,
     setProjectContextMenu,
     setProjectMountManager,
     setProjectDeleteConfirmation,
@@ -69,8 +67,6 @@ export default function App(): React.JSX.Element {
   const { isPersistReady } = useHydrateAppState({
     activeWorkspaceId,
     setAgentSettings,
-    setWorkspaces,
-    setActiveWorkspaceId,
   })
 
   const { providerModelCatalog } = useProviderModelCatalog({
@@ -245,16 +241,15 @@ export default function App(): React.JSX.Element {
   })
 
   const requestAddWorkspace = useAddProjectRequest(openAddProjectWizard, setFocusNodeZoomPreviewing)
-  const handleAddWorkspace = () => {
+  // Stable across the shell's renders, so the memoized workspace main does not re-render for it.
+  const handleAddWorkspace = useCallback(() => {
     handleCloseSettings()
     requestAddWorkspace()
-  }
+  }, [handleCloseSettings, requestAddWorkspace])
 
   const {
-    handleWorkspaceNodesChange,
     handleWorkspaceViewportChange,
     handleWorkspaceMinimapVisibilityChange,
-    handleWorkspaceSpacesChange,
     handleWorkspaceActiveSpaceChange,
     handleWorkspaceSpaceArchiveRecordAppend,
     handleWorkspaceSpaceArchiveRecordRemove,
@@ -358,13 +353,10 @@ export default function App(): React.JSX.Element {
             }
             onAddWorkspace={handleAddWorkspace}
             onShowMessage={handleShowMessage}
-            onRequestPersistFlush={requestPersistFlush}
             onAppendSpaceArchiveRecord={handleWorkspaceSpaceArchiveRecordAppend}
-            onNodesChange={handleWorkspaceNodesChange}
             onViewportChange={handleWorkspaceViewportChange}
             onMinimapVisibilityChange={handleWorkspaceMinimapVisibilityChange}
             onChangePreserveWindowSizesOnArrange={handleChangePreserveWindowSizesOnArrange}
-            onSpacesChange={handleWorkspaceSpacesChange}
             onActiveSpaceChange={handleWorkspaceActiveSpaceChange}
             onOpenProjectContextMenu={setProjectContextMenu}
           />

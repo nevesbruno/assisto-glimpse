@@ -1,4 +1,9 @@
-import type { AgentProviderId, TerminalSessionStateSource } from '../../../shared/contracts/dto'
+import type {
+  AgentHookStateSource,
+  AgentProviderId,
+  ExecutorStateSource,
+  TerminalSessionStateSource,
+} from '../../../shared/contracts/dto'
 import { resolveAgentRunStateAuthority, type AgentRunStateSignal } from './agentRunStateArbiter'
 
 export type {
@@ -20,8 +25,10 @@ export interface AgentRunObservation {
   /** Monotonic within source + incarnation; redelivery retains the original sequence. */
   sourceSequence: number
   state: AgentRunState
+  baseline?: boolean
   degraded?: boolean
   blockedReason?: AgentRunSnapshot['blockedReason']
+  blockedSummary?: AgentRunSnapshot['blockedSummary']
   emittedAtMs?: number
   hookEventName?: string
   boundary?:
@@ -43,6 +50,11 @@ export type AgentRunTurnEnd = Pick<
 
 export interface AgentRunModel {
   incarnation: string
+  blockingEpisode: {
+    source: AgentRunObservation['source']
+    reason: AgentRunSnapshot['blockedReason']
+    summary: AgentRunSnapshot['blockedSummary']
+  } | null
   snapshot: AgentRunSnapshot
   observations: Partial<Record<AgentRunObservation['source'], AgentRunObservation>>
   lastTurnEnd: AgentRunTurnEnd | null
@@ -59,6 +71,7 @@ export function createAgentRunModel(input: {
 }): AgentRunModel {
   return {
     incarnation: input.incarnation,
+    blockingEpisode: null,
     lastTurnEnd: null,
     boundaryAt: -Infinity,
     nextTransitionAtMs: null,
@@ -69,6 +82,7 @@ export function createAgentRunModel(input: {
       provider: input.provider,
       state: 'unknown',
       blockedReason: null,
+      blockedSummary: null,
       turn: null,
       lastTransitionAt: input.now,
       source: null,
@@ -84,7 +98,20 @@ export function mirrorAgentRunModel(
   model: AgentRunModel,
   snapshot: AgentRunSnapshot,
 ): AgentRunModel {
-  return { ...model, snapshot, observations: {}, lastTurnEnd: null, nextTransitionAtMs: null }
+  return {
+    ...model,
+    snapshot,
+    blockingEpisode: null,
+    observations: {},
+    lastTurnEnd: null,
+    nextTransitionAtMs: null,
+  }
+}
+
+function isLeasedSource(
+  source: AgentRunObservation['source'],
+): source is AgentHookStateSource | ExecutorStateSource {
+  return source.endsWith('_hook') || source === 'executor_service'
 }
 
 function signal(observation: AgentRunObservation | undefined): AgentRunStateSignal | null {
@@ -95,9 +122,7 @@ function signal(observation: AgentRunObservation | undefined): AgentRunStateSign
     state: observation.state === 'idle' ? 'standby' : observation.state,
     observedAtMs: observation.observedAt,
     degraded: observation.degraded,
-    ...(observation.source.endsWith('_hook')
-      ? { source: observation.source as 'claude_hook' | 'codex_hook' | 'pi_hook' }
-      : {}),
+    ...(isLeasedSource(observation.source) ? { source: observation.source } : {}),
   }
 }
 
@@ -114,6 +139,10 @@ export function transitionAgentRun(
   }
   if (observation) {
     const previous = model.observations[observation.source]
+    // Reattachment must not overwrite work already observed in this incarnation.
+    if (observation.baseline && (model.snapshot.turn || (previous && !previous.baseline))) {
+      return { model, ended: null }
+    }
     // Ingress sequence reflects arrival order, not evidence freshness. Reject old evidence
     // before it can replace a source or decide state; equal timestamps are not duplicates.
     // PTY exit is a lifecycle fact even if the Worker clock has moved backwards.
@@ -134,7 +163,12 @@ export function transitionAgentRun(
   const observations = observation
     ? { ...model.observations, [observation.source]: observation }
     : model.observations
-  const hook = [observations.claude_hook, observations.codex_hook, observations.pi_hook]
+  const hook = [
+    observations.claude_hook,
+    observations.codex_hook,
+    observations.pi_hook,
+    observations.executor_service,
+  ]
     .filter((value): value is AgentRunObservation => Boolean(value))
     .sort((a, b) => b.observedAt - a.observedAt)[0]
   const decision = resolveAgentRunStateAuthority({
@@ -164,6 +198,7 @@ export function transitionAgentRun(
   // Only a selected trustworthy signal may open/close a turn. Arrival order is not authority.
   const accepted =
     observation !== null &&
+    !observation.baseline &&
     selected === observation &&
     !unavailable &&
     !decision.degraded &&
@@ -244,6 +279,27 @@ export function transitionAgentRun(
       hookEventName: observation.hookEventName,
     }
   }
+  // Unavailability is not resolution. Retain private episode data across degraded
+  // gaps, while exposing it only when the selected source is actually waiting.
+  let blockingEpisode = model.blockingEpisode
+  if (
+    state === 'exited' ||
+    state === 'working' ||
+    state === 'idle' ||
+    (accepted && observation.boundary)
+  ) {
+    blockingEpisode = null
+  }
+  if (state === 'waiting' && selected) {
+    const previous = blockingEpisode?.source === selected.source ? blockingEpisode : null
+    blockingEpisode = {
+      source: selected.source,
+      reason: episodeReason(previous?.reason ?? null, selected.blockedReason ?? null),
+      summary: selected.blockedSummary ?? previous?.summary ?? null,
+    }
+  }
+  const blockedReason = state === 'waiting' ? (blockingEpisode?.reason ?? null) : null
+  const blockedSummary = state === 'waiting' ? (blockingEpisode?.summary ?? null) : null
   const snapshot: AgentRunSnapshot = {
     ...model.snapshot,
     state,
@@ -252,7 +308,8 @@ export function transitionAgentRun(
     lastEndedTurn: ended
       ? { id: ended.id, outcome: turnOutcome ?? 'unknown', endedAt: observation?.observedAt ?? now }
       : model.snapshot.lastEndedTurn,
-    blockedReason: state === 'waiting' ? (selected?.blockedReason ?? null) : null,
+    blockedReason,
+    blockedSummary,
     source: observation?.source === 'exit' ? 'exit' : decision.source,
     quality:
       state === 'unknown'
@@ -268,6 +325,7 @@ export function transitionAgentRun(
     model: {
       ...model,
       snapshot,
+      blockingEpisode,
       observations,
       lastTurnEnd,
       boundaryAt,
@@ -275,4 +333,18 @@ export function transitionAgentRun(
     },
     ended,
   }
+}
+
+/**
+ * One blocking episode is one dialog. A question or plan names the dialog the user sees, even when
+ * the provider also asks permission to show it, so it outranks a generic permission; a permission
+ * outranks a reason-less refresh. Equal ranks keep the latest.
+ */
+function episodeReason(
+  previous: AgentRunSnapshot['blockedReason'],
+  next: AgentRunSnapshot['blockedReason'],
+): AgentRunSnapshot['blockedReason'] {
+  const rank = (reason: AgentRunSnapshot['blockedReason']) =>
+    reason === 'question' || reason === 'plan' ? 2 : reason === 'permission' ? 1 : 0
+  return rank(next) >= rank(previous) && next ? next : previous
 }

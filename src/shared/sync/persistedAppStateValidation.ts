@@ -3,6 +3,7 @@ import type {
   PersistedSpaceContract,
   PersistedWorkspaceContract,
 } from '@shared/contracts/persistedAppState'
+import { orchestrationLinksMirrorSchema } from '@shared/contracts/dto/orchestration'
 import { isLabelColor } from '@shared/types/labelColor'
 import { isProjectIconId } from '@shared/types/projectIcon'
 import { isPersistedSpaceArchiveRecord } from './persistedArchiveValidation'
@@ -117,7 +118,9 @@ export function isPersistedAppState<TSettings extends object>(
     typeof value.formatVersion !== 'number' ||
     !Number.isSafeInteger(value.formatVersion) ||
     value.formatVersion < 0 ||
-    activeWorkspaceId === undefined
+    activeWorkspaceId === undefined ||
+    (value.orchestrationLinks !== undefined &&
+      !orchestrationLinksMirrorSchema.safeParse(value.orchestrationLinks).success)
   ) {
     return false
   }

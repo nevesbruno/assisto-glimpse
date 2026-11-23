@@ -20,14 +20,22 @@ import { hashWebUiPassword } from '../../contexts/settings/infrastructure/homeWo
 import { isWorkerConnectionAlive } from '../main/worker/workerConnectionHealth'
 import { resolveLocalWorkerReusePolicy } from '../../shared/runtime/localWorkerReusePolicy'
 import { readHomeWorkerConfigFile } from '../../contexts/settings/infrastructure/homeWorker/homeWorkerConfig'
-import { acquireHomeWorkerConfigLease } from '../../contexts/settings/infrastructure/homeWorker/homeWorkerConfigLease'
+import {
+  createLeaseReleaseErrorReporter,
+  WORKER_LEASE_RELEASE_TIMEOUT_MS,
+  withHomeWorkerConfigLease,
+} from '../../contexts/settings/infrastructure/homeWorker/homeWorkerConfigLease'
 import { createClaudeHookChannel } from '../main/controlSurface/agentHook/claudeHookChannel'
 import { createCodexHookChannel } from '../main/controlSurface/agentHook/codexHookChannel'
 import { AgentProviderRegistry } from '../../contexts/agent/application/services/AgentProviderRegistry'
-import { createBuiltinAgentProviderContributions } from '../../contexts/agent/infrastructure/providers/catalog/BuiltinAgentProviderCatalog'
+import {
+  createAgentLaunchArtifactRoot,
+  createBuiltinAgentProviderContributions,
+} from '../../contexts/agent/infrastructure/providers/catalog/BuiltinAgentProviderCatalog'
 import {
   cleanupLegacyManagedHooksAtStartup,
   reportLegacyManagedHookCleanupFailures,
+  resolveLegacyManagedHookCleanupMarkerPath,
 } from '../../contexts/agent/infrastructure/cleanupLegacyManagedHooksAtStartup'
 import { readRepeatedWorkerFlagValues, readWorkerFlagValue } from './workerCliArguments'
 import { createWorkerShutdown } from './workerShutdown'
@@ -145,7 +153,13 @@ async function main(): Promise<void> {
   // can be incomplete. Hydrate the environment so git/ssh/etc behave consistently across Desktop,
   // Web UI, and remote/headless installs.
   await hydrateCliEnvironmentForAppLaunch(true)
-  reportLegacyManagedHookCleanupFailures(await cleanupLegacyManagedHooksAtStartup(homedir()))
+  // @compat legacy-managed-agent-hooks
+  reportLegacyManagedHookCleanupFailures(
+    await cleanupLegacyManagedHooksAtStartup(
+      homedir(),
+      resolveLegacyManagedHookCleanupMarkerPath(userDataPath),
+    ),
+  )
 
   const approvedWorkspaces = createApprovedWorkspaceStoreForPath(
     resolve(userDataPath, 'approved-workspaces.json'),
@@ -187,6 +201,7 @@ async function main(): Promise<void> {
   const agentProviderRegistry = new AgentProviderRegistry(
     // Share the launch identity owner with the file state watcher.
     createBuiltinAgentProviderContributions({
+      artifactRoot: createAgentLaunchArtifactRoot(userDataPath),
       appVersion,
       channels: agentHookChannels,
       codexSessionDiscovery,
@@ -224,23 +239,27 @@ async function main(): Promise<void> {
     agentHookChannels: [claudeHookChannel, codexHookChannel, piHookChannel],
     agentProviderRegistry,
   }
-  const server = await (async () => {
-    const configLease =
-      startedBy === 'desktop' ? await acquireHomeWorkerConfigLease(userDataPath) : null
-    try {
-      const candidate =
-        startedBy === 'desktop'
-          ? createDesktopManagedControlSurface({
-              server: serverOptions,
-              initialConfig: await readHomeWorkerConfigFile(userDataPath),
-            })
-          : registerControlSurfaceHttpServer(serverOptions)
-      await candidate.ready
-      return candidate
-    } finally {
-      await configLease?.release()
-    }
-  })()
+  const startServer = async () => {
+    const candidate =
+      startedBy === 'desktop'
+        ? createDesktopManagedControlSurface({
+            server: serverOptions,
+            initialConfig: await readHomeWorkerConfigFile(userDataPath),
+          })
+        : registerControlSurfaceHttpServer(serverOptions)
+    await candidate.ready
+    return candidate
+  }
+  const server =
+    startedBy === 'desktop'
+      ? // A release failure is logged and start-up continues: the control surface is ready by then.
+        await withHomeWorkerConfigLease(userDataPath, startServer, {
+          releaseTimeoutMs: WORKER_LEASE_RELEASE_TIMEOUT_MS,
+          onReleaseError: createLeaseReleaseErrorReporter('opencove-worker', text =>
+            process.stderr.write(text),
+          ),
+        })
+      : await startServer()
 
   const info = await server.ready
   process.stdout.write(`${JSON.stringify(info)}\n`)

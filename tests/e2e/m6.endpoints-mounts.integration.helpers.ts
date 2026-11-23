@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import { expect, type Locator, type Page } from '@playwright/test'
+import { waitForControlSurfaceConnection } from './controlSurfaceConnection.helpers'
 
 function isTruthyEnv(rawValue: string | undefined): boolean {
   if (!rawValue) {
@@ -125,6 +126,7 @@ async function waitForControlSurfaceReady(connection: {
 export interface RemoteWorkerHandle {
   child: ChildProcessWithoutNullStreams
   logs: () => string
+  port: number
 }
 
 export async function startRemoteWorker(options: {
@@ -173,7 +175,8 @@ export async function startRemoteWorker(options: {
         ...(shouldDisableSandbox ? { ELECTRON_DISABLE_SANDBOX: '1' } : {}),
         HOME: options.homeDir,
         USERPROFILE: options.homeDir,
-        OPENCOVE_TEST_AGENT_STUB_SCRIPT: stubScriptPath,
+        OPENCOVE_TEST_AGENT_STUB_SCRIPT:
+          options.env?.OPENCOVE_TEST_AGENT_STUB_SCRIPT ?? stubScriptPath,
         OPENCOVE_TEST_AGENT_SESSION_SCENARIO: options.agentSessionScenario ?? 'codex-standby-only',
       },
       stdio: 'pipe',
@@ -193,10 +196,15 @@ export async function startRemoteWorker(options: {
     return merged.trim().length > 0 ? merged : '[no remote worker logs captured]'
   }
 
+  let port = options.port
   try {
+    if (port === 0) {
+      const connection = await waitForControlSurfaceConnection(options.userDataDir)
+      port = Number(new URL(connection.endpoint).port)
+    }
     await waitForControlSurfaceReady({
       hostname: options.hostname,
-      port: options.port,
+      port,
       token: options.token,
     })
   } catch (error) {
@@ -205,7 +213,7 @@ export async function startRemoteWorker(options: {
     throw new Error(`${message}\nRemote Worker logs:\n${logs()}`, { cause: error })
   }
 
-  return { child, logs }
+  return { child, logs, port }
 }
 
 export async function stopRemoteWorker(child: ChildProcessWithoutNullStreams): Promise<void> {
@@ -278,7 +286,7 @@ export async function pollForEndpointPing(window: Page, endpointId: string): Pro
     async () =>
       await window.evaluate(async evaluatedEndpointId => {
         try {
-          const ping = await window.opencoveApi.controlSurface.invoke<{ ok: boolean }>({
+          const ping = await globalThis.window.opencoveApi.controlSurface.invoke<{ ok: boolean }>({
             kind: 'query',
             id: 'endpoint.ping',
             payload: { endpointId: evaluatedEndpointId, timeoutMs: 10_000 },

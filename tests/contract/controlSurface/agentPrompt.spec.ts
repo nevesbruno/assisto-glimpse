@@ -1,3 +1,4 @@
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 import { agentPromptResultSchema } from '../../../src/shared/contracts/dto/agentPrompt'
 import { sessionGrantAllowsOperation } from '../../../src/app/main/controlSurface/http/sessionGrantAuthorization'
 import { describe, expect, it, vi } from 'vitest'
@@ -7,7 +8,10 @@ import {
   agentPromptOperation as op,
 } from '../../../src/shared/contracts/controlSurface/operations/domains/agent'
 import { createControlSurface } from '../../../src/app/main/controlSurface/controlSurface'
-import { registerAgentPromptHandlers } from '../../../src/app/main/controlSurface/handlers/agentPromptHandlers'
+import {
+  createAgentPromptDelivery,
+  registerAgentPromptHandlers,
+} from '../../../src/app/main/controlSurface/handlers/agentPromptHandlers'
 import { PtyStreamHub } from '../../../src/app/main/controlSurface/ptyStream/ptyStreamHub'
 import { AgentProviderRegistry } from '../../../src/contexts/agent/application/services/AgentProviderRegistry'
 import { createBuiltinAgentProviderContributions } from '../../../src/contexts/agent/infrastructure/providers/catalog/BuiltinAgentProviderCatalog'
@@ -52,8 +56,17 @@ describe('agent.prompt contract', () => {
       },
     })
     const surface = createControlSurface()
-    const providers = new AgentProviderRegistry(createBuiltinAgentProviderContributions())
-    registerAgentPromptHandlers(surface, hub, providers)
+    const providers = new AgentProviderRegistry(
+      createBuiltinAgentProviderContributions({
+        artifactRoot: createTestAgentLaunchArtifactRoot(),
+      }),
+    )
+    registerAgentPromptHandlers(
+      surface,
+      hub,
+      createAgentPromptDelivery(hub, providers),
+      async () => undefined,
+    )
     hub.agentRuns.registry.register({
       sessionId: 's',
       nodeId: 'n',
@@ -92,6 +105,40 @@ describe('agent.prompt contract', () => {
     for (const code of op.errors) {
       expect(isAppErrorDescriptor(createAppError(code).toDescriptor())).toBe(true)
     }
+    const nodeless = await surface.invoke(
+      {
+        ...ctx,
+        requestAuth: {
+          kind: 'session-grant',
+          grant: {
+            grantId: 'standalone-grant',
+            projectId: 'p',
+            spaceId: 's',
+            nodeId: null,
+            sessionId: 'standalone',
+            tier: 'interact',
+            createdAt: '',
+          },
+        },
+      },
+      { kind: 'command', id: 'agent.prompt', payload: { nodeId: '@self', text: 'hello' } },
+    )
+    expect(nodeless).toMatchObject({
+      ok: false,
+      error: {
+        code: 'common.invalid_input',
+        details: {
+          issues: [
+            {
+              path: ['nodeId'],
+              message: expect.stringContaining('not bound to a canvas node'),
+              hint: expect.stringContaining('--node'),
+            },
+          ],
+        },
+      },
+    })
+    expect(write).not.toHaveBeenCalled()
     hub.agentRuns.dispose()
   })
 })

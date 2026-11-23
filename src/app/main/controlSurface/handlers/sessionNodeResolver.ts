@@ -24,11 +24,18 @@ export function createSessionNodeResolver(deps: {
   ptyRuntime: MultiEndpointPtyRuntime
   topology: WorkerTopologyStore
 }) {
-  return async (nodeId: string): Promise<{ value: GetNodeSessionResult; route: SessionRoute }> => {
+  return async (
+    nodeId: string,
+    projectScope?: string,
+  ): Promise<{ value: GetNodeSessionResult; route: SessionRoute }> => {
     const state = normalizePersistedAppState(
       await (await deps.getPersistenceStore()).readAppState(),
     )
-    const workspace = state?.workspaces.find(item => item.nodes.some(node => node.id === nodeId))
+    const workspace = state?.workspaces.find(
+      item =>
+        (projectScope === undefined || item.id === projectScope) &&
+        item.nodes.some(node => node.id === nodeId),
+    )
     const node = workspace?.nodes.find(item => item.id === nodeId)
     if (!workspace || !node || !['agent', 'terminal'].includes(node.kind) || !node.sessionId) {
       throw createAppError('session.not_found')

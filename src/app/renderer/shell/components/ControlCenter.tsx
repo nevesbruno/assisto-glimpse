@@ -23,6 +23,8 @@ import type { SettingsPageId } from '@contexts/settings/presentation/renderer/Se
 import { availablePluginThemes } from '@contexts/plugins/domain/pluginThemes'
 import { usePluginRegistry } from '@contexts/plugins/presentation/renderer/usePluginRegistry'
 import { useThemeApplicationStatus } from '@contexts/plugins/presentation/renderer/themeApplication'
+import { OrchestrationAttentionSection } from './OrchestrationAttentionSection'
+import { OrchestrationApprovalsWindow } from './OrchestrationApprovalsWindow'
 
 /** A menu line into Settings: a pixel cursor points at it on hover and focus, as in a game menu. */
 function ControlCenterLink({
@@ -110,6 +112,7 @@ export function ControlCenter({
   const titleId = useId()
   const initialFocusRef = useRef<HTMLInputElement | null>(null)
   const [returnFocusOnClose, setReturnFocusOnClose] = useState(true)
+  const [approvals, setApprovals] = useState<{ executorNodeId: string | null } | null>(null)
 
   useEffect(() => {
     if (!isOpen) {
@@ -132,6 +135,11 @@ export function ControlCenter({
   const openSettings = (pageId: SettingsPageId | null) => {
     setReturnFocusOnClose(false)
     onOpenSettings(pageId)
+    onClose()
+  }
+
+  const openApprovals = (executorNodeId: string) => {
+    setApprovals({ executorNodeId })
     onClose()
   }
 
@@ -223,6 +231,8 @@ export function ControlCenter({
           </div>
         </section>
 
+        <OrchestrationAttentionSection onOpen={openApprovals} />
+
         <div className="control-center__links">
           <ControlCenterLink
             label={t('controlCenter.notificationSettings')}
@@ -255,28 +265,37 @@ export function ControlCenter({
     onDismiss: onClose,
   }
 
-  return isCompact ? (
-    <Dialog
-      {...surfaceProps}
-      className="control-center control-center--sheet cove-pixel-window"
-      backdropClassName="control-center-backdrop"
-      backdropTestId="control-center-backdrop"
-      initialFocusRef={initialFocusRef}
-      inertRootSelector=".app-shell"
-    >
-      {content}
-    </Dialog>
-  ) : (
-    <Popover
-      {...surfaceProps}
-      anchorRef={anchorRef}
-      side="bottom"
-      align="end"
-      offset={8}
-      className="control-center cove-pixel-window"
-      role="dialog"
-    >
-      {content}
-    </Popover>
+  return (
+    <>
+      {isCompact ? (
+        <Dialog
+          {...surfaceProps}
+          className="control-center control-center--sheet cove-pixel-window"
+          backdropClassName="control-center-backdrop"
+          backdropTestId="control-center-backdrop"
+          initialFocusRef={initialFocusRef}
+          inertRootSelector=".app-shell"
+        >
+          {content}
+        </Dialog>
+      ) : (
+        <Popover
+          {...surfaceProps}
+          anchorRef={anchorRef}
+          side="bottom"
+          align="end"
+          offset={8}
+          className="control-center cove-pixel-window"
+          role="dialog"
+        >
+          {content}
+        </Popover>
+      )}
+      <OrchestrationApprovalsWindow
+        isOpen={approvals !== null}
+        executorNodeId={approvals?.executorNodeId ?? null}
+        onClose={() => setApprovals(null)}
+      />
+    </>
   )
 }

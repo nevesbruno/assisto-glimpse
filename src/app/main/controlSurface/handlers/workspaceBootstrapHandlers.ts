@@ -16,6 +16,7 @@ import { projectAddOperation } from '../../../../shared/contracts/controlSurface
 import { spaceCreateOperation } from '../../../../shared/contracts/controlSurface/operations/domains/space'
 import type { ControlSurface } from '../controlSurface'
 import { registerOperation } from '../registerOperation'
+import { assertProjectInGrant } from './grantProjectScope'
 import type { WorkerTopologyStore } from '../topology/topologyStore'
 
 export function registerWorkspaceBootstrapHandlers(
@@ -80,6 +81,9 @@ export function registerWorkspaceBootstrapHandlers(
   })
   registerOperation(controlSurface, spaceCreateOperation, {
     defaultErrorCode: 'common.unexpected',
-    handle: async (ctx, input) => createSpace(await ports(ctx.assertActive), input),
+    handle: async (ctx, input) => {
+      assertProjectInGrant(ctx, input.projectId, 'common.invalid_input', 'Unknown projectId.')
+      return createSpace(await ports(ctx.assertActive), input)
+    },
   })
 }

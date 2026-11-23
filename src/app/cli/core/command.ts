@@ -7,6 +7,7 @@ export interface OptionSpec {
   selector?: 'node' | 'space' | 'project'
   defaultSelf?: boolean
   defaultSelfUnless?: string[]
+  short?: string
   type: 'string' | 'boolean' | 'number' | 'json'
   multiple?: boolean
   required?: boolean
@@ -24,6 +25,8 @@ export interface PositionalSpec {
   required?: boolean
 }
 export interface RenderSpec {
+  /** Presentation-only cap for the declared list; never sent to the Worker. */
+  defaultLimit?: number
   fields?: string[]
   defaultFields?: string[]
   list?: boolean
@@ -31,11 +34,15 @@ export interface RenderSpec {
   itemAtRoot?: boolean
   unavailable?: string
   itemKey?: string
+  /** Declared envelope fields to project alongside the item while retaining other metadata. */
+  projectedEnvelopeFields?: string[]
   rawPaths?: boolean
   aliases?: Record<string, string>
   declaredRawPaths?: string[]
   rawItemKey?: string
   fieldHints?: Record<string, string>
+  /** Help text for declared projectable fields; never changes output validation. */
+  fieldDescriptions?: Record<string, string>
   examples?: string[]
   tableFields?: Record<string, string[]>
   listKey?: string
@@ -53,13 +60,24 @@ export interface CommandContext extends CommandArgs {
   connection?: Connection
   io: CliIo
   input: unknown
+  /** Invocation-local data returned by prepare; never sent to the Worker. */
+  prepared?: unknown
   invoke(
     id: OperationId,
     payload: unknown,
-    options?: { fresh?: boolean; signal?: AbortSignal },
+    options?: {
+      fresh?: boolean
+      signal?: AbortSignal
+      timeoutMs?: number
+      onDispatch?: () => void
+    },
   ): Promise<unknown>
   whoami(): Promise<CallerIdentity>
   self(kind: NonNullable<OptionSpec['selector']>): Promise<string>
+}
+export type TextOutputContext = Pick<CommandContext, 'io' | 'options'> & {
+  /** Standard renderer with this command's effective options and render spec. */
+  render(): string
 }
 export interface Command {
   /** Explicit usage for cross-option constraints enforced by the command. */
@@ -70,17 +88,38 @@ export interface Command {
   examples?: string[]
   options?: Record<string, OptionSpec>
   positionals?: PositionalSpec[]
+  /** Use the caller node's current container for implicit node create/list targets. */
+  currentContainer?: boolean
   targetSpace?: 'required' | 'optional'
+  /** Stable identifier to print for --quiet, relative to the operation result. */
+  quietIdPath?: string
+  /** Check the Worker operation catalog before sending this operation, including api call. */
+  requireOperationDiscovery?: boolean
   mutation?: boolean
   stream?: boolean
+  streamProjection?: boolean
+  /** The command resolves its own selectors (e.g. per target, or after decoding a cursor). */
+  resolveInExecute?: boolean
+  executionScope?(args: CommandArgs, io: CliIo): { io: CliIo; dispose(): void }
   timeoutMs?: number
   connect: boolean
   selectOperation?(args: CommandArgs): OperationId
   operationAliases?: OperationId[]
   operationCommand?: string
   operation?: OperationId
+  validateBeforeConnect?(args: CommandArgs, env: CliIo['env']): void
+  /** Read and validate local input before connecting or resolving targets. */
+  prepare?(args: CommandArgs, io: CliIo): Promise<unknown>
+  /** Recover a prepared command when framework preflight fails before any mutation. */
+  recoverPreflight?(
+    error: unknown,
+    context: CommandArgs & { prepared: unknown; io: CliIo },
+  ): CommandResult | undefined
   buildInput?(args: CommandArgs): unknown
-  textOutput?(result: unknown): string
+  /** Map an internal execution result to its public output, retaining it for exitCode. */
+  outputValue?(result: unknown): unknown
+  exitCode?(result: unknown): number
+  textOutput?(result: unknown, context: TextOutputContext): string | undefined
   execute?(ctx: CommandContext): Promise<CommandResult>
   errorTargets?: ErrorTarget[]
   rawQueryFields?: boolean
@@ -90,6 +129,17 @@ export interface Command {
 }
 export function defineCommand(command: Command): Command {
   const options = { ...command.options }
+  if (command.quietIdPath) {
+    options.quiet = {
+      type: 'boolean',
+      short: 'q',
+      conflicts: ['fields', 'output'],
+      description: 'Print only the created object identifier followed by a newline',
+    }
+  }
+  if (command.render?.defaultLimit) {
+    options.full = { type: 'boolean', description: 'Show all results unless --limit is specified' }
+  }
   if (options.node && !options.space) {
     options.space = {
       type: 'string',

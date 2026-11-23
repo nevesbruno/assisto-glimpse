@@ -7,6 +7,7 @@ import type {
 import { isSpaceBoundaryEqual } from './spaceBoundaryEquality'
 import { mergeSnapshotField } from './mergeSnapshotField'
 import { mergeValue } from './mergeValue'
+import { mergePersistedNode } from './mergePersistedNode'
 export { isPersistedAppState } from './persistedAppStateValidation'
 
 type PersistedAppState<TSettings extends object> = NormalizedPersistedAppStateContract<TSettings>
@@ -55,14 +56,12 @@ function mergeNodes(
     }
 
     const snapshotNode = snapshotById.get(baseNode.id)
-    if (!snapshotNode) {
-      merged.push(localNode)
-      seen.add(baseNode.id)
-      continue
-    }
-
     merged.push(
-      mergeValue(canonicalNode(baseNode), canonicalNode(localNode), canonicalNode(snapshotNode)),
+      mergePersistedNode(
+        canonicalNode(baseNode),
+        canonicalNode(localNode),
+        snapshotNode ? canonicalNode(snapshotNode) : null,
+      ),
     )
     seen.add(baseNode.id)
   }
@@ -421,10 +420,15 @@ export function mergePersistedAppStates<TSettings extends object>(
     mergedWorkspaces.push(localWorkspace)
   }
 
+  const { orchestrationLinks: _windowMirror, ...merged } = baseSnapshot
+    ? mergeValue(base, local, baseSnapshot)
+    : { ...base, ...local }
   return {
-    ...(baseSnapshot ? mergeValue(base, local, baseSnapshot) : { ...base, ...local }),
+    ...merged,
     // View state belongs to each client; retain the latest shared placeholder.
     activeWorkspaceId: base.activeWorkspaceId,
     workspaces: mergedWorkspaces,
+    // The Worker owns the mirror; a window write never overrides it.
+    ...(base.orchestrationLinks ? { orchestrationLinks: base.orchestrationLinks } : {}),
   }
 }

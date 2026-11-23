@@ -8,7 +8,10 @@ import { integrationOperations } from './domains/integration'
 import { mountOperations } from './domains/mount'
 import { mountTargetOperations } from './domains/mountTarget'
 import { nodeOperations } from './domains/node'
+import { taskOperations } from './domains/task'
 import { noteOperations } from './domains/note'
+import { orchAttentionOperations } from './domains/orchAttention'
+import { orchOperations } from './domains/orch'
 import { pluginOperations } from './domains/plugin'
 import { projectOperations } from './domains/project'
 import { ptyOperations } from './domains/pty'
@@ -31,6 +34,8 @@ export const CONTROL_SURFACE_OPERATIONS = Object.freeze([
   ...mountTargetOperations,
   ...nodeOperations,
   ...noteOperations,
+  ...orchAttentionOperations,
+  ...orchOperations,
   ...pluginOperations,
   ...projectOperations,
   ...ptyOperations,
@@ -38,6 +43,7 @@ export const CONTROL_SURFACE_OPERATIONS = Object.freeze([
   ...spaceOperations,
   ...syncOperations,
   ...systemOperations,
+  ...taskOperations,
   ...workerOperations,
   ...workspaceOperations,
   ...worktreeOperations,

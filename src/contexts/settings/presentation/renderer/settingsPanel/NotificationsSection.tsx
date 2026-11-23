@@ -145,6 +145,39 @@ export function NotificationsSection({
               />
             }
           />
+
+          <SettingRow
+            label={t('orchestration.attention.repeatLabel')}
+            description={t('orchestration.attention.repeatHelp')}
+            control={
+              <Toggle
+                data-testid="settings-executor-alert-repeat-enabled"
+                checked={settings.executorAlertRepeatEnabled}
+                label={t('orchestration.attention.repeatLabel')}
+                onCheckedChange={checked => onChange('executorAlertRepeatEnabled', checked)}
+              />
+            }
+          />
+          <SettingRow
+            label={t('orchestration.attention.repeatEveryLabel')}
+            control={
+              <RangeField
+                data-testid="settings-executor-alert-repeat-minutes"
+                aria-label={t('orchestration.attention.repeatEveryLabel')}
+                value={settings.executorAlertRepeatMinutes}
+                valueLabel={t('orchestration.attention.repeatEveryValue', {
+                  count: settings.executorAlertRepeatMinutes,
+                })}
+                disabled={!settings.executorAlertRepeatEnabled}
+                min={1}
+                max={60}
+                step={1}
+                onChange={event =>
+                  onChange('executorAlertRepeatMinutes', Number(event.target.value))
+                }
+              />
+            }
+          />
         </SettingsGroupBody>
       </SettingsGroup>
 

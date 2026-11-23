@@ -1,3 +1,5 @@
+import { AGENT_PROVIDER_DESCRIPTORS } from '../../../../../shared/contracts/agentProviderDescriptors'
+import { assertProviderInitialPrompt } from '../../../domain/providerInitialPromptPolicy'
 import type {
   AgentLaunchPlan,
   AgentProviderDetector,
@@ -10,7 +12,10 @@ import {
 } from '../terminal-cli/TerminalCliContribution'
 
 import type { AgentHookChannel } from '../../../../../shared/runtime/agentHook/agentHookChannel'
-import { createTemporaryProviderConfig } from '../shared/TemporaryProviderConfig'
+import {
+  createAgentLaunchArtifactFile,
+  type AgentLaunchArtifactRoot,
+} from '../shared/AgentLaunchArtifactFile'
 import { piAgentStatusExtensionSource } from './PiAgentStatusExtension'
 
 const piLaunch = {
@@ -21,7 +26,7 @@ const piLaunch = {
 
 export class PiAgentProviderContribution extends TerminalCliAgentProviderContribution {
   readonly descriptor = {
-    displayName: 'Pi',
+    displayName: AGENT_PROVIDER_DESCRIPTORS['pi'].label,
     documentationUrl: 'https://pi.dev',
     id: 'pi',
     launch: piLaunch,
@@ -30,12 +35,11 @@ export class PiAgentProviderContribution extends TerminalCliAgentProviderContrib
   readonly hookInjection: AgentHookInjectionPlanner
   private readonly channel?: AgentHookChannel
 
-  constructor(
-    options: {
-      readonly detector?: AgentProviderDetector
-      readonly channel?: AgentHookChannel
-    } = {},
-  ) {
+  constructor(options: {
+    readonly artifactRoot: AgentLaunchArtifactRoot
+    readonly detector?: AgentProviderDetector
+    readonly channel?: AgentHookChannel
+  }) {
     super('pi', piLaunch.executable, options satisfies TerminalCliAgentProviderOptions)
     this.channel = options.channel
     this.hookInjection = {
@@ -49,7 +53,8 @@ export class PiAgentProviderContribution extends TerminalCliAgentProviderContrib
         }
         command.artifacts.track('pi-hook-reservation', reservation)
         try {
-          const extension = await createTemporaryProviderConfig(
+          const extension = await createAgentLaunchArtifactFile(
+            options.artifactRoot,
             'opencove-pi-hook-',
             'status.ts',
             piAgentStatusExtensionSource,
@@ -74,7 +79,9 @@ export class PiAgentProviderContribution extends TerminalCliAgentProviderContrib
   ): Promise<AgentLaunchPlan> {
     const model = normalizeOptionalValue(command.model)
     const resumeSessionId = normalizeOptionalValue(command.resumeSessionId)
-    const telemetry = command.profileId?.startsWith('wsl:')
+    const promptArgument = command.mode === 'new' ? (command.prompt?.trim() ?? '') : ''
+    assertProviderInitialPrompt('pi', promptArgument)
+    const telemetry = command.profileId?.trim().toLowerCase().startsWith('wsl:')
       ? { args: [], env: {}, hookInstallState: 'skipped' as const, onStarted: undefined }
       : this.channel
         ? await this.hookInjection.prepareHookInjection(command)
@@ -90,9 +97,8 @@ export class PiAgentProviderContribution extends TerminalCliAgentProviderContrib
         args.push(resumeSessionId)
       }
     } else {
-      const prompt = command.prompt?.trim() ?? ''
-      if (prompt.length > 0) {
-        args.push(prompt)
+      if (promptArgument.length > 0) {
+        args.push(promptArgument)
       }
     }
 

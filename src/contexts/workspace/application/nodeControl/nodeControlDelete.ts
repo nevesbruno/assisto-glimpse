@@ -9,22 +9,28 @@ import {
   type NodeControlWorkspace,
 } from './nodeControlState'
 import { findNodeForNodeControl } from './nodeDtos'
+import { scopeNodeControlState } from './nodeProjectScope'
 import type { NodeControlRuntimeDeps } from './nodeControlUseCases'
 
 export async function deleteNodeForNodeControl(options: {
   store: NodeControlAppStateStore
   runtime: Pick<NodeControlRuntimeDeps, 'killSession' | 'closeWebsiteNode' | 'closePluginNode'>
   input: DeleteNodeInput
+  projectScope?: string
   assertActive?: () => void
   now: Date
 }): Promise<DeleteNodeResult> {
   const expectedRevision = await options.store.readAppStateRevision()
   const state = requireNodeControlState(await options.store.readAppState())
-  const matched = findNodeForNodeControl(state.workspaces, options.input.nodeId)
+  const matched = findNodeForNodeControl(
+    scopeNodeControlState(state, options.projectScope).workspaces,
+    options.input.nodeId,
+  )
   if (!matched) {
     throw createAppError('node.not_found')
   }
 
+  const managed = options.store.isManagedNode?.(matched.node.id) ?? false
   const nextWorkspace = removeNodeWithRelations(matched.workspace, matched.node, options.now)
   options.assertActive?.()
   const revision = await persistNodeControlState(
@@ -34,7 +40,7 @@ export async function deleteNodeForNodeControl(options: {
   )
   const cleanup = { attempted: false, ok: true }
 
-  if (matched.node.sessionId) {
+  if (matched.node.sessionId && !managed) {
     cleanup.attempted = true
     await Promise.resolve(options.runtime.killSession(matched.node.sessionId)).catch(() => {
       cleanup.ok = false

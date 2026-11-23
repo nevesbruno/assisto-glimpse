@@ -1,11 +1,13 @@
 import { randomBytes } from 'node:crypto'
-import { chmod, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   cleanLegacyClaudeSettings,
   cleanLegacyCodexConfigToml,
   cleanLegacyCodexHooksFile,
+  collectWholeFileStaleTrust,
   isLegacyOpenCoveCodexHooksFile,
+  type StaleCodexTrust,
 } from './legacyManagedHookCleanup'
 
 export interface LegacyManagedHookStartupCleanupReport {
@@ -15,6 +17,7 @@ export interface LegacyManagedHookStartupCleanupReport {
 
 export async function cleanupLegacyManagedHooksAtStartup(
   homeDirectory: string,
+  markerPath?: string,
 ): Promise<LegacyManagedHookStartupCleanupReport> {
   const failures: Array<{ path: string; error: unknown }> = []
   let removedCount = 0
@@ -28,6 +31,9 @@ export async function cleanupLegacyManagedHooksAtStartup(
   const claudeSettingsPath = join(homeDirectory, '.claude', 'settings.json')
   const codexHooksPath = join(homeDirectory, '.codex', 'hooks.json')
   const codexConfigPath = join(homeDirectory, '.codex', 'config.toml')
+  if (markerPath && (await readOptionalFile(markerPath)) !== null) {
+    return { removedCount: 0, failures }
+  }
 
   await clean(claudeSettingsPath, async () => {
     const raw = await readOptionalFile(claudeSettingsPath)
@@ -46,29 +52,58 @@ export async function cleanupLegacyManagedHooksAtStartup(
       return 0
     }
     const parsed = JSON.parse(raw) as unknown
-    if (isLegacyOpenCoveCodexHooksFile(parsed)) {
-      await rm(codexHooksPath, { force: true })
-      return 1
-    }
-    const result = cleanLegacyCodexHooksFile(parsed)
-    if (result.removedCount > 0) {
-      await writeAtomic(codexHooksPath, serializeJson(result.content))
-    }
-    return result.removedCount
-  })
-  await clean(codexConfigPath, async () => {
-    const raw = await readOptionalFile(codexConfigPath)
-    if (raw === null) {
+    const wholeFile = isLegacyOpenCoveCodexHooksFile(parsed)
+    const hooksResult = wholeFile ? null : cleanLegacyCodexHooksFile(parsed)
+    const staleTrust = wholeFile
+      ? collectWholeFileStaleTrust(parsed)
+      : (hooksResult?.staleTrust ?? new Map<string, number>())
+    const hooksRemoved = wholeFile ? 1 : (hooksResult?.removedCount ?? 0)
+    if (hooksRemoved === 0) {
       return 0
     }
-    const result = cleanLegacyCodexConfigToml(raw)
-    if (result.removedCount > 0) {
-      await writeAtomic(codexConfigPath, result.content)
+
+    // Trust first: if it fails, hooks.json stays intact and the next startup retries.
+    const trustRemoved = await removeStaleCodexTrust(codexConfigPath, staleTrust)
+    if (wholeFile) {
+      await rm(codexHooksPath, { force: true })
+    } else if (hooksResult) {
+      await writeAtomic(codexHooksPath, serializeJson(hooksResult.content))
     }
-    return result.removedCount
+    return hooksRemoved + trustRemoved
   })
 
+  if (markerPath && failures.length === 0) {
+    await writeMarker(markerPath)
+  }
   return { removedCount, failures }
+}
+
+export function resolveLegacyManagedHookCleanupMarkerPath(userDataPath: string): string {
+  return join(userDataPath, 'legacy-managed-hook-cleanup.done')
+}
+
+async function writeMarker(markerPath: string): Promise<void> {
+  try {
+    await mkdir(dirname(markerPath), { recursive: true })
+    await writeFile(markerPath, `${new Date().toISOString()}\n`, 'utf8')
+  } catch {
+    // Best effort: without the marker the cleanup is idempotent and simply runs again.
+  }
+}
+
+async function removeStaleCodexTrust(
+  configPath: string,
+  staleTrust: StaleCodexTrust,
+): Promise<number> {
+  const raw = await readOptionalFile(configPath)
+  if (raw === null) {
+    return 0
+  }
+  const result = cleanLegacyCodexConfigToml(raw, staleTrust)
+  if (result.removedCount > 0) {
+    await writeAtomic(configPath, result.content)
+  }
+  return result.removedCount
 }
 
 export function reportLegacyManagedHookCleanupFailures(

@@ -1,3 +1,4 @@
+import { getPublicTerminalSpawnCommand } from '../../../../platform/terminal/publicTerminalSpawnCommand'
 import { PtyStreamInputEvidence } from './ptyStreamInputEvidence'
 import type { ClaudeTranscriptObservation } from '../../../../shared/runtime/agentHook/claudeTranscript'
 import type { ReservedSessionInput } from '../../../../contexts/agent/application/ports/PromptDeliveryPorts'
@@ -49,7 +50,10 @@ import {
   type PtyStreamHubAgentReexecOptions,
 } from './ptyStreamHub.agentReexec'
 import { PtyStreamRecoveryOperationTracker } from './ptyStreamRecoveryOperationTracker'
-import { registerPtyStreamAgentMetadata } from './ptyStreamAgentMetadataProjection'
+import {
+  registerPtyStreamAgentMetadata,
+  projectCommittedClaudeBinding,
+} from './ptyStreamAgentMetadataProjection'
 import { registerPtyClient, unregisterPtyClient } from './ptyStreamHub.clients'
 import { writeAutomationInput } from './ptyStreamAutomation'
 import { forgetPtyStreamSession, PtyStreamRetiredSessions } from './ptyStreamHub.retirement'
@@ -61,6 +65,15 @@ export class PtyStreamHub {
   private readonly onPresentationMutation: ((sessionId: string) => void) | undefined
 
   private readonly inputEvidence: PtyStreamInputEvidence
+  private readonly typedRuntime: ControlSurfacePtyRuntime
+  private readonly typedAt = new Map<string, number>()
+  private readonly now: () => number
+
+  /** Instant of the last write typed by a client, never of an automation paste; null when none. */
+  public inputWatermark(sessionId: string): number | null {
+    return this.typedAt.get(sessionId) ?? null
+  }
+
   public watchInput(
     sessionId: string,
     listener: (deliveryId?: string, data?: string) => void,
@@ -92,6 +105,14 @@ export class PtyStreamHub {
   }) {
     this.inputEvidence = new PtyStreamInputEvidence(options.ptyRuntime)
     this.ptyRuntime = this.inputEvidence.observedRuntime()
+    this.now = options.now ?? Date.now
+    this.typedRuntime = {
+      ...this.ptyRuntime,
+      write: (sessionId, data) => {
+        this.typedAt.set(sessionId, this.now())
+        this.ptyRuntime.write(sessionId, data)
+      },
+    }
     this.replayWindowMaxBytes = Math.max(64_000, Math.floor(options.replayWindowMaxBytes))
     this.onPresentationMutation = options.onPresentationMutation
     this.agentRuns =
@@ -158,7 +179,7 @@ export class PtyStreamHub {
       return
     }
     const session = this.ensureSession(metadata.sessionId)
-    session.metadata = metadata
+    session.metadata = { ...metadata, ...getPublicTerminalSpawnCommand(metadata) }
     session.presentationSession.resize(metadata.cols, metadata.rows)
   }
 
@@ -195,6 +216,15 @@ export class PtyStreamHub {
           metadata: next,
         }),
     )
+  }
+
+  public projectCommittedClaudeBinding(runtimeSessionId: string, resumeSessionId: string): void {
+    const session = this.sessions.get(runtimeSessionId)
+    if (session) {
+      projectCommittedClaudeBinding(session, resumeSessionId, metadata =>
+        broadcastSessionMetadata({ sessions: this.sessions, clients: this.clients, metadata }),
+      )
+    }
   }
 
   public getSessionMetadata(sessionId: string): SessionMetadata | null {
@@ -422,7 +452,7 @@ export class PtyStreamHub {
     writePtyStreamSession({
       clients: this.clients,
       sessions: this.sessions,
-      ptyRuntime: this.ptyRuntime,
+      ptyRuntime: this.typedRuntime,
       ...options,
       broadcastControlChanged: sessionId => this.broadcast.controlChanged(sessionId),
     })
@@ -447,7 +477,7 @@ export class PtyStreamHub {
   ): Promise<T> {
     return withSessionInputOperation<T>(
       this.sessions,
-      (id, data, deliveryId) => this.inputEvidence.write(id, data, deliveryId),
+      this.inputEvidence.write.bind(this.inputEvidence),
       sessionId,
       callback,
     )

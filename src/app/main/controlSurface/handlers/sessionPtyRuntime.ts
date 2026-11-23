@@ -1,3 +1,4 @@
+import type { SessionRuntimeWrite } from '../../../../shared/runtime/sessionInputProvenance'
 import type { ClaudeTranscriptPort } from '../../../../shared/runtime/agentHook/claudeTranscript'
 import type { SessionStateWatcherStartInput } from '../../../../contexts/terminal/presentation/main-ipc/sessionStateWatcher'
 import type {
@@ -28,6 +29,8 @@ export interface ControlSurfacePtyRuntime extends ClaudeTranscriptPort {
     command: string
     args: string[]
     env?: NodeJS.ProcessEnv
+    /** Applied after the credential removal, so it is the only way to hand a secret to a launch. */
+    injectedEnv?: Readonly<Record<string, string>>
     agentProvider?: AgentProviderId
     initialAgentState?: 'working' | 'standby'
     hookCoverage?: AgentHookCoverage
@@ -36,7 +39,7 @@ export interface ControlSurfacePtyRuntime extends ClaudeTranscriptPort {
   }) => Promise<{ sessionId: string }>
   /** Waits until a newly spawned interactive shell can safely accept its first command. */
   waitForShellReady?: (sessionId: string) => Promise<void>
-  write: (sessionId: string, data: string) => void
+  write: SessionRuntimeWrite
   probeForeground?: (sessionId: string) => void
   reexecAgent?: (input: TerminalAgentReexecRuntimeInput) => Promise<TerminalAgentReexecResult>
   resize: (input: ResizeTerminalInput) => Promise<TerminalGeometryCommitResult>

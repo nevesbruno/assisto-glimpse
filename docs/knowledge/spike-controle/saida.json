@@ -1,0 +1,2070 @@
+{
+  "generatedAt": "2026-11-21T01:21:37.611Z",
+  "profile": "~/.config/opencove-dev",
+  "connection": {
+    "version": 1,
+    "hostname": "127.0.0.1",
+    "port": 38851,
+    "pid": 1015643,
+    "appVersion": "0.4.0",
+    "startedBy": "cli",
+    "createdAt": "2026-11-21T01:21:30.080Z"
+  },
+  "protocolHeader": "2",
+  "summary": {
+    "calls": 23,
+    "ok": 17,
+    "failed": 6,
+    "avgMs": 6,
+    "p50Ms": 4,
+    "maxMs": 39
+  },
+  "facts": {
+    "projectCount": 2,
+    "linkCount": 6,
+    "linkStates": {
+      "closed": 6
+    },
+    "linksWithProjectId": 6,
+    "activeStatusLinks": 0,
+    "statusLinkHasProjectId": null,
+    "statusAttentionIsItemized": null,
+    "liveAgents": 0,
+    "agentFieldsExposed": [],
+    "agentExposesTokensCostOrUsage": null,
+    "operationCount": 159,
+    "orchOperationIds": [
+      "orch.approval.respond",
+      "orch.cancel",
+      "orch.close",
+      "orch.dispatch",
+      "orch.hooks.approve",
+      "orch.interrupt",
+      "orch.link.close",
+      "orch.link.create",
+      "orch.link.extend",
+      "orch.link.list",
+      "orch.spawn",
+      "orch.status"
+    ],
+    "queueOperationIds": [],
+    "costOperationIds": []
+  },
+  "calls": [
+    {
+      "id": "system.whoami",
+      "kind": "query",
+      "payload": {},
+      "ok": true,
+      "ms": 39,
+      "status": 200,
+      "value": {
+        "kind": "bearer",
+        "scopeTier": "admin",
+        "instanceId": "1e044c4c-83a5-4f39-b1ab-27d3a497d9c5",
+        "appVersion": "0.4.0"
+      }
+    },
+    {
+      "id": "system.ping",
+      "kind": "query",
+      "payload": {},
+      "ok": true,
+      "ms": 4,
+      "status": 200,
+      "value": {
+        "ok": true,
+        "now": "2026-11-21T01:21:32.516Z",
+        "pid": 1015643
+      }
+    },
+    {
+      "id": "system.capabilities",
+      "kind": "query",
+      "payload": {},
+      "ok": true,
+      "ms": 4,
+      "status": 200,
+      "value": {
+        "ok": true,
+        "now": "2026-11-21T01:21:32.520Z",
+        "pid": 1015643,
+        "protocolVersion": 2,
+        "appVersion": "0.4.0",
+        "runtimeBuild": {
+          "schemaVersion": 1,
+          "buildId": "864c8cc4832121ab2e736608895c2ffa17e566726631101227eca74032103f0d",
+          "appVersion": "0.4.0",
+          "channel": "stable",
+          "protocolVersion": 2,
+          "ptyProtocolVersion": 1,
+          "launchContractVersion": 1,
+          "dataSchemaVersion": 14
+        },
+        "deploymentId": null,
+        "instanceId": "1e044c4c-83a5-4f39-b1ab-27d3a497d9c5",
+        "runtimeReady": true,
+        "features": {
+          "webShell": true,
+          "sync": {
+            "state": true,
+            "events": true
+          },
+          "sessionStreaming": {
+            "enabled": true,
+            "ptyProtocolVersion": 1,
+            "replayWindowMaxBytes": 400000,
+            "roles": {
+              "viewer": true,
+              "controller": true
+            },
+            "webAuth": {
+              "ticketToCookie": true,
+              "cookieSession": true
+            }
+          },
+          "operationRegistry": true
+        }
+      }
+    },
+    {
+      "id": "system.operations",
+      "kind": "query",
+      "payload": {},
+      "ok": true,
+      "ms": 3,
+      "status": 200,
+      "value": {
+        "protocolVersion": 2,
+        "operations": [
+          {
+            "id": "agent.delivery.get",
+            "kind": "query",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Look up a volatile delivery without resending input"
+          },
+          {
+            "id": "agent.finalMessage",
+            "kind": "query",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read a retained message from an observed local Claude turn end"
+          },
+          {
+            "id": "agent.get",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get the current agent run state"
+          },
+          {
+            "id": "agent.history.clear",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Delete stored OpenCove replies for a node from archive and memory"
+          },
+          {
+            "id": "agent.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List live agent run states with a subscription watermark"
+          },
+          {
+            "id": "agent.listSessions",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List saved agent conversations in an approved working directory"
+          },
+          {
+            "id": "agent.prompt",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Prompt an agent window OpenCove launched (Claude Code or Codex)"
+          },
+          {
+            "id": "auth.issueWebSessionTicket",
+            "kind": "query",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Issue a one-time ticket for a browser Web session"
+          },
+          {
+            "id": "canvas.focus",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Move the canvas viewport to a node or space"
+          },
+          {
+            "id": "endpoint.homeDirectory",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get the home directory and platform of a Worker endpoint"
+          },
+          {
+            "id": "endpoint.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List registered Worker endpoints including the local Worker"
+          },
+          {
+            "id": "endpoint.overview.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "legacy",
+            "summary": "List endpoint health, mount usage and active SSH operations"
+          },
+          {
+            "id": "endpoint.ping",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Check connectivity to a local or remote Worker endpoint"
+          },
+          {
+            "id": "endpoint.prepare",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Install or update the managed runtime on an SSH endpoint"
+          },
+          {
+            "id": "endpoint.readDirectory",
+            "kind": "query",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Approve a remote directory root and list its entries"
+          },
+          {
+            "id": "endpoint.register",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Register a remote Worker address and authentication token"
+          },
+          {
+            "id": "endpoint.registerManagedSsh",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Save an SSH endpoint configuration for managed Worker access"
+          },
+          {
+            "id": "endpoint.remove",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Remove a remote endpoint, its credentials, mounts and SSH runtime"
+          },
+          {
+            "id": "endpoint.repair",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Start managed SSH repair or retry failed local topology persistence"
+          },
+          {
+            "id": "endpoint.sshConfigHosts",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List concrete host aliases from the local SSH configuration"
+          },
+          {
+            "id": "endpoint.updateManagedSsh",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Replace SSH settings, stop the old tunnel and start reconnection"
+          },
+          {
+            "id": "filesystem.copyEntry",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Copy a file or directory between URIs within approved roots"
+          },
+          {
+            "id": "filesystem.copyEntryInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Copy a file or directory between URIs within one mount root"
+          },
+          {
+            "id": "filesystem.createDirectory",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create a directory at a file URI within approved roots"
+          },
+          {
+            "id": "filesystem.createDirectoryInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create a directory within a local or remote mount root"
+          },
+          {
+            "id": "filesystem.deleteEntry",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Delete a file or directory within approved roots"
+          },
+          {
+            "id": "filesystem.deleteEntryInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Delete a file or directory within a local or remote mount root"
+          },
+          {
+            "id": "filesystem.moveEntry",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Move a file or directory between URIs within approved roots"
+          },
+          {
+            "id": "filesystem.moveEntryInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Move a file or directory between URIs within one mount root"
+          },
+          {
+            "id": "filesystem.mutationCapabilities",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "legacy",
+            "summary": "List supported file mutation options and protocol capabilities"
+          },
+          {
+            "id": "filesystem.readDirectory",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List directory entries at a file URI within approved roots"
+          },
+          {
+            "id": "filesystem.readDirectoryInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List directory entries within a local or remote mount root"
+          },
+          {
+            "id": "filesystem.readFileBytes",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read binary file contents within approved roots"
+          },
+          {
+            "id": "filesystem.readFileBytesInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read binary file contents within a local or remote mount root"
+          },
+          {
+            "id": "filesystem.readFileText",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read text from a file URI within approved roots"
+          },
+          {
+            "id": "filesystem.readFileTextInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read file text within a local or remote mount root"
+          },
+          {
+            "id": "filesystem.renameEntry",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Rename a file or directory within approved roots"
+          },
+          {
+            "id": "filesystem.renameEntryInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Rename a file or directory within a local or remote mount root"
+          },
+          {
+            "id": "filesystem.stat",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get file or directory metadata within approved roots"
+          },
+          {
+            "id": "filesystem.statInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get file or directory metadata within a local or remote mount root"
+          },
+          {
+            "id": "filesystem.writeFileText",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Write text to a file URI"
+          },
+          {
+            "id": "filesystem.writeFileTextInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Write file text within a local or remote mount root"
+          },
+          {
+            "id": "gitWorktree.create",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create a Git working tree using a new or existing branch"
+          },
+          {
+            "id": "gitWorktree.createInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create a Git working tree within a mount and approve its local root"
+          },
+          {
+            "id": "gitWorktree.getDefaultBranch",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Resolve the default branch of an approved Git repository"
+          },
+          {
+            "id": "gitWorktree.getDefaultBranchInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Resolve the default Git branch for the repository at a mount root"
+          },
+          {
+            "id": "gitWorktree.graph",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read the commit graph of an approved Git repository"
+          },
+          {
+            "id": "gitWorktree.graphInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read the Git commit graph for a repository within a mount"
+          },
+          {
+            "id": "gitWorktree.listBranches",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List Git branches in an approved repository"
+          },
+          {
+            "id": "gitWorktree.listBranchesInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List Git branches in the repository at a mount root"
+          },
+          {
+            "id": "gitWorktree.listWorktrees",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List Git working trees for an approved repository"
+          },
+          {
+            "id": "gitWorktree.listWorktreesInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List Git working trees for the repository at a mount root"
+          },
+          {
+            "id": "gitWorktree.remove",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Remove a Git working tree and optionally delete its branch"
+          },
+          {
+            "id": "gitWorktree.removeInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Remove a Git working tree within a mount and optionally delete its branch"
+          },
+          {
+            "id": "gitWorktree.renameBranch",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Rename a Git branch in an approved working tree"
+          },
+          {
+            "id": "gitWorktree.renameBranchInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Rename a Git branch in a working tree within a mount"
+          },
+          {
+            "id": "gitWorktree.statusSummary",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get Git working tree changes and branch status for an approved path"
+          },
+          {
+            "id": "gitWorktree.statusSummaryInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get Git working tree changes and branch status within a mount"
+          },
+          {
+            "id": "gitWorktree.suggestNames",
+            "kind": "query",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Run an agent CLI to suggest branch and worktree names from space context"
+          },
+          {
+            "id": "integration.github.resolvePullRequests",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Find GitHub pull requests for branches in an approved repository"
+          },
+          {
+            "id": "integration.github.resolvePullRequestsInMount",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Find GitHub pull requests for branches in a mounted repository"
+          },
+          {
+            "id": "mount.create",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Add a project mount and request approval of its directory root"
+          },
+          {
+            "id": "mount.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List directory mounts belonging to a project"
+          },
+          {
+            "id": "mount.promote",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Move a mount to the first position in its project"
+          },
+          {
+            "id": "mount.remove",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Remove a project mount without deleting its files"
+          },
+          {
+            "id": "mountTarget.resolve",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Resolve a mount to its endpoint and root directory"
+          },
+          {
+            "id": "node.create",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create a canvas node, launching an agent or terminal when requested"
+          },
+          {
+            "id": "node.delete",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Delete a canvas node and clean up its runtime"
+          },
+          {
+            "id": "node.get",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get a canvas node with its owning project and space"
+          },
+          {
+            "id": "node.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List canvas nodes filtered by project, space or kind"
+          },
+          {
+            "id": "node.update",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Update a note, task or website node title, frame or content"
+          },
+          {
+            "id": "note.create",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Persist a note with text and geometry in the specified space"
+          },
+          {
+            "id": "orch.approval.respond",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Answer a pending executor approval request"
+          },
+          {
+            "id": "orch.cancel",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Cancel a queued dispatch"
+          },
+          {
+            "id": "orch.close",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Close the link to an executor and shut its service down"
+          },
+          {
+            "id": "orch.dispatch",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Queue a task for a linked executor"
+          },
+          {
+            "id": "orch.hooks.approve",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Approve pending executor hooks and restart its service"
+          },
+          {
+            "id": "orch.interrupt",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Interrupt the running turn of a linked executor"
+          },
+          {
+            "id": "orch.link.close",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Close a link by identifier"
+          },
+          {
+            "id": "orch.link.create",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Link an existing executor node to an orchestrator node"
+          },
+          {
+            "id": "orch.link.extend",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Grant extra dispatch rounds to a link"
+          },
+          {
+            "id": "orch.link.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List orchestration links with the links revision"
+          },
+          {
+            "id": "orch.spawn",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create an executor node linked to the calling orchestrator"
+          },
+          {
+            "id": "orch.status",
+            "kind": "query",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Show executor links with health, rounds, admission and pending approvals"
+          },
+          {
+            "id": "plugin.command.run",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Run a declared plugin command, opening its target window if needed"
+          },
+          {
+            "id": "plugin.details",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get a plugin manifest, README, source directory and runtime logs"
+          },
+          {
+            "id": "plugin.discover",
+            "kind": "query",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Search GitHub for repositories tagged as OpenCove plugins"
+          },
+          {
+            "id": "plugin.git.apply",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Build and publish a prepared plugin Git candidate"
+          },
+          {
+            "id": "plugin.git.check",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Check a managed plugin source for upstream Git updates"
+          },
+          {
+            "id": "plugin.git.install",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Clone, build and install a plugin from a Git repository"
+          },
+          {
+            "id": "plugin.git.update",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Merge upstream changes and publish a plugin unless conflicts remain"
+          },
+          {
+            "id": "plugin.host.request",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Dispatch a host capability request on behalf of a plugin view"
+          },
+          {
+            "id": "plugin.install",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Install a plugin from a local source directory"
+          },
+          {
+            "id": "plugin.invoke",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Invoke a plugin backend method on behalf of an open view"
+          },
+          {
+            "id": "plugin.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List installed plugins with their manifests and runtime status"
+          },
+          {
+            "id": "plugin.preferences.get",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read configured preference values for an installed plugin"
+          },
+          {
+            "id": "plugin.preferences.set",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Save a named preference value for an installed plugin"
+          },
+          {
+            "id": "plugin.reload",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Rebuild a managed Git plugin or reload its local source"
+          },
+          {
+            "id": "plugin.repository.details",
+            "kind": "query",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Inspect a GitHub plugin repository before installation"
+          },
+          {
+            "id": "plugin.rollback",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Restore a retained plugin code revision as the active installation"
+          },
+          {
+            "id": "plugin.setEnabled",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Enable or disable an installed plugin and its runtime"
+          },
+          {
+            "id": "plugin.sidebar.items",
+            "kind": "query",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Run a plugin command to populate a project Sidebar section"
+          },
+          {
+            "id": "plugin.skill.get",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read a declared skill from an installed plugin"
+          },
+          {
+            "id": "plugin.source",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Inspect plugin source changes, revision history and pending candidates"
+          },
+          {
+            "id": "plugin.storage.get",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read a plugin storage value through an open view"
+          },
+          {
+            "id": "plugin.storage.set",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Persist a plugin storage value through an open view"
+          },
+          {
+            "id": "plugin.uninstall",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Uninstall a plugin and dispose its active runtime"
+          },
+          {
+            "id": "plugin.view.close",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Close a plugin runtime view and release its resources"
+          },
+          {
+            "id": "plugin.view.open",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Open a plugin runtime view bound to a canvas node"
+          },
+          {
+            "id": "plugin.view.preferences.get",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read plugin preferences through an open view"
+          },
+          {
+            "id": "plugin.view.preferences.set",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Save a plugin preference through an open view"
+          },
+          {
+            "id": "plugin.view.setTitle",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Change the title of an open plugin view"
+          },
+          {
+            "id": "plugin.window.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List plugin canvas windows with their current view titles"
+          },
+          {
+            "id": "plugin.window.open",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create or reuse a plugin canvas window and focus it"
+          },
+          {
+            "id": "project.add",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Add a local directory as a project with its default mount and space"
+          },
+          {
+            "id": "project.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List persisted projects and identify the active project"
+          },
+          {
+            "id": "pty.listProfiles",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "legacy",
+            "summary": "List available terminal profiles and the default profile id"
+          },
+          {
+            "id": "pty.spawn",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Start a shell or command in a terminal under an approved directory"
+          },
+          {
+            "id": "pty.spawnInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Start a shell or command within a local or remote mount root"
+          },
+          {
+            "id": "session.attachAgentStateWatcher",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Start agent state observation for an existing session when enabled"
+          },
+          {
+            "id": "session.detachAgentStateWatcher",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Dispose the agent state watcher attached to a session"
+          },
+          {
+            "id": "session.finalMessage",
+            "kind": "query",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read the last agent reply and cache any discovered resume session id"
+          },
+          {
+            "id": "session.finalMessageForNode",
+            "kind": "query",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read the last agent reply only when its transcript is ready"
+          },
+          {
+            "id": "session.get",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get terminal or agent session metadata by session or canvas node id"
+          },
+          {
+            "id": "session.kill",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Kill the terminal or agent process for a session"
+          },
+          {
+            "id": "session.launchAgent",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Launch or resume an agent process in a space or working directory"
+          },
+          {
+            "id": "session.launchAgentInMount",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Launch or resume an agent process within a local or remote mount"
+          },
+          {
+            "id": "session.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "legacy",
+            "summary": "List terminal and agent sessions tracked by the stream hub"
+          },
+          {
+            "id": "session.prepareOrRevive",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Reattach or revive persisted terminal and agent nodes in a workspace"
+          },
+          {
+            "id": "session.presentationSnapshot",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get canonical terminal screen state and geometry for a session"
+          },
+          {
+            "id": "session.snapshot",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get buffered terminal output and stream position for a session"
+          },
+          {
+            "id": "session.spawnTerminal",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Start a terminal process in a space using its mount and profile settings"
+          },
+          {
+            "id": "session.stopNode",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Kill a node process only if its session binding still matches"
+          },
+          {
+            "id": "session.terminalAgentActivity.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List observed agent activity metadata for terminal sessions"
+          },
+          {
+            "id": "session.writeNode",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Send terminal input only while the node session binding still matches"
+          },
+          {
+            "id": "space.create",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create a top-level space bound to the project default mount"
+          },
+          {
+            "id": "space.createChild",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create a child space and move selected nodes into it"
+          },
+          {
+            "id": "space.get",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get a space with its nodes and owning project"
+          },
+          {
+            "id": "space.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List spaces and their nodes in the selected or active project"
+          },
+          {
+            "id": "sync.readAgentNodePlaceholderScrollback",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read saved placeholder terminal output for an agent node"
+          },
+          {
+            "id": "sync.readNodeScrollback",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read saved terminal output for a canvas node"
+          },
+          {
+            "id": "sync.readWorkspaceStateRaw",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read the persisted workspace state as raw JSON"
+          },
+          {
+            "id": "sync.state",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Read persisted application state and its current revision"
+          },
+          {
+            "id": "sync.writeAgentNodePlaceholderScrollback",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Persist placeholder terminal output for an agent node"
+          },
+          {
+            "id": "sync.writeNodeScrollback",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Persist terminal output for a canvas node"
+          },
+          {
+            "id": "sync.writeState",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Persist application state with a revision check and notify runtime recovery"
+          },
+          {
+            "id": "sync.writeWorkspaceStateRaw",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Persist raw workspace JSON and notify runtime recovery"
+          },
+          {
+            "id": "system.capabilities",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Get protocol features, build identity and runtime readiness"
+          },
+          {
+            "id": "system.homeDirectory",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "legacy",
+            "summary": "Get the Worker home directory, hostname and platform"
+          },
+          {
+            "id": "system.operation.describe",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Describe a registered operation and its JSON input schema"
+          },
+          {
+            "id": "system.operations",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List the operations registered in this Worker runtime"
+          },
+          {
+            "id": "system.ping",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Check Worker reachability and return its time and process id"
+          },
+          {
+            "id": "system.whoami",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Describe the authenticated caller and its scope without revealing credentials"
+          },
+          {
+            "id": "workspace.allocateProjectPlaceholder",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create and approve a project directory under Worker user data"
+          },
+          {
+            "id": "workspace.approveRoot",
+            "kind": "command",
+            "scope": "admin",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Approve a directory root for subsequent filesystem and runtime access"
+          },
+          {
+            "id": "workspace.ensureDirectory",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create a directory and its parents within approved roots"
+          },
+          {
+            "id": "worktree.archive",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Remove a space worktree and rebind the space to the project root"
+          },
+          {
+            "id": "worktree.create",
+            "kind": "command",
+            "scope": "interact",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "Create and approve a Git worktree and bind the space to it"
+          },
+          {
+            "id": "worktree.list",
+            "kind": "query",
+            "scope": "read",
+            "availability": "always",
+            "contract": "schema",
+            "summary": "List Git worktrees for the selected or active project"
+          }
+        ]
+      }
+    },
+    {
+      "id": "project.list",
+      "kind": "query",
+      "payload": {},
+      "ok": true,
+      "ms": 5,
+      "status": 200,
+      "value": {
+        "activeProjectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "projects": [
+          {
+            "id": "3f251963-ee0e-4404-ba0b-0864575455fe",
+            "name": "glimpse-teste",
+            "path": "~/lab/glimpse-teste",
+            "worktreesRoot": "",
+            "activeSpaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22"
+          },
+          {
+            "id": "c8944b46-4d4b-4e54-ba70-7b7a1b61106c",
+            "name": "bndes-garagem",
+            "path": "~/ntozo/projects/bndes-garagem",
+            "worktreesRoot": "",
+            "activeSpaceId": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "space.list",
+      "kind": "query",
+      "payload": {
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe"
+      },
+      "ok": true,
+      "ms": 5,
+      "status": 200,
+      "value": {
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "activeSpaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+        "spaces": [
+          {
+            "id": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+            "name": "Space 1",
+            "directoryPath": "~/lab/glimpse-teste",
+            "targetMountId": "25b6a155-d9ad-47da-9caa-d1f9f295fa7a",
+            "parentSpaceId": null,
+            "boundary": {
+              "allowedMountIds": [],
+              "scopesByMountId": {},
+              "allowedPluginIds": null,
+              "capabilities": null,
+              "trustLevel": null
+            },
+            "sortOrder": 0,
+            "nodeIds": [],
+            "nodes": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "node.list",
+      "kind": "query",
+      "payload": {
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe"
+      },
+      "ok": true,
+      "ms": 15,
+      "status": 200,
+      "value": {
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "spaceId": null,
+        "nodes": []
+      }
+    },
+    {
+      "id": "agent.list",
+      "kind": "query",
+      "payload": {
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe"
+      },
+      "ok": true,
+      "ms": 4,
+      "status": 200,
+      "value": {
+        "epoch": "1e044c4c-83a5-4f39-b1ab-27d3a497d9c5",
+        "seq": 0,
+        "turnArchive": true,
+        "agents": []
+      }
+    },
+    {
+      "id": "space.list",
+      "kind": "query",
+      "payload": {
+        "projectId": "c8944b46-4d4b-4e54-ba70-7b7a1b61106c"
+      },
+      "ok": true,
+      "ms": 4,
+      "status": 200,
+      "value": {
+        "projectId": "c8944b46-4d4b-4e54-ba70-7b7a1b61106c",
+        "activeSpaceId": null,
+        "spaces": []
+      }
+    },
+    {
+      "id": "node.list",
+      "kind": "query",
+      "payload": {
+        "projectId": "c8944b46-4d4b-4e54-ba70-7b7a1b61106c"
+      },
+      "ok": true,
+      "ms": 5,
+      "status": 200,
+      "value": {
+        "projectId": "c8944b46-4d4b-4e54-ba70-7b7a1b61106c",
+        "spaceId": null,
+        "nodes": [
+          {
+            "data": {
+              "kind": "task",
+              "requirement": "BNDES Garagem: workspace com três repositórios irmãos (infra, site, inscricao) em ~/ntozo/projects/bndes-garagem. A PRE-PROD é uma VM descartável na Magalu Cloud, criada em 10/11/2026, que deveria receber deploy automático a cada merge no main dos três repositórios depois do CI verde. O cliente não a vê. Regras: nenhum host, IP ou segredo em arquivo, memória ou mensagem; push do infra e merge de PR são do Bruno; usar git worktree add em pasta separada, nunca trocar a branch da pasta principal; só a PRE-PROD está no escopo, nada de PRD. Ler CLAUDE.md da raiz do workspace e infra/preprod-magalu/ antes de agir.\n\nTask:\nDiagnosticar e corrigir o workflow \"Deploy HML\" (CD da PRE-PROD, VM Magalu vm-preprod-garagem), que falha em todo merge no main desde 10/11/2026.\n\nFatos já levantados:\n\nRepo inscricao (ntozo-code/bndes-garagem-formulario): todas as rodadas de \"Deploy HML\" desde 10/11 18:31 falharam; o último sucesso registrado é de 30/10. A última falha (13/11 16:08 UTC) passa por composer e build e para em \"ERRO: falha ao obter df -k remoto de /var/www.\", ou seja, no primeiro comando SSH do runner para a VM.\nRepo site: o mesmo workflow falha desde 04/11.\nO deploy usa o segredo PREPROD_SSH_KEY e o script infra/preprod-magalu/ci-atualizar.sh. A versão rc.2 foi subida à mão na PRE-PROD, então a VM em si funciona por acesso manual.\n\nHipóteses a checar, nesta ordem: regra de firewall ou grupo de segurança da VM que não libera os IPs dos runners do GitHub; chave pública do PREPROD_SSH_KEY ausente no authorized_keys do usuário usado pelo CI; host key ou endereço desatualizado no segredo ou no script após recriação da VM; usuário sem permissão de ler /var/www.\n\nPronto quando: causa identificada com evidência (log de rodada, sem expor IP, hostname ou segredo), correção em PR no repo certo (push do infra é do Bruno: entregar o comando), e uma rodada do \"Deploy HML\" verde (rodar com workflow_dispatch se existir). Se a correção exigir mexer em segredo do GitHub ou em regra da conta Magalu, entregar script verboso para o Bruno rodar.",
+              "status": "todo",
+              "priority": "medium",
+              "tags": [],
+              "linkedAgentNodeId": null
+            },
+            "id": "4f07d527-b335-485b-9554-7433e7bc0420",
+            "kind": "task",
+            "title": "Consertar o deploy automático da PRE-PROD",
+            "projectId": "c8944b46-4d4b-4e54-ba70-7b7a1b61106c",
+            "spaceId": null,
+            "frame": {
+              "x": 593,
+              "y": 276,
+              "width": 586,
+              "height": 403
+            }
+          },
+          {
+            "data": {
+              "kind": "agent"
+            },
+            "id": "4abd6999-79c1-45a2-acc3-10c52c99cb5d",
+            "kind": "agent",
+            "title": "claude · default model",
+            "projectId": "c8944b46-4d4b-4e54-ba70-7b7a1b61106c",
+            "spaceId": null,
+            "frame": {
+              "x": 1504.2780669276983,
+              "y": 28.238477591382775,
+              "width": 468,
+              "height": 660
+            },
+            "status": "failed",
+            "sessionId": "bfaa5ad4-161c-4967-8ded-5550f5c4716f"
+          }
+        ]
+      }
+    },
+    {
+      "id": "agent.list",
+      "kind": "query",
+      "payload": {
+        "projectId": "c8944b46-4d4b-4e54-ba70-7b7a1b61106c"
+      },
+      "ok": true,
+      "ms": 3,
+      "status": 200,
+      "value": {
+        "epoch": "1e044c4c-83a5-4f39-b1ab-27d3a497d9c5",
+        "seq": 0,
+        "turnArchive": true,
+        "agents": []
+      }
+    },
+    {
+      "id": "agent.list",
+      "kind": "query",
+      "payload": {},
+      "ok": true,
+      "ms": 2,
+      "status": 200,
+      "value": {
+        "epoch": "1e044c4c-83a5-4f39-b1ab-27d3a497d9c5",
+        "seq": 0,
+        "turnArchive": true,
+        "agents": []
+      }
+    },
+    {
+      "id": "orch.link.list",
+      "kind": "query",
+      "payload": {},
+      "ok": true,
+      "ms": 4,
+      "status": 200,
+      "value": {
+        "linksRevision": 32,
+        "links": [
+          {
+            "id": "f4ef6121-5e5f-4b4f-810d-69ec4ecfd313",
+            "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+            "spaceId": "",
+            "orchestratorNodeId": "4cece2aa-d405-4168-8641-893a0f9c9126",
+            "executorNodeId": "75cf8cb5-a1e6-42ed-8527-1ede21a4f0ad",
+            "kind": "executor",
+            "origin": "canvas_manual",
+            "runtimeMode": "service",
+            "provider": "codex",
+            "state": "closed",
+            "closeReason": "node_deleted",
+            "health": "starting",
+            "roundsUsed": 0,
+            "roundsLimit": 3,
+            "createdAt": "2026-11-11T13:22:41.481Z",
+            "updatedAt": "2026-11-11T13:23:30.260Z",
+            "revision": 4
+          },
+          {
+            "id": "2b0b2b1e-a71f-4deb-8b80-58b2d96513a7",
+            "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+            "spaceId": "",
+            "orchestratorNodeId": "f15912e7-7891-4d16-94a5-f63d567f44ca",
+            "executorNodeId": "f2f9f494-535a-4790-99f2-0fc6af6a2a19",
+            "kind": "executor",
+            "origin": "canvas_manual",
+            "runtimeMode": "service",
+            "provider": "codex",
+            "state": "closed",
+            "closeReason": "node_deleted",
+            "health": "starting",
+            "roundsUsed": 0,
+            "roundsLimit": 3,
+            "createdAt": "2026-11-11T13:25:17.296Z",
+            "updatedAt": "2026-11-11T13:35:55.643Z",
+            "revision": 5
+          },
+          {
+            "id": "998cb429-469e-4176-883a-a0d35312c9ae",
+            "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+            "spaceId": "",
+            "orchestratorNodeId": "bfa37c75-1f34-4313-9729-96d6118caae5",
+            "executorNodeId": "a0d30c12-dac2-4e03-b22c-03a7f492470f",
+            "kind": "executor",
+            "origin": "canvas_manual",
+            "runtimeMode": "service",
+            "provider": "codex",
+            "state": "closed",
+            "closeReason": "orchestrator",
+            "health": "starting",
+            "roundsUsed": 2,
+            "roundsLimit": 3,
+            "createdAt": "2026-11-11T13:37:28.704Z",
+            "updatedAt": "2026-11-11T15:28:06.095Z",
+            "revision": 6
+          },
+          {
+            "id": "5dc70a28-f087-4402-bea5-7cfb3622280d",
+            "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+            "spaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+            "orchestratorNodeId": "9850fb0c-d13d-4e8e-9826-a7047b799f2d",
+            "executorNodeId": "e897334b-6355-44c7-bdb1-0649facd17bf",
+            "kind": "executor",
+            "origin": "canvas_manual",
+            "runtimeMode": "service",
+            "provider": "codex",
+            "state": "closed",
+            "closeReason": "orchestrator",
+            "health": "starting",
+            "roundsUsed": 1,
+            "roundsLimit": 3,
+            "createdAt": "2026-11-11T15:34:45.679Z",
+            "updatedAt": "2026-11-11T15:35:21.357Z",
+            "revision": 5
+          },
+          {
+            "id": "a0f81b4f-6216-45b7-b995-8d1954fba694",
+            "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+            "spaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+            "orchestratorNodeId": "9850fb0c-d13d-4e8e-9826-a7047b799f2d",
+            "executorNodeId": "15354fe6-15d0-41c2-a3f2-f2e0497eea76",
+            "kind": "executor",
+            "origin": "canvas_manual",
+            "runtimeMode": "service",
+            "provider": "codex",
+            "state": "closed",
+            "closeReason": "orchestrator",
+            "health": "starting",
+            "roundsUsed": 1,
+            "roundsLimit": 3,
+            "createdAt": "2026-11-11T15:39:13.539Z",
+            "updatedAt": "2026-11-11T15:41:55.798Z",
+            "revision": 5
+          },
+          {
+            "id": "1d8aa663-34c3-4f68-a036-c148feec2b30",
+            "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+            "spaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+            "orchestratorNodeId": "9850fb0c-d13d-4e8e-9826-a7047b799f2d",
+            "executorNodeId": "15354fe6-15d0-41c2-a3f2-f2e0497eea76",
+            "kind": "executor",
+            "origin": "canvas_manual",
+            "runtimeMode": "service",
+            "provider": "codex",
+            "state": "closed",
+            "closeReason": "node_deleted",
+            "health": "starting",
+            "roundsUsed": 0,
+            "roundsLimit": 3,
+            "createdAt": "2026-11-11T15:43:02.736Z",
+            "updatedAt": "2026-11-13T17:35:28.184Z",
+            "revision": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": "orch.status",
+      "kind": "query",
+      "payload": {},
+      "ok": true,
+      "ms": 3,
+      "status": 200,
+      "value": {
+        "linksRevision": 32,
+        "links": []
+      }
+    },
+    {
+      "id": "node.get",
+      "kind": "query",
+      "payload": {
+        "nodeId": "75cf8cb5-a1e6-42ed-8527-1ede21a4f0ad"
+      },
+      "ok": false,
+      "ms": 4,
+      "status": 200,
+      "error": {
+        "code": "node.not_found"
+      }
+    },
+    {
+      "id": "node.get",
+      "kind": "query",
+      "payload": {
+        "nodeId": "f2f9f494-535a-4790-99f2-0fc6af6a2a19"
+      },
+      "ok": false,
+      "ms": 4,
+      "status": 200,
+      "error": {
+        "code": "node.not_found"
+      }
+    },
+    {
+      "id": "node.get",
+      "kind": "query",
+      "payload": {
+        "nodeId": "a0d30c12-dac2-4e03-b22c-03a7f492470f"
+      },
+      "ok": false,
+      "ms": 4,
+      "status": 200,
+      "error": {
+        "code": "node.not_found"
+      }
+    },
+    {
+      "id": "node.get",
+      "kind": "query",
+      "payload": {
+        "nodeId": "e897334b-6355-44c7-bdb1-0649facd17bf"
+      },
+      "ok": false,
+      "ms": 3,
+      "status": 200,
+      "error": {
+        "code": "node.not_found"
+      }
+    },
+    {
+      "id": "space.get",
+      "kind": "query",
+      "payload": {
+        "spaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22"
+      },
+      "ok": true,
+      "ms": 4,
+      "status": 200,
+      "value": {
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "activeSpaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+        "space": {
+          "id": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+          "name": "Space 1",
+          "directoryPath": "~/lab/glimpse-teste",
+          "targetMountId": "25b6a155-d9ad-47da-9caa-d1f9f295fa7a",
+          "parentSpaceId": null,
+          "boundary": {
+            "allowedMountIds": [],
+            "scopesByMountId": {},
+            "allowedPluginIds": null,
+            "capabilities": null,
+            "trustLevel": null
+          },
+          "sortOrder": 0,
+          "nodeIds": [],
+          "nodes": []
+        }
+      }
+    },
+    {
+      "id": "node.get",
+      "kind": "query",
+      "payload": {
+        "nodeId": "15354fe6-15d0-41c2-a3f2-f2e0497eea76"
+      },
+      "ok": false,
+      "ms": 4,
+      "status": 200,
+      "error": {
+        "code": "node.not_found"
+      }
+    },
+    {
+      "id": "space.get",
+      "kind": "query",
+      "payload": {
+        "spaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22"
+      },
+      "ok": true,
+      "ms": 3,
+      "status": 200,
+      "value": {
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "activeSpaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+        "space": {
+          "id": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+          "name": "Space 1",
+          "directoryPath": "~/lab/glimpse-teste",
+          "targetMountId": "25b6a155-d9ad-47da-9caa-d1f9f295fa7a",
+          "parentSpaceId": null,
+          "boundary": {
+            "allowedMountIds": [],
+            "scopesByMountId": {},
+            "allowedPluginIds": null,
+            "capabilities": null,
+            "trustLevel": null
+          },
+          "sortOrder": 0,
+          "nodeIds": [],
+          "nodes": []
+        }
+      }
+    },
+    {
+      "id": "node.get",
+      "kind": "query",
+      "payload": {
+        "nodeId": "15354fe6-15d0-41c2-a3f2-f2e0497eea76"
+      },
+      "ok": false,
+      "ms": 4,
+      "status": 200,
+      "error": {
+        "code": "node.not_found"
+      }
+    },
+    {
+      "id": "space.get",
+      "kind": "query",
+      "payload": {
+        "spaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22"
+      },
+      "ok": true,
+      "ms": 3,
+      "status": 200,
+      "value": {
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "activeSpaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+        "space": {
+          "id": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+          "name": "Space 1",
+          "directoryPath": "~/lab/glimpse-teste",
+          "targetMountId": "25b6a155-d9ad-47da-9caa-d1f9f295fa7a",
+          "parentSpaceId": null,
+          "boundary": {
+            "allowedMountIds": [],
+            "scopesByMountId": {},
+            "allowedPluginIds": null,
+            "capabilities": null,
+            "trustLevel": null
+          },
+          "sortOrder": 0,
+          "nodeIds": [],
+          "nodes": []
+        }
+      }
+    }
+  ],
+  "projects": {
+    "activeProjectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+    "projects": [
+      {
+        "id": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "name": "glimpse-teste",
+        "path": "~/lab/glimpse-teste",
+        "worktreesRoot": "",
+        "activeSpaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22"
+      },
+      {
+        "id": "c8944b46-4d4b-4e54-ba70-7b7a1b61106c",
+        "name": "bndes-garagem",
+        "path": "~/ntozo/projects/bndes-garagem",
+        "worktreesRoot": "",
+        "activeSpaceId": null
+      }
+    ]
+  },
+  "links": {
+    "linksRevision": 32,
+    "links": [
+      {
+        "id": "f4ef6121-5e5f-4b4f-810d-69ec4ecfd313",
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "spaceId": "",
+        "orchestratorNodeId": "4cece2aa-d405-4168-8641-893a0f9c9126",
+        "executorNodeId": "75cf8cb5-a1e6-42ed-8527-1ede21a4f0ad",
+        "kind": "executor",
+        "origin": "canvas_manual",
+        "runtimeMode": "service",
+        "provider": "codex",
+        "state": "closed",
+        "closeReason": "node_deleted",
+        "health": "starting",
+        "roundsUsed": 0,
+        "roundsLimit": 3,
+        "createdAt": "2026-11-11T13:22:41.481Z",
+        "updatedAt": "2026-11-11T13:23:30.260Z",
+        "revision": 4
+      },
+      {
+        "id": "2b0b2b1e-a71f-4deb-8b80-58b2d96513a7",
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "spaceId": "",
+        "orchestratorNodeId": "f15912e7-7891-4d16-94a5-f63d567f44ca",
+        "executorNodeId": "f2f9f494-535a-4790-99f2-0fc6af6a2a19",
+        "kind": "executor",
+        "origin": "canvas_manual",
+        "runtimeMode": "service",
+        "provider": "codex",
+        "state": "closed",
+        "closeReason": "node_deleted",
+        "health": "starting",
+        "roundsUsed": 0,
+        "roundsLimit": 3,
+        "createdAt": "2026-11-11T13:25:17.296Z",
+        "updatedAt": "2026-11-11T13:35:55.643Z",
+        "revision": 5
+      },
+      {
+        "id": "998cb429-469e-4176-883a-a0d35312c9ae",
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "spaceId": "",
+        "orchestratorNodeId": "bfa37c75-1f34-4313-9729-96d6118caae5",
+        "executorNodeId": "a0d30c12-dac2-4e03-b22c-03a7f492470f",
+        "kind": "executor",
+        "origin": "canvas_manual",
+        "runtimeMode": "service",
+        "provider": "codex",
+        "state": "closed",
+        "closeReason": "orchestrator",
+        "health": "starting",
+        "roundsUsed": 2,
+        "roundsLimit": 3,
+        "createdAt": "2026-11-11T13:37:28.704Z",
+        "updatedAt": "2026-11-11T15:28:06.095Z",
+        "revision": 6
+      },
+      {
+        "id": "5dc70a28-f087-4402-bea5-7cfb3622280d",
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "spaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+        "orchestratorNodeId": "9850fb0c-d13d-4e8e-9826-a7047b799f2d",
+        "executorNodeId": "e897334b-6355-44c7-bdb1-0649facd17bf",
+        "kind": "executor",
+        "origin": "canvas_manual",
+        "runtimeMode": "service",
+        "provider": "codex",
+        "state": "closed",
+        "closeReason": "orchestrator",
+        "health": "starting",
+        "roundsUsed": 1,
+        "roundsLimit": 3,
+        "createdAt": "2026-11-11T15:34:45.679Z",
+        "updatedAt": "2026-11-11T15:35:21.357Z",
+        "revision": 5
+      },
+      {
+        "id": "a0f81b4f-6216-45b7-b995-8d1954fba694",
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "spaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+        "orchestratorNodeId": "9850fb0c-d13d-4e8e-9826-a7047b799f2d",
+        "executorNodeId": "15354fe6-15d0-41c2-a3f2-f2e0497eea76",
+        "kind": "executor",
+        "origin": "canvas_manual",
+        "runtimeMode": "service",
+        "provider": "codex",
+        "state": "closed",
+        "closeReason": "orchestrator",
+        "health": "starting",
+        "roundsUsed": 1,
+        "roundsLimit": 3,
+        "createdAt": "2026-11-11T15:39:13.539Z",
+        "updatedAt": "2026-11-11T15:41:55.798Z",
+        "revision": 5
+      },
+      {
+        "id": "1d8aa663-34c3-4f68-a036-c148feec2b30",
+        "projectId": "3f251963-ee0e-4404-ba0b-0864575455fe",
+        "spaceId": "5290e6ab-08d3-45eb-bbfb-e9064e62be22",
+        "orchestratorNodeId": "9850fb0c-d13d-4e8e-9826-a7047b799f2d",
+        "executorNodeId": "15354fe6-15d0-41c2-a3f2-f2e0497eea76",
+        "kind": "executor",
+        "origin": "canvas_manual",
+        "runtimeMode": "service",
+        "provider": "codex",
+        "state": "closed",
+        "closeReason": "node_deleted",
+        "health": "starting",
+        "roundsUsed": 0,
+        "roundsLimit": 3,
+        "createdAt": "2026-11-11T15:43:02.736Z",
+        "updatedAt": "2026-11-13T17:35:28.184Z",
+        "revision": 7
+      }
+    ]
+  },
+  "status": {
+    "linksRevision": 32,
+    "links": []
+  },
+  "events": {
+    "connected": true,
+    "status": 200,
+    "windowMs": 5000,
+    "connectMs": 3,
+    "bytes": 3,
+    "frames": 0,
+    "eventNames": {},
+    "dataTypes": {},
+    "samples": []
+  }
+}

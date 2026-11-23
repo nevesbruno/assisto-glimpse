@@ -1,3 +1,4 @@
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 import { AgentLaunchArtifactScope } from '../../../src/contexts/agent/application/services/AgentLaunchArtifactScope'
 // @vitest-environment node
 import fs from 'node:fs/promises'
@@ -76,7 +77,7 @@ it.each(['raw', 'versioned'])(
     expect(metadata).not.toHaveBeenCalled()
   },
 )
-it('SessionEnd and SessionStart hand off the watcher while invocation-authenticated hooks still publish', async () => {
+it('non-clear lifecycle hands off private IO while preserving authenticated state hooks', async () => {
   const f = await fixture(),
     states: string[] = []
   f.channel.onState(event => states.push(event.hookEventName ?? ''))
@@ -106,6 +107,7 @@ it('the Claude provider passes a per-launch environment into the hook reservatio
     dispose: async () => {},
   }))
   const provider = new ClaudeCodeAgentProviderContribution({
+    artifactRoot: createTestAgentLaunchArtifactRoot(),
     channel: {
       reserveSpawn,
       start: async () => {},

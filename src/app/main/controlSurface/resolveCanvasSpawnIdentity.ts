@@ -3,6 +3,7 @@ import type { PersistenceStore } from '../../../platform/persistence/sqlite/Pers
 import { normalizePersistedAppState } from '../../../platform/persistence/sqlite/normalize'
 import { createAppError } from '../../../shared/errors/appError'
 import type { ControlSurfaceContext } from './types'
+import { assertProjectInGrant, grantProjectOf } from './handlers/grantProjectScope'
 import type { CanvasSpawnIdentity } from './sessionSpawnIdentityContext'
 
 function record(value: unknown): Record<string, unknown> {
@@ -12,6 +13,25 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 export async function resolveCanvasSpawnIdentity(
+  ctx: ControlSurfaceContext,
+  payload: unknown,
+  getStore: () => Promise<PersistenceStore>,
+): Promise<CanvasSpawnIdentity | undefined> {
+  const identity = await resolveRequestedIdentity(ctx, payload, getStore)
+  const scope = grantProjectOf(ctx)
+  if (scope === undefined) {
+    return identity
+  }
+  const targeted = record(payload).workspaceId || record(payload).spaceId
+  assertProjectInGrant(
+    ctx,
+    identity?.projectId ?? (targeted ? undefined : scope),
+    'common.invalid_input',
+  )
+  return identity ?? { projectId: scope, spaceId: '', nodeId: randomUUID() }
+}
+
+async function resolveRequestedIdentity(
   ctx: ControlSurfaceContext,
   payload: unknown,
   getStore: () => Promise<PersistenceStore>,
@@ -26,17 +46,18 @@ export async function resolveCanvasSpawnIdentity(
     }
     const identity = record(input.workerSpawnIdentity)
     if (
-      !['projectId', 'nodeId'].every(
-        key => typeof identity[key] === 'string' && identity[key].length > 0,
-      ) ||
+      typeof identity.projectId !== 'string' ||
+      !identity.projectId ||
+      (identity.nodeId !== null && (typeof identity.nodeId !== 'string' || !identity.nodeId)) ||
       typeof identity.spaceId !== 'string'
     ) {
       throw createAppError('common.invalid_input')
     }
     return {
+      delegated: true,
       projectId: identity.projectId as string,
       spaceId: identity.spaceId as string,
-      nodeId: identity.nodeId as string,
+      nodeId: identity.nodeId as string | null,
     }
   }
   if (
@@ -51,6 +72,7 @@ export async function resolveCanvasSpawnIdentity(
   if (nodeId && ctx.requestAuth?.kind === 'session-grant') {
     throw createAppError('common.forbidden')
   }
+  // Unscoped non-canvas spawns have no project/Space authority to attach.
   if (!nodeId && !input.workspaceId && !input.spaceId) {
     return undefined
   }
@@ -59,15 +81,15 @@ export async function resolveCanvasSpawnIdentity(
   const existing = nodeId
     ? workspaces.find(workspace => workspace.nodes.some(node => node.id === nodeId))
     : undefined
-  if (existing) {
-    const space = existing.spaces.find(candidate => candidate.nodeIds.includes(nodeId!))
+  if (existing && nodeId) {
+    const space = existing.spaces.find(candidate => candidate.nodeIds.includes(nodeId))
     if (
       (input.workspaceId && input.workspaceId !== existing.id) ||
       (input.spaceId && input.spaceId !== space?.id)
     ) {
       throw createAppError('common.invalid_input')
     }
-    return { projectId: existing.id, spaceId: space?.id ?? '', nodeId: nodeId! }
+    return { projectId: existing.id, spaceId: space?.id ?? '', nodeId }
   }
   const workspace = workspaces.find(candidate =>
     input.workspaceId
@@ -80,7 +102,6 @@ export async function resolveCanvasSpawnIdentity(
     if (nodeId || input.spaceId) {
       throw createAppError('common.invalid_input')
     }
-    // Legacy non-canvas PTY calls carry no canvas identity.
     return undefined
   }
   const space =
@@ -90,5 +111,5 @@ export async function resolveCanvasSpawnIdentity(
   if (input.spaceId && !space) {
     throw createAppError('common.invalid_input')
   }
-  return { projectId: workspace.id, spaceId: space?.id ?? '', nodeId: nodeId ?? randomUUID() }
+  return { projectId: workspace.id, spaceId: space?.id ?? '', nodeId: nodeId ?? null }
 }

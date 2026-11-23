@@ -85,10 +85,20 @@ const output = await host.terminals.read({ nodeId: terminal.node.id });
   selects its default shell/profile. `command` is shell command text, not an argv
   array; a remote command requires an explicit target `shell`. For an executable
   plus argv and temporary progress/result, use `host.operations` instead.
-- `agents.launch({ target, title?, frame?, prompt, provider?, model? })` launches a
+- `agents.launch({ target, title?, frame?, prompt, provider?, model?, agentFullAccess?, taskNodeId? })` launches a
   regular Agent window with the target Worker's supported provider/runtime rules.
+  Optional `taskNodeId` must be a non-empty string. It links the new agent to an existing task
+  in the same Space (or both on the root canvas) and moves the task to `doing`, as Run does.
+  Missing tasks return `node.not_found`; wrong node kinds, different Spaces, live linked agents,
+  and invalid IDs return `common.invalid_input` before launch. A link to a deleted agent is stale
+  and may be replaced. After launch, the Worker revalidates and commits both links and task
+  timestamps atomically with the agent node. Failed launches leave the task untouched; omitted
+  IDs preserve existing behavior. Creation preserves session history and the caller's prompt.
   Supported provider IDs are `claude-code`, `codex`, `opencode`, `gemini`, `pi`,
   and `kimi` (availability depends on the target Worker).
+  Optional `agentFullAccess` must be boolean. An explicit true or false overrides Settings for
+  this agent and is saved on its node for relaunch, resume and restart recovery. Omission follows
+  the current Settings value. Settings are never changed; `nodes.update` cannot change this choice.
 - Both create methods return `{ revision, projectId, spaceId, node }`. Save
   `node.id`, not `sessionId`, for subsequent control.
 

@@ -8,7 +8,7 @@ import { normalizeBrowserPtyStateMetadata } from '../../../src/app/renderer/brow
 import { snapshot } from './cliAgentWait.helpers'
 
 const lastEndedTurn = { id: 'turn-a', outcome: 'failed' as const, endedAt: 20 }
-const current = { ...snapshot(), lastEndedTurn }
+const current = { ...snapshot(), lastEndedTurn, blockedSummary: null }
 it('defaults missing lastEndedTurn to null for older Worker snapshots and events', () => {
   const { lastEndedTurn: _absent, ...legacy } = current
   expect(agentRunSnapshotSchema.parse(legacy).lastEndedTurn).toBeNull()
@@ -57,4 +57,52 @@ it.each([
   expect(agentRunSnapshotSchema.safeParse({ ...current, lastEndedTurn: invalidEnd }).success).toBe(
     false,
   )
+})
+it('serializes bounded question and plan data across snapshot and event contracts', () => {
+  const question = agentRunSnapshotSchema.parse({
+    ...current,
+    state: 'waiting',
+    blockedReason: 'question',
+    blockedSummary: {
+      kind: 'question',
+      questions: [{ question: 'Which?', options: ['One', 'Two'] }],
+    },
+  })
+  const plan = agentRunEventSchema.parse({
+    type: 'agent.state_changed',
+    epoch: 'e',
+    seq: 1,
+    snapshot: { ...question, blockedReason: 'plan', blockedSummary: { kind: 'plan' } },
+  })
+  expect({ question, plan }).toMatchSnapshot()
+})
+
+it('preserves question descriptions through remote snapshots and strips them compatibly for older clients', async () => {
+  const z = await import('zod')
+  const summary = {
+    kind: 'question' as const,
+    questions: [
+      { question: 'Which?', options: ['One', 'Two'], optionDescriptions: ['First option', null] },
+    ],
+  }
+  const enriched = { ...current, blockedSummary: summary }
+  expect(normalizeBrowserPtyStateMetadata({ agentRunState: enriched }).agentRunState).toEqual(
+    enriched,
+  )
+  expect(
+    agentRuntimeFrameSchema.parse({
+      type: 'agent.baseline',
+      epoch: 'e',
+      seq: 1,
+      agents: [enriched],
+    }),
+  ).toMatchObject({ agents: [{ blockedSummary: summary }] })
+  const oldQuestionSchema = z.object({
+    kind: z.literal('question'),
+    questions: z.array(z.object({ question: z.string(), options: z.array(z.string()) })),
+  })
+  expect(oldQuestionSchema.parse(summary)).toEqual({
+    kind: 'question',
+    questions: [{ question: 'Which?', options: ['One', 'Two'] }],
+  })
 })

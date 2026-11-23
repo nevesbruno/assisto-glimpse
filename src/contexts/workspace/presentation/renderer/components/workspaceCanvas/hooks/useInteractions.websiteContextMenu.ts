@@ -1,35 +1,34 @@
 import { useCallback } from 'react'
 import { createWebsiteNodeFromPaneContextMenu } from './useInteractions.paneNodeCreation'
 import type { UseWorkspaceCanvasInteractionsParams } from './useInteractions.types'
+import {
+  useCanvasUiCommands,
+  useReadCanvasDocument,
+  useReadCanvasUi,
+} from '../../../store/canvasStoreContext'
 
 type WebsiteContextMenuParams = Pick<
   UseWorkspaceCanvasInteractionsParams,
   | 'workspaceId'
   | 'browserDefaultMode'
-  | 'contextMenu'
   | 'createWebsiteNode'
-  | 'nodesRef'
-  | 'onSpacesChange'
-  | 'setContextMenu'
-  | 'setNodes'
-  | 'spacesRef'
   | 'standardWindowSizeBucket'
+  | 'updateCanvasDocument'
   | 'websiteWindowsEnabled'
 >
 
 export function useWebsiteNodeContextMenuCreation({
   workspaceId,
   browserDefaultMode,
-  contextMenu,
   createWebsiteNode,
-  nodesRef,
-  onSpacesChange,
-  setContextMenu,
-  setNodes,
-  spacesRef,
   standardWindowSizeBucket,
+  updateCanvasDocument,
   websiteWindowsEnabled,
 }: WebsiteContextMenuParams): () => void {
+  const ui = useCanvasUiCommands()
+  const readDocument = useReadCanvasDocument()
+  const readUi = useReadCanvasUi()
+
   return useCallback(() => {
     if (!websiteWindowsEnabled) {
       return
@@ -38,27 +37,23 @@ export function useWebsiteNodeContextMenuCreation({
     createWebsiteNodeFromPaneContextMenu({
       workspaceId,
       browserDefaultMode,
-      contextMenu,
+      contextMenu: readUi().contextMenu,
+      ui,
       createWebsiteNode,
-      nodesRef,
-      onSpacesChange,
-      setContextMenu,
-      setNodes,
-      spacesRef,
+      readDocument,
       standardWindowSizeBucket,
+      updateCanvasDocument,
       url: '',
     })
   }, [
     workspaceId,
     browserDefaultMode,
-    contextMenu,
     createWebsiteNode,
-    nodesRef,
-    onSpacesChange,
-    setContextMenu,
-    setNodes,
-    spacesRef,
+    readUi,
+    ui,
+    readDocument,
     standardWindowSizeBucket,
+    updateCanvasDocument,
     websiteWindowsEnabled,
   ])
 }

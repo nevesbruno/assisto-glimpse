@@ -1,17 +1,13 @@
 import type { TranslateFn } from '@app/renderer/i18n'
 import type { ListMountsResult } from '@shared/contracts/dto'
 import type { Node, ReactFlowInstance } from '@xyflow/react'
-import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import type { TerminalNodeData, WorkspaceSpaceRect } from '../../../types'
-import type {
-  ContextMenuState,
-  EmptySelectionPromptState,
-  ShowWorkspaceCanvasMessage,
-  SpaceTargetMountPickerState,
-} from '../types'
+import type { ShowWorkspaceCanvasMessage } from '../types'
+import type { CanvasSelectionState } from '../../../store/canvasStore.selection'
+import type { CanvasUiCommands } from '../../../store/canvasStore.ui'
 
 type CreateSpacePayload = {
-  nodeIds: string[]
+  nodeIds: readonly string[]
   rect: WorkspaceSpaceRect | null
   targetMountId: string
   directoryPath: string
@@ -22,34 +18,28 @@ function isAbsolutePath(pathValue: string): boolean {
 }
 
 export function createSpaceFromSelectedNodesWithMounts({
-  selectedNodeIdsRef,
+  readSelection,
   reactFlow,
   workspaceId,
   workspacePath,
   createSpace,
-  setContextMenu,
-  setEmptySelectionPrompt,
-  setSpaceTargetMountPicker,
-  cancelSpaceRename,
+  ui,
   onShowMessage,
   t,
 }: {
-  selectedNodeIdsRef: MutableRefObject<string[]>
+  readSelection: () => CanvasSelectionState
   reactFlow: ReactFlowInstance<Node<TerminalNodeData>>
   workspaceId: string
   workspacePath: string
   createSpace: (payload: CreateSpacePayload) => void
-  setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>
-  setEmptySelectionPrompt: Dispatch<SetStateAction<EmptySelectionPromptState | null>>
-  setSpaceTargetMountPicker: Dispatch<SetStateAction<SpaceTargetMountPickerState | null>>
-  cancelSpaceRename: () => void
+  ui: CanvasUiCommands
   onShowMessage?: ShowWorkspaceCanvasMessage
   t: TranslateFn
 }): void {
-  const resolveSelectedIds = (): string[] => {
-    const selectedIdsRefValue = selectedNodeIdsRef.current
-    if (selectedIdsRefValue.length > 0) {
-      return selectedIdsRefValue
+  const resolveSelectedIds = (): readonly string[] => {
+    const selectedNodeIds = readSelection().nodeIds
+    if (selectedNodeIds.length > 0) {
+      return selectedNodeIds
     }
 
     return reactFlow
@@ -99,9 +89,8 @@ export function createSpaceFromSelectedNodesWithMounts({
 
         if (mountResult.mounts.length === 0) {
           onShowMessage?.(t('messages.projectHasNoMounts'), 'warning')
-          setContextMenu(null)
-          setEmptySelectionPrompt(null)
-          cancelSpaceRename()
+          ui.closeContextMenu()
+          ui.cancelSpaceRename()
           return
         }
 
@@ -116,7 +105,7 @@ export function createSpaceFromSelectedNodesWithMounts({
           return
         }
 
-        setSpaceTargetMountPicker({
+        ui.openDialog('spaceTargetMountPicker', {
           nodeIds: selectedIds,
           rect: null,
           mounts: mountResult.mounts,
@@ -138,15 +127,13 @@ export function createSpaceFromSelectedNodesWithMounts({
             })
           })(),
         })
-        setContextMenu(null)
-        setEmptySelectionPrompt(null)
-        cancelSpaceRename()
+        ui.closeContextMenu()
+        ui.cancelSpaceRename()
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         onShowMessage?.(t('messages.mountListFailed', { message }), 'error')
-        setContextMenu(null)
-        setEmptySelectionPrompt(null)
-        cancelSpaceRename()
+        ui.closeContextMenu()
+        ui.cancelSpaceRename()
       }
     })()
 
@@ -166,7 +153,7 @@ export function createSpaceFromSelectedNodesWithMounts({
 
     attemptsRemaining -= 1
     if (attemptsRemaining <= 0) {
-      setContextMenu(null)
+      ui.closeContextMenu()
       return
     }
 

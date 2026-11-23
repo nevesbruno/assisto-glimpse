@@ -29,7 +29,8 @@ export type FocusRequest =
 export interface PersistNotice {
   tone: 'warning' | 'error'
   message: string
-  kind?: 'recovery' | 'write'
+  // @compat managed-claude-worker-support
+  kind?: 'recovery' | 'write' | 'compatibility' | 'connection'
 }
 
 export type ProjectContextMenuTarget =

@@ -42,7 +42,10 @@ for (const [kind, args, id, name, operation, key] of [
     expect(f.requests.at(-1)).toMatchObject({ id: operation, payload: { [key]: id } })
     expect(
       f.requests.filter(
-        request => request.id === `${kind}.list` && request.payload?.kind !== 'task',
+        request =>
+          request.id === `${kind}.list` &&
+          request.payload?.kind !== 'task' &&
+          !request.payload?.spawnedByNodeId,
       ).length,
     ).toBeLessThanOrEqual(1)
   })
@@ -208,6 +211,7 @@ it('uses one whoami fallback for multiple missing environment identities', async
   const f = identityFixture()
   delete f.io.env.OPENCOVE_PROJECT_ID
   delete f.io.env.OPENCOVE_SPACE_ID
+  delete f.io.env.OPENCOVE_NODE_ID
   expect(await run(['node', 'create', 'note'], f.io)).toBe(0)
   expect(f.requests.filter(request => request.id === 'system.whoami')).toHaveLength(1)
   expect(f.requests.at(-1)).toMatchObject({
@@ -235,9 +239,13 @@ const targets = commands.flatMap(command =>
     ),
 )
 it.each(targets)(
-  'resolves $command.path --$flag using $form through run()',
+  'applies selector and caller policy to $command.path --$flag using $form through run()',
   async ({ command, flag, kind, form }) => {
     const f = identityFixture()
+    if (command.path.join(' ') === 'agent stop') {
+      f.values['node.get'] = { node: { ...node, kind: 'agent', sessionId: 's' } }
+      f.values['session.stopNode'] = { stopped: true }
+    }
     if (command.path.join(' ') === 'agent get') {
       f.values['node.get'] = { node: { ...node, kind: 'agent' } }
     }
@@ -274,6 +282,9 @@ it.each(targets)(
             ? target.name
             : target.id.slice(0, 8)
     const args = [...command.path, ...(command.positionals ?? []).map(() => 'sample')]
+    if (command.path.join(' ') === 'events') {
+      args.push('--count', '1')
+    }
     if (command.path.join(' ') === 'agent wait') {
       args.push('--until', 'idle')
     }
@@ -299,9 +310,12 @@ it.each(targets)(
     if (command.targetSpace === 'required' && flag === 'project') {
       args.push('--space', '@self')
     }
+    if (command.path.join(' ') === 'space update') {
+      // It needs --name or --frame; neither is required alone.
+      args.push('--name', 'sample')
+    }
     if (command.path.join(' ') === 'agent prompt') {
-      // Its text source is one of two options, so neither is marked required.
-      args.push('--text', 'sample')
+      // The positional 'sample' above is its text; adding --text too would be rejected.
       f.values['agent.prompt'] = {
         deliveryId: 'delivery',
         nodeId: node.id,
@@ -312,10 +326,23 @@ it.each(targets)(
       }
     }
     args.push(`--${flag}`, value)
-    expect(await run(args, f.io), JSON.stringify(f.requests)).toBe(0)
+    const code = await run(args, f.io)
+    if (command.operation === 'session.launchAgent') {
+      expect(code).toBe(4)
+      expect(f.error()).toMatchObject({
+        code: 'common.forbidden',
+        details: { spawnReason: 'node_create_required' },
+      })
+      expect(f.requests.map(r => r.id)).toEqual(['system.whoami', 'system.capabilities'])
+      return
+    }
+    expect(code, JSON.stringify(f.requests)).toBe(0)
     expect(
       f.requests.filter(
-        request => request.id === `${kind}.list` && request.payload?.kind !== 'task',
+        request =>
+          request.id === `${kind}.list` &&
+          request.payload?.kind !== 'task' &&
+          !request.payload?.spawnedByNodeId,
       ).length,
     ).toBeLessThanOrEqual(1)
     // No symbolic selector may cross the CLI boundary into an operation payload.

@@ -2,8 +2,15 @@ import { expect } from 'vitest'
 import { DB_SCHEMA_VERSION } from '../../../src/platform/persistence/sqlite/constants'
 import { CURRENT_SCHEMA_COLUMNS } from './persistenceSchemaColumns'
 
+const ORCHESTRATION_TABLE_NAMES = [
+  'agent_links',
+  'orchestration_dispatches',
+  'orchestration_notices',
+  'orchestration_hook_approvals',
+] as const
+
 export const SUPPORTED_INSTALLED_UPGRADE_SOURCE_VERSIONS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
 ] as const
 
 export type InstalledUpgradeSourceVersion =
@@ -255,9 +262,19 @@ function createTablesForVersion(version: InstalledUpgradeSourceVersion): Map<str
   const omissions = COLUMNS_ADDED_AFTER_VERSION[version] ?? {}
   const tables = currentTablesWithout({
     ...omissions,
-    nodes: [...(omissions.nodes ?? []), 'worker_binding_json'],
+    nodes: [...(omissions.nodes ?? []), ...(version < 13 ? ['worker_binding_json'] : [])],
   })
-  tables.delete('terminal_recovery_records')
+  if (version < 13) {
+    tables.delete('terminal_recovery_records')
+  }
+  if (version < 14) {
+    tables.delete('managed_claude_resume_bindings')
+    tables.delete('retired_managed_nodes')
+  }
+  tables.delete('node_lineage')
+  for (const tableName of ORCHESTRATION_TABLE_NAMES) {
+    tables.delete(tableName)
+  }
   return tables
 }
 

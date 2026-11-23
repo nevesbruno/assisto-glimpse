@@ -6,9 +6,16 @@ export interface GetSyncStateResult {
 }
 
 export type SyncEventPayload =
+  | { type: 'connection_refused'; revision: number; error: import('./error').AppErrorDescriptor }
   | {
       type: 'app_state.updated'
       revision: number
+      operationId: string
+    }
+  | {
+      type: 'orchestration.links.updated'
+      revision: number
+      linksRevision: number
       operationId: string
     }
   | {
@@ -31,6 +38,7 @@ export interface WriteSyncStateInput {
 
 export interface WriteSyncStateResult {
   revision: number
+  corrected?: boolean
 }
 
 export interface CreateNoteInput {

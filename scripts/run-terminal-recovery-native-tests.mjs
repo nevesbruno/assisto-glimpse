@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import './lib/isolateHostEnvironment.mjs'
 
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
@@ -13,12 +14,37 @@ const tests = process.argv.includes('--worker-ownership')
   : [
       ...workerOwnershipTests,
       'tests/contract/agentTurnArchive/agentTurnArchive.native.spec.ts',
+      'tests/contract/agentTurnArchive/claudeClearTurnArchive.native.spec.ts',
       'tests/contract/agentTurnArchive/agentTurnArchiveReview.native.spec.ts',
       'tests/contract/platform/persistenceStore.revision.native.spec.ts',
+      'tests/contract/platform/persistenceStore.diagnostics.native.spec.ts',
+      'tests/contract/platform/persistenceStore.contention.native.spec.ts',
+      'tests/contract/platform/nodeLineage.native.spec.ts',
+      'tests/contract/platform/nodeLineageManagedResume.native.spec.ts',
+      'tests/contract/platform/nodeLineageManagedLaunch.native.spec.ts',
+      'tests/contract/platform/managedClaudeResumeBinding.native.spec.ts',
+      'tests/contract/platform/managedClaudeAdoption.native.spec.ts',
+      'tests/contract/platform/managedClaudeRelaunch.native.spec.tsx',
+      'tests/contract/platform/managedClaudeOwnershipProjection.native.spec.ts',
+      'tests/contract/platform/managedClaudeLaunchLifecycle.native.spec.ts',
+      'tests/contract/platform/managedClaudeCommitReceipt.native.spec.ts',
+      'tests/contract/platform/managedClaudeClearBinding.native.spec.ts',
+      'tests/contract/platform/managedClaudeCommitDelivery.native.spec.ts',
+      'tests/contract/platform/managedClaudeConvergenceReceipt.native.spec.ts',
+      'tests/contract/platform/managedClaudeFallbackCustody.native.spec.ts',
+      'tests/contract/platform/managedClaudeFallbackContext.native.spec.ts',
+      'tests/contract/platform/managedClaudeFallbackHandoff.native.spec.ts',
+      'tests/contract/platform/managedClaudeSnapshotPersistence.native.spec.ts',
+      'tests/contract/platform/managedClaudeFallbackReplacement.native.spec.ts',
+      'tests/contract/platform/managedClaudeResumeSync.native.spec.ts',
+      'tests/contract/platform/managedClaudeResumeMigration.native.spec.ts',
       'tests/contract/platform/managedRuntime.native.spec.ts',
+      'tests/contract/platform/persistenceCanonicalization.native.spec.ts',
+      'tests/contract/platform/clientPersistenceSerialization.native.spec.ts',
       'tests/contract/controlSurface/controlSurfaceHttpServer.nodeWorkerBindingRecovery.spec.ts',
       'tests/contract/controlSurface/controlSurfaceHttpServer.remoteTerminalRecovery.spec.ts',
       'tests/contract/controlSurface/controlSurfaceHttpServer.terminalRecovery.spec.ts',
+      'tests/contract/controlSurface/controlSurfaceHttpServer.transcriptShutdown.spec.ts',
       'tests/contract/platform/terminalRecovery.multiEpoch.spec.ts',
     ]
 const result = spawnSync(

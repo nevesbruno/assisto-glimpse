@@ -9,22 +9,23 @@ import {
   createWebsiteNodeAtFlowPosition,
 } from './useInteractions.paneNodeCreation'
 import type { UseWorkspaceCanvasInteractionsParams } from './useInteractions.types'
+import {
+  useCanvasDocumentCommands,
+  useCanvasUiCommands,
+  useReadCanvasDocument,
+  useReadCanvasUi,
+} from '../../../store/canvasStoreContext'
 
 export function useWorkspaceCanvasQuickMenuActions(
   options: Pick<
     UseWorkspaceCanvasInteractionsParams,
-    | 'contextMenu'
-    | 'setContextMenu'
     | 'workspaceId'
     | 'websiteWindowsEnabled'
     | 'standardWindowSizeBucket'
     | 'browserDefaultMode'
     | 'createWebsiteNode'
     | 'createNoteNode'
-    | 'spacesRef'
-    | 'nodesRef'
-    | 'setNodes'
-    | 'onSpacesChange'
+    | 'updateCanvasDocument'
     | 'defaultTerminalProfileId'
     | 'terminalFontSize'
     | 'terminalDisplayMetrics'
@@ -36,19 +37,19 @@ export function useWorkspaceCanvasQuickMenuActions(
   runQuickCommand: (command: QuickCommand) => Promise<void>
   insertQuickPhrase: (phrase: QuickPhrase) => void
 } {
+  const ui = useCanvasUiCommands()
+  const documentCommands = useCanvasDocumentCommands()
+  const readDocument = useReadCanvasDocument()
+  const readUi = useReadCanvasUi()
+
   const {
-    contextMenu,
-    setContextMenu,
     workspaceId,
     websiteWindowsEnabled,
     standardWindowSizeBucket,
     browserDefaultMode,
     createWebsiteNode,
     createNoteNode,
-    spacesRef,
-    nodesRef,
-    setNodes,
-    onSpacesChange,
+    updateCanvasDocument,
     defaultTerminalProfileId,
     terminalFontSize,
     terminalDisplayMetrics,
@@ -68,11 +69,12 @@ export function useWorkspaceCanvasQuickMenuActions(
 
   const runQuickCommand = useCallback(
     async (command: QuickCommand): Promise<void> => {
+      const contextMenu = readUi().contextMenu
       if (!contextMenu || contextMenu.kind !== 'pane') {
         return
       }
 
-      setContextMenu(null)
+      ui.closeContextMenu()
 
       const anchor = resolvePaneNodeCreationAnchor(contextMenu)
 
@@ -88,10 +90,8 @@ export function useWorkspaceCanvasQuickMenuActions(
           browserDefaultMode,
           url: command.url,
           createWebsiteNode,
-          spacesRef,
-          nodesRef,
-          setNodes,
-          onSpacesChange,
+          readDocument,
+          updateCanvasDocument,
         })
 
         return
@@ -110,10 +110,9 @@ export function useWorkspaceCanvasQuickMenuActions(
         terminalDisplayMetrics,
         standardWindowSizeBucket,
         workspacePath,
-        spacesRef,
-        nodesRef,
-        setNodes,
-        onSpacesChange,
+        readDocument,
+        updateCanvasDocument,
+        updateSpaces: documentCommands.updateSpaces,
         createNodeForSession,
         onShowMessage,
         title: command.title,
@@ -128,7 +127,7 @@ export function useWorkspaceCanvasQuickMenuActions(
         await window.opencoveApi.pty.attach({ sessionId: created.sessionId })
         if (
           !launchScope.active ||
-          !nodesRef.current.some(
+          !readDocument().nodes.some(
             node => node.id === created.nodeId && node.data.sessionId === created.sessionId,
           )
         ) {
@@ -149,20 +148,19 @@ export function useWorkspaceCanvasQuickMenuActions(
       }
     },
     [
-      contextMenu,
       createNodeForSession,
       createWebsiteNode,
       defaultTerminalProfileId,
+      documentCommands,
       terminalFontSize,
       terminalDisplayMetrics,
-      nodesRef,
-      onSpacesChange,
       onShowMessage,
-      setContextMenu,
-      setNodes,
-      spacesRef,
+      readDocument,
+      readUi,
+      ui,
       standardWindowSizeBucket,
       browserDefaultMode,
+      updateCanvasDocument,
       websiteWindowsEnabled,
       workspacePath,
       workspaceId,
@@ -171,8 +169,9 @@ export function useWorkspaceCanvasQuickMenuActions(
 
   const insertQuickPhrase = useCallback(
     (phrase: QuickPhrase): void => {
+      const contextMenu = readUi().contextMenu
       if (contextMenu?.kind === 'pane') {
-        setContextMenu(null)
+        ui.closeContextMenu()
 
         createNoteNodeAtFlowPosition({
           workspaceId,
@@ -183,10 +182,8 @@ export function useWorkspaceCanvasQuickMenuActions(
               ...placementOptions,
               initialText: phrase.content,
             }),
-          spacesRef,
-          nodesRef,
-          setNodes,
-          onSpacesChange,
+          readDocument,
+          updateCanvasDocument,
         })
         return
       }
@@ -210,14 +207,12 @@ export function useWorkspaceCanvasQuickMenuActions(
     },
     [
       workspaceId,
-      contextMenu,
       createNoteNode,
-      nodesRef,
-      onSpacesChange,
-      setContextMenu,
-      setNodes,
-      spacesRef,
+      readDocument,
+      readUi,
+      ui,
       standardWindowSizeBucket,
+      updateCanvasDocument,
     ],
   )
 

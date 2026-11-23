@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DB_SCHEMA_VERSION } from '../../../src/platform/persistence/sqlite/constants'
 
 const PERSISTENCE_STORE_TEST_TIMEOUT_MS = 20_000
 
@@ -316,10 +317,9 @@ function createMockDatabaseModule(mockDbByPath: Map<string, MockDbState>) {
       }
     }
 
-    public transaction<TArgs extends unknown[], TResult>(
-      fn: (...args: TArgs) => TResult,
-    ): (...args: TArgs) => TResult {
-      return (...args: TArgs) => fn(...args)
+    public transaction<TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) {
+      const execute = (...args: TArgs) => fn(...args)
+      return Object.assign(execute, { immediate: execute })
     }
 
     public close(): void {}
@@ -486,7 +486,7 @@ describe('PersistenceStore sort order migration', () => {
       expect(store.consumeRecovery()).toBeNull()
       store.dispose()
 
-      expect(mockDbByPath.get(dbPath)?.userVersion).toBe(13)
+      expect(mockDbByPath.get(dbPath)?.userVersion).toBe(DB_SCHEMA_VERSION)
       expect(mockDbByPath.get(dbPath)?.workspaceRows).toEqual([
         { id: 'ws-2', sortOrder: 0 },
         { id: 'ws-4', sortOrder: 1 },

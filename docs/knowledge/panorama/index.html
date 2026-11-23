@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glimpse, panorama</title>
+<style>
+  :root {
+    --bg: #eef2f7;
+    --paper: #f8fafc;
+    --ink: #17202b;
+    --ink-2: #3f4b5b;
+    --muted: #6d7a8b;
+    --line: #d5dde7;
+    --base: #244a8f;
+    --base-bg: #e4ebf7;
+    --ours: #147a55;
+    --ours-bg: #e2f3ec;
+    --warn: #a66a00;
+    --warn-bg: #fbf0d8;
+    --danger: #b3261e;
+    --danger-bg: #fbe6e3;
+    --radius: 14px;
+    --shadow: 0 1px 0 rgba(255,255,255,.7) inset, 0 18px 50px rgba(23,32,43,.07);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    width: 1600px;
+    min-height: 1100px;
+    overflow: hidden;
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.45;
+    background:
+      radial-gradient(circle at 8% -10%, rgba(36,74,143,.12), transparent 34rem),
+      radial-gradient(circle at 92% 10%, rgba(20,122,85,.09), transparent 30rem),
+      linear-gradient(180deg, #f4f7fb 0%, var(--bg) 100%);
+  }
+
+  .page {
+    position: relative;
+    width: 1600px;
+    min-height: 1100px;
+    padding: 48px 64px 40px;
+    overflow: hidden;
+  }
+
+  .page::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(23,32,43,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(23,32,43,.035) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(circle at 50% 20%, black, transparent 78%);
+  }
+
+  .top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 20px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .eyebrow {
+    margin: 0;
+    color: var(--base);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+
+  .date {
+    margin: 0;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+
+  .hero {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 1.25fr .75fr;
+    gap: 48px;
+    align-items: end;
+    padding-bottom: 26px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  h1 {
+    margin: 0;
+    font-family: ui-serif, Georgia, "Times New Roman", serif;
+    font-size: 86px;
+    line-height: .92;
+    letter-spacing: -.035em;
+    font-weight: 600;
+  }
+
+  .lede {
+    margin: 16px 0 0;
+    max-width: 760px;
+    color: var(--ink-2);
+    font-size: 22px;
+    line-height: 1.35;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .chip {
+    padding: 7px 12px;
+    color: var(--ink-2);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    background: rgba(255,255,255,.7);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+
+  .numbers {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+
+  .number {
+    padding: 16px 18px;
+    background: rgba(255,255,255,.72);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  .number strong {
+    display: block;
+    font-family: ui-serif, Georgia, serif;
+    font-size: 34px;
+    line-height: 1;
+    letter-spacing: -.02em;
+  }
+
+  .number span {
+    display: block;
+    margin-top: 7px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+  }
+
+  .number--danger strong { color: var(--danger); }
+  .number--ours strong { color: var(--ours); }
+  .number--base strong { color: var(--base); }
+
+  .cols {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+
+  .panel {
+    padding: 22px 24px;
+    background: rgba(255,255,255,.76);
+    border: 1px solid var(--line);
+    border-left: 5px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  .panel--ours { border-left-color: var(--ours); }
+  .panel--base { border-left-color: var(--base); }
+
+  .panel h2 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .panel--ours h2 { color: var(--ours); }
+  .panel--base h2 { color: var(--base); }
+
+  .panel .sub {
+    margin: 0 0 14px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .panel ul {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .panel li {
+    display: grid;
+    grid-template-columns: 10px 1fr;
+    gap: 10px;
+    align-items: start;
+    color: var(--ink-2);
+    font-size: 15px;
+  }
+
+  .panel li::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    margin-top: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: .55;
+  }
+
+  .map {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr 200px 1fr;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 14px;
+    padding: 20px 24px;
+    background: rgba(255,255,255,.76);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  .side {
+    padding: 16px 18px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--paper);
+  }
+
+  .side--base { border-top: 4px solid var(--base); }
+  .side--ours { border-top: 4px solid var(--ours); }
+
+  .side .kicker {
+    margin: 0 0 4px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .side h3 {
+    margin: 0 0 6px;
+    font-family: ui-serif, Georgia, serif;
+    font-size: 24px;
+    line-height: 1.1;
+  }
+
+  .side p {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 13px;
+  }
+
+  .side .tagline {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 4px 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: var(--ink-2);
+    background: rgba(23,32,43,.05);
+    border-radius: 5px;
+  }
+
+  .arrowbox {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    color: var(--warn);
+    text-align: center;
+  }
+
+  .arrowbox strong {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+
+  .arrowbox span {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .arrowbox svg {
+    width: 170px;
+    height: 26px;
+    overflow: visible;
+  }
+
+  .arrowbox path {
+    stroke: var(--warn);
+    stroke-width: 2.5;
+    fill: none;
+    stroke-linecap: round;
+    stroke-dasharray: 220;
+    stroke-dashoffset: 220;
+    animation: draw 1.4s .5s cubic-bezier(.3,.7,.2,1) forwards;
+  }
+
+  .gate {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    gap: 16px;
+    align-items: center;
+    margin-bottom: 14px;
+    padding: 16px 22px;
+    background: var(--danger-bg);
+    border: 1px solid rgba(179,38,30,.28);
+    border-radius: var(--radius);
+  }
+
+  .gate-dot {
+    width: 14px;
+    height: 14px;
+    margin-left: 12px;
+    background: var(--danger);
+    border-radius: 50%;
+    box-shadow: 0 0 0 0 rgba(179,38,30,.35);
+    animation: pulse 2.4s infinite;
+  }
+
+  .gate h2 {
+    margin: 0 0 3px;
+    color: var(--danger);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .gate p {
+    margin: 0;
+    color: #6b2a26;
+    font-size: 14px;
+  }
+
+  .gate .fix {
+    padding: 8px 12px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--danger);
+    white-space: nowrap;
+    background: rgba(255,255,255,.6);
+    border: 1px solid rgba(179,38,30,.3);
+    border-radius: 999px;
+  }
+
+  .plan {
+    position: relative;
+    z-index: 1;
+    padding: 20px 24px 18px;
+    background: rgba(255,255,255,.76);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  .plan-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+
+  .plan h2 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .plan-head span {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .timeline {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .step {
+    position: relative;
+    padding: 22px 14px 0 0;
+  }
+
+  .step::before {
+    content: "";
+    position: absolute;
+    top: 7px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--line);
+  }
+
+  .step:last-child::before { right: 0; }
+
+  .step::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 0;
+    width: 12px;
+    height: 12px;
+    background: var(--paper);
+    border: 2px solid var(--line);
+    border-radius: 50%;
+  }
+
+  .step--now::after {
+    background: var(--warn);
+    border-color: var(--warn);
+    box-shadow: 0 0 0 5px var(--warn-bg);
+  }
+
+  .step--now .step-title { color: var(--warn); }
+
+  .step-title {
+    display: block;
+    margin-bottom: 3px;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
+  .step p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .footer {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+  }
+
+  .ask {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 14px;
+  }
+
+  .ask strong { color: var(--ink); }
+
+  .decisions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .decision {
+    padding: 4px 8px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    background: rgba(255,255,255,.6);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(10px);
+    animation: rise .8s cubic-bezier(.2,.7,.2,1) forwards;
+  }
+
+  .d1 { animation-delay: .05s; }
+  .d2 { animation-delay: .15s; }
+  .d3 { animation-delay: .25s; }
+  .d4 { animation-delay: .35s; }
+  .d5 { animation-delay: .45s; }
+  .d6 { animation-delay: .55s; }
+  .d7 { animation-delay: .65s; }
+
+  @keyframes rise {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes draw {
+    to { stroke-dashoffset: 0; }
+  }
+
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(179,38,30,.35); }
+    70% { box-shadow: 0 0 0 12px rgba(179,38,30,0); }
+    100% { box-shadow: 0 0 0 0 rgba(179,38,30,0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal, .arrowbox path, .gate-dot { animation: none; opacity: 1; transform: none; stroke-dashoffset: 0; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="top reveal d1">
+      <p class="eyebrow">Panorama · produto, fork e próximo passo</p>
+      <p class="date">20 · 11 · 2026</p>
+    </div>
+
+    <header class="hero reveal d1">
+      <div>
+        <h1>Glimpse</h1>
+        <p class="lede">Um workspace espacial para trabalhar com agentes. O produto é seu. A base é emprestada. O próximo passo é reconciliar e dar visão ao trabalho em paralelo.</p>
+      </div>
+      <div class="chips">
+        <span class="chip">Electron + React</span>
+        <span class="chip">Uso diário</span>
+        <span class="chip">Alpha</span>
+      </div>
+    </header>
+
+    <section class="numbers reveal d2" aria-label="Números do produto">
+      <div class="number number--base">
+        <strong>324 mil</strong>
+        <span>linhas no produto</span>
+      </div>
+      <div class="number number--ours">
+        <strong>47</strong>
+        <span>commits nossos</span>
+      </div>
+      <div class="number number--danger">
+        <strong>99</strong>
+        <span>commits atrás</span>
+      </div>
+      <div class="number number--ours">
+        <strong>0 h</strong>
+        <span>suas, em merge</span>
+      </div>
+    </section>
+
+    <section class="cols reveal d3" aria-label="O que é nosso e o que é base">
+      <article class="panel panel--ours">
+        <h2>O que é nosso</h2>
+        <p class="sub">O que o Glimpse adiciona e ninguém mais tem.</p>
+        <ul>
+          <li>Orquestração de agentes: filas, executores, recuperação e aprovações.</li>
+          <li>Mesa de coordenação multi-projeto, em validação.</li>
+          <li>Correções de sessão, permissões e MCP.</li>
+          <li>373 arquivos na branch, 40 mil linhas adicionadas.</li>
+        </ul>
+      </article>
+
+      <article class="panel panel--base">
+        <h2>O que é base</h2>
+        <p class="sub">O que vem do OpenCove e continua sendo consertado lá.</p>
+        <ul>
+          <li>Canvas infinito, nós e navegação espacial.</li>
+          <li>Terminal, xterm, scrollback e restauração.</li>
+          <li>Plugins, temas, shell e configurações.</li>
+          <li>99 commits de correções que o fork ainda não recebeu.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="map reveal d4" aria-label="Distância entre o fork e o upstream">
+      <div class="side side--base">
+        <p class="kicker">Upstream</p>
+        <h3>OpenCove</h3>
+        <p>A base viva. Corrige terminal, sessão e recuperação todos os dias.</p>
+        <span class="tagline">main · 99 commits à frente</span>
+      </div>
+
+      <div class="arrowbox">
+        <strong>99 commits</strong>
+        <svg viewBox="0 0 170 26" aria-hidden="true">
+          <path d="M2 13 H150" />
+          <path d="M142 5 L158 13 L142 21" />
+        </svg>
+        <span>distância para reconciliar</span>
+      </div>
+
+      <div class="side side--ours">
+        <p class="kicker">Fork</p>
+        <h3>Glimpse</h3>
+        <p>O produto que você usa. A branch com o trabalho real, ainda fora do main.</p>
+        <span class="tagline">branch · 47 commits nossos</span>
+      </div>
+    </section>
+
+    <section class="gate reveal d5" aria-label="Portão de dados">
+      <div class="gate-dot" aria-hidden="true"></div>
+      <div>
+        <h2>O portão</h2>
+        <p>O banco do Glimpse e o do OpenCove usam a mesma versão 14 para coisas diferentes. Os dados locais podem ser recriados, então o risco não é perder histórico: é a migração rodar errada. O merge semanal por agente resolve isso num portão automático.</p>
+      </div>
+      <span class="fix">Semana 0 · separar o banco</span>
+    </section>
+
+    <section class="plan reveal d6" aria-label="Plano">
+      <div class="plan-head">
+        <h2>O plano</h2>
+        <span>Primeiro reconciliar, depois enxergar o trabalho, depois otimizar, depois construir.</span>
+      </div>
+      <ol class="timeline">
+        <li class="step step--now">
+          <span class="step-title">Semana 0</span>
+          <p>Separar o banco da orquestração e rodar o primeiro merge por agente.</p>
+        </li>
+        <li class="step">
+          <span class="step-title">Fase 1</span>
+          <p>Mesa de coordenação: protótipo aprovado e MVP de leitura.</p>
+        </li>
+        <li class="step">
+          <span class="step-title">Fase 2</span>
+          <p>Tokens de animação e otimização do caminho quente.</p>
+        </li>
+        <li class="step">
+          <span class="step-title">Fase 3</span>
+          <p>Poda incremental e gates de performance no CI.</p>
+        </li>
+        <li class="step">
+          <span class="step-title">Fase 4</span>
+          <p>Features novas sobre base estável e upstream em dia.</p>
+        </li>
+      </ol>
+    </section>
+
+    <footer class="footer reveal d7">
+      <p class="ask"><strong>O que precisa de você:</strong> validar a mesa de coordenação como a próxima peça do produto.</p>
+      <div class="decisions">
+        <span class="decision">Ficar no Electron</span>
+        <span class="decision">Sem Rune</span>
+        <span class="decision">Sem recomeço</span>
+        <span class="decision">Merge por agente</span>
+        <span class="decision">Mesa de coordenação</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

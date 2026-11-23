@@ -2,7 +2,8 @@ import type { MutableRefObject, ReactElement } from 'react'
 import { useStore, type Node } from '@xyflow/react'
 import { TaskNode } from '../TaskNode'
 import { resolveTaskExecutionContext } from '@contexts/session/application/resolveTaskExecutionContext'
-import type { NodeFrame, TerminalNodeData, WorkspaceSpaceState } from '../../types'
+import type { NodeFrame, TerminalNodeData } from '../../types'
+import { useReadCanvasDocument } from '../../store/canvasStoreContext'
 import type { LabelColor } from '@shared/types/labelColor'
 import type { QuickUpdateTaskRequirement, QuickUpdateTaskTitle, UpdateTaskStatus } from './types'
 import { resolveAgentDisplayTitle } from '../../utils/agentTitle'
@@ -11,7 +12,6 @@ export function WorkspaceCanvasTaskNodeType({
   data,
   id,
   nodePosition,
-  spacesRef,
   workspacePath,
   selectNode,
   resizeNodeRef,
@@ -28,12 +28,11 @@ export function WorkspaceCanvasTaskNodeType({
   data: TerminalNodeData
   id: string
   nodePosition: { x: number; y: number }
-  spacesRef: MutableRefObject<WorkspaceSpaceState[]>
   workspacePath: string
   selectNode: (nodeId: string, options?: { toggle?: boolean }) => void
   resizeNodeRef: MutableRefObject<(nodeId: string, desiredFrame: NodeFrame) => void>
   normalizeViewportForTerminalInteractionRef: MutableRefObject<(nodeId: string) => void>
-  requestNodeDeleteRef: MutableRefObject<(nodeIds: string[]) => void>
+  requestNodeDeleteRef: MutableRefObject<(nodeIds: readonly string[]) => void>
   openTaskEditorRef: MutableRefObject<(nodeId: string) => void>
   quickUpdateTaskTitleRef: MutableRefObject<QuickUpdateTaskTitle>
   quickUpdateTaskRequirementRef: MutableRefObject<QuickUpdateTaskRequirement>
@@ -44,6 +43,7 @@ export function WorkspaceCanvasTaskNodeType({
   removeTaskAgentSessionRecordRef: MutableRefObject<(taskNodeId: string, recordId: string) => void>
   updateTaskStatusRef: MutableRefObject<UpdateTaskStatus>
 }): ReactElement | null {
+  const readDocument = useReadCanvasDocument()
   const linkedAgentNodeId = data.task?.linkedAgentNodeId ?? null
   const labelColor =
     (data as TerminalNodeData & { effectiveLabelColor?: LabelColor | null }).effectiveLabelColor ??
@@ -73,7 +73,8 @@ export function WorkspaceCanvasTaskNodeType({
   }
 
   const taskExecutionContext = resolveTaskExecutionContext({
-    spaces: spacesRef.current,
+    // Read when this renders, not subscribed: the Spaces of the store as they are now.
+    spaces: readDocument().spaces,
     taskNodeId: id,
     workspacePath,
   })
@@ -103,6 +104,7 @@ export function WorkspaceCanvasTaskNodeType({
       priority={data.task.priority}
       tags={data.task.tags}
       isEnriching={data.task.isEnriching === true}
+      lastError={data.lastError}
       linkedAgentNode={linkedAgentSummary}
       agentSessions={data.task.agentSessions ?? []}
       currentDirectory={currentDirectory}

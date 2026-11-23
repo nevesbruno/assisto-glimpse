@@ -71,17 +71,15 @@ it('enforces grant scope over HTTP and rejects revoked credentials', async () =>
       })
     for (const [id, kind, status] of [
       ['system.whoami', 'query', 200],
-      ['session.writeNode', 'command', 200],
+      ['session.writeNode', 'command', 403],
       ['worker.shutdown', 'command', 403],
       ['unknown', 'query', 403],
       ['auth.issueWebSessionTicket', 'command', 403],
     ] as const) {
       // Requests are sequential to observe authorization and revocation boundaries.
-      // eslint-disable-next-line no-await-in-loop
       const response = await invokeHttp(id, kind)
       expect(response.status).toBe(status)
       // Requests are sequential to observe authorization and revocation boundaries.
-      // eslint-disable-next-line no-await-in-loop
       const body = await response.json()
       expect(JSON.stringify(body)).not.toContain(token)
       if (status === 403) {
@@ -90,7 +88,7 @@ it('enforces grant scope over HTTP and rejects revoked credentials', async () =>
         expect(body.ok).toBe(true)
       }
     }
-    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenCalledTimes(1)
     sessionGrants.revokeSession('session')
     const revoked = await invokeHttp('system.whoami', 'query')
     expect(revoked.status).toBe(401)
@@ -172,7 +170,6 @@ it('ends an agent runtime event stream when its session grant is revoked', async
     let done = false
     while (!done) {
       // Drain until the server ends the revoked stream.
-      // eslint-disable-next-line no-await-in-loop
       done = (await reader.read()).done
     }
     expect(agentClients.size).toBe(0)

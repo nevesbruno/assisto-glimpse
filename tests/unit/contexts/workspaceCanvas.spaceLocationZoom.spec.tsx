@@ -1,11 +1,15 @@
 import React from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import type { Node } from '@xyflow/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useAppStore } from '../../../src/app/renderer/shell/store/useAppStore'
 import type {
   TerminalNodeData,
   WorkspaceSpaceState,
+  WorkspaceState,
 } from '../../../src/contexts/workspace/presentation/renderer/types'
+import { commitCanvasDocument } from '../../../src/contexts/workspace/presentation/renderer/store/workspaceDocumentCommands'
+import { CanvasStoreTestProvider } from '../../support/canvasStoreTestHarness'
 import { useWorkspaceCanvasArrange } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useArrange'
 import { useWorkspaceCanvasSpaces } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useSpaces'
 
@@ -57,6 +61,10 @@ function createTerminalNode({
 }
 
 describe('workspace canvas space location zoom', () => {
+  afterEach(() => {
+    useAppStore.setState({ workspaces: [], activeWorkspaceId: null })
+  })
+
   it('caps space focus zoom at focusNodeTargetZoom', () => {
     const setViewport = vi.fn(async () => undefined)
     const reactFlow = {
@@ -71,7 +79,6 @@ describe('workspace canvas space location zoom', () => {
         size: { width: 300, height: 200 },
       }),
     ]
-    const nodesRef = { current: nodes }
 
     const spaces: WorkspaceSpaceState[] = [
       {
@@ -83,18 +90,26 @@ describe('workspace canvas space location zoom', () => {
         rect: { x: 0, y: 0, width: 600, height: 400 },
       },
     ]
-    const spacesRef = { current: spaces }
-
-    const setNodes = vi.fn(
-      (updater: (prev: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[]) => {
-        nodesRef.current = updater(nodesRef.current)
-      },
-    )
+    // The hook reads the committed document of workspace `workspace-1`.
+    useAppStore.setState({
+      workspaces: [
+        {
+          id: 'workspace-1',
+          name: 'Workspace',
+          path: '/tmp',
+          worktreesRoot: '',
+          nodes,
+          spaces,
+          activeSpaceId: null,
+          spaceArchiveRecords: [],
+          viewport: { x: 0, y: 0, zoom: 1 },
+          isMinimapVisible: false,
+        } as WorkspaceState,
+      ],
+      activeWorkspaceId: 'workspace-1',
+    })
 
     function Harness(): React.JSX.Element {
-      const [, setContextMenu] = React.useState<unknown>(null)
-      const [, setEmptySelectionPrompt] = React.useState<unknown>(null)
-
       const { focusSpaceInViewport } = useWorkspaceCanvasSpaces({
         workspaceId: 'workspace-1',
         activeSpaceId: null,
@@ -103,15 +118,8 @@ describe('workspace canvas space location zoom', () => {
         focusNodeTargetZoom: 0.75,
         reactFlow: reactFlow as never,
         nodes,
-        nodesRef,
-        setNodes: setNodes as never,
+        updateCanvasDocument: vi.fn(),
         spaces,
-        spacesRef,
-        selectedNodeIds: [],
-        selectedNodeIdsRef: { current: [] },
-        onSpacesChange: () => undefined,
-        setContextMenu: setContextMenu as never,
-        setEmptySelectionPrompt: setEmptySelectionPrompt as never,
       })
 
       return (
@@ -125,7 +133,11 @@ describe('workspace canvas space location zoom', () => {
       )
     }
 
-    render(<Harness />)
+    render(
+      <CanvasStoreTestProvider workspaceId="workspace-1">
+        <Harness />
+      </CanvasStoreTestProvider>,
+    )
 
     fireEvent.click(screen.getByTestId('focus-space'))
 
@@ -169,8 +181,6 @@ describe('workspace canvas space location zoom', () => {
           size: { width: 420, height: 300 },
         }),
       ]
-      const nodesRef = { current: nodes }
-
       const spaces: WorkspaceSpaceState[] = [
         {
           id: 'space-1',
@@ -181,22 +191,41 @@ describe('workspace canvas space location zoom', () => {
           rect: { x: 100, y: 200, width: 1200, height: 800 },
         },
       ]
-      const spacesRef = { current: spaces }
-
-      const setNodes = vi.fn(
-        (updater: (prev: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[]) => {
-          nodesRef.current = updater(nodesRef.current)
+      // The hook reads and writes the committed document of workspace `workspace-1`.
+      useAppStore.setState({
+        workspaces: [
+          {
+            id: 'workspace-1',
+            name: 'Workspace',
+            path: '/tmp',
+            worktreesRoot: '',
+            nodes,
+            spaces,
+            activeSpaceId: null,
+            spaceArchiveRecords: [],
+            viewport: { x: 0, y: 0, zoom: 1 },
+            isMinimapVisible: false,
+          } as WorkspaceState,
+        ],
+        activeWorkspaceId: 'workspace-1',
+      })
+      const updateCanvasDocument = (
+        recipe: (document: { nodes: Node<TerminalNodeData>[]; spaces: WorkspaceSpaceState[] }) => {
+          nodes: Node<TerminalNodeData>[]
+          spaces: WorkspaceSpaceState[]
         },
-      )
+      ) => {
+        commitCanvasDocument('workspace-1', document => ({
+          ...document,
+          ...recipe({ nodes: document.nodes, spaces: document.spaces }),
+        }))
+      }
 
       function Harness(): React.JSX.Element {
         const { arrangeInSpace } = useWorkspaceCanvasArrange({
           reactFlow: reactFlow as never,
           focusNodeTargetZoom: 1,
-          nodesRef,
-          spacesRef,
-          setNodes: setNodes as never,
-          onSpacesChange: () => undefined,
+          updateCanvasDocument,
           standardWindowSizeBucket: 'regular',
         })
 
@@ -211,7 +240,11 @@ describe('workspace canvas space location zoom', () => {
         )
       }
 
-      render(<Harness />)
+      render(
+        <CanvasStoreTestProvider workspaceId="workspace-1">
+          <Harness />
+        </CanvasStoreTestProvider>,
+      )
       fireEvent.click(screen.getByTestId('arrange-space'))
 
       expect(fitView).not.toHaveBeenCalled()

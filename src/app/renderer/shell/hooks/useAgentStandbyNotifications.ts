@@ -60,20 +60,43 @@ function resolveOwningSpace(
   }
 }
 
+function formatExecutorAlertLead(
+  alert: AgentStandbyNotification['alert'],
+  labels: { permission?: string; unavailable?: string },
+): string | null {
+  if (!alert) {
+    return null
+  }
+  if (alert.reason === 'unavailable') {
+    return labels.unavailable ?? null
+  }
+  const reason = labels.permission ?? null
+  return reason && alert.summary ? `${reason}: ${alert.summary}` : reason
+}
+
 export function formatAgentStandbySystemNotification(
   notification: Pick<
     AgentStandbyNotification,
-    'title' | 'workspaceName' | 'taskTitle' | 'spaceName'
+    'title' | 'workspaceName' | 'taskTitle' | 'spaceName' | 'alert'
   >,
   labels: {
     standby: string
     task: string
     space: string
+    /** An executor stopped on a request, and an executor that went down. */
+    permission?: string
+    unavailable?: string
   },
 ): { title: string; body: string } {
-  const summary = notification.workspaceName
-    ? `${labels.standby} · ${notification.workspaceName}`
-    : labels.standby
+  const alertLine = formatExecutorAlertLead(notification.alert, labels)
+  // A common Agent reads "Standby · workspace"; an executor leads with what it needs.
+  const headline = alertLine
+    ? [alertLine, notification.workspaceName]
+    : [
+        notification.workspaceName
+          ? `${labels.standby} · ${notification.workspaceName}`
+          : labels.standby,
+      ]
   const contextLines = [
     notification.taskTitle ? `${labels.task}: ${notification.taskTitle}` : null,
     notification.spaceName ? `${labels.space}: ${notification.spaceName}` : null,
@@ -81,14 +104,21 @@ export function formatAgentStandbySystemNotification(
 
   return {
     title: notification.title,
-    body: [summary, ...contextLines].join('\n'),
+    body: [...headline, ...contextLines].filter(line => line.length > 0).join('\n'),
   }
 }
 
 /** One Agent reads as its own notification; Agents that needed you together read as a count. */
 export function formatAgentAttentionSystemNotification(
   items: AgentStandbyNotification[],
-  labels: { standby: string; task: string; space: string; summary: (count: number) => string },
+  labels: {
+    standby: string
+    task: string
+    space: string
+    permission?: string
+    unavailable?: string
+    summary: (count: number) => string
+  },
 ): { title: string; body: string } {
   if (items.length === 1) {
     return formatAgentStandbySystemNotification(items[0], labels)
@@ -170,6 +200,8 @@ export function useAgentStandbyNotifications(): {
             standby: t('agentRuntime.standby'),
             task: t('settingsPanel.nav.tasks'),
             space: t('commandCenter.sections.spaces'),
+            permission: t('orchestration.attention.permission'),
+            unavailable: t('orchestration.attention.unavailable'),
             summary: count => t('agentAttention.systemSummary', { count }),
           })
           // Always silent: the app plays the one sound itself, in front or behind.
@@ -201,6 +233,10 @@ export function useAgentStandbyNotifications(): {
         sound: settingsRef.current.notificationSoundEnabled,
       }),
       emit: effect => emitRef.current(effect),
+      repeatIntervalMs: item => {
+        const { executorAlertRepeatEnabled, executorAlertRepeatMinutes } = settingsRef.current
+        return item.alert && executorAlertRepeatEnabled ? executorAlertRepeatMinutes * 60_000 : null
+      },
     })
     routerRef.current = router
     return () => {
@@ -231,6 +267,7 @@ export function useAgentStandbyNotifications(): {
         gitContext: null,
         pullRequest: null,
         createdAt: Date.now(),
+        ...(payload.alert ? { alert: payload.alert } : {}),
       })
     },
     [workspacesById],

@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { useReadCanvasDocument } from '../../../store/canvasStoreContext'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
 import type { StandardWindowSizeBucket } from '@contexts/settings/domain/agentSettings'
 import type { BrowserMode } from '@shared/contracts/dto'
@@ -8,16 +9,13 @@ import {
 } from '@shared/contracts/websiteWindowCanvas'
 import type { Point, TerminalNodeData, WebsiteNodeData, WorkspaceSpaceState } from '../../../types'
 import { createWebsiteNodeAtFlowPosition } from './useInteractions.paneNodeCreation'
-import type { SetNodes } from './useInteractions.types'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
 
 export function useWebsiteWindowOpenUrlNodeCreation({
   workspaceId,
   canvasRef,
   reactFlow,
-  spacesRef,
-  nodesRef,
-  setNodes,
-  onSpacesChange,
+  updateCanvasDocument,
   createWebsiteNode,
   standardWindowSizeBucket,
   browserDefaultMode,
@@ -26,10 +24,7 @@ export function useWebsiteWindowOpenUrlNodeCreation({
   workspaceId?: string
   canvasRef: React.RefObject<HTMLDivElement | null>
   reactFlow: ReactFlowInstance<Node<TerminalNodeData>, Edge>
-  spacesRef: React.MutableRefObject<WorkspaceSpaceState[]>
-  nodesRef: React.MutableRefObject<Node<TerminalNodeData>[]>
-  setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
   createWebsiteNode: (
     anchor: Point,
     website: WebsiteNodeData,
@@ -39,6 +34,8 @@ export function useWebsiteWindowOpenUrlNodeCreation({
   browserDefaultMode: BrowserMode
   enabled: boolean
 }): void {
+  const readDocument = useReadCanvasDocument()
+
   useEffect(() => {
     if (!enabled) {
       return
@@ -51,7 +48,7 @@ export function useWebsiteWindowOpenUrlNodeCreation({
         return
       }
 
-      const sourceNode = nodesRef.current.find(node => node.id === detail.sourceNodeId) ?? null
+      const sourceNode = readDocument().nodes.find(node => node.id === detail.sourceNodeId) ?? null
       const fallbackRect = canvasRef.current?.getBoundingClientRect() ?? null
       const baseAnchor = sourceNode
         ? {
@@ -79,10 +76,8 @@ export function useWebsiteWindowOpenUrlNodeCreation({
         standardWindowSizeBucket,
         browserDefaultMode,
         createWebsiteNode,
-        spacesRef,
-        nodesRef,
-        setNodes,
-        onSpacesChange,
+        readDocument,
+        updateCanvasDocument,
       })
     }
 
@@ -95,12 +90,10 @@ export function useWebsiteWindowOpenUrlNodeCreation({
     canvasRef,
     createWebsiteNode,
     enabled,
-    nodesRef,
-    onSpacesChange,
+    readDocument,
     reactFlow,
-    setNodes,
-    spacesRef,
     standardWindowSizeBucket,
     browserDefaultMode,
+    updateCanvasDocument,
   ])
 }

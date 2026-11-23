@@ -2,16 +2,13 @@ import type { Node } from '@xyflow/react'
 import { clampRectInsideRect } from '@contexts/space/application/spaceContainment'
 import type { TerminalNodeData, WorkspaceSpaceRect, WorkspaceSpaceState } from '../../../types'
 import type { SpaceDragState } from '../types'
+import type { CanvasInteractionCommands } from '../../../store/canvasStore.interaction'
+import type { UseWorkspaceCanvasNodesStoreResult } from './useNodesStore.types'
 import { type LayoutDirection } from '../../../utils/spaceLayout'
 import { projectWorkspacePushAwayLayout } from '../../../utils/workspacePushAwayProjection'
 import { projectChildSpaceWithinParent } from './useSpaceDrag.childProjection'
 import { projectSpaceDragWithCollapse, type SpaceDragLayoutInput } from './useSpaceDrag.collapse'
 import { containChildSpaceResizeLayout } from './useSpaceDrag.containment'
-
-type SetNodes = (
-  updater: (prevNodes: Node<TerminalNodeData>[]) => Node<TerminalNodeData>[],
-  options?: { syncLayout?: boolean },
-) => void
 
 type ResolveResizedRect = (dragState: SpaceDragState, dx: number, dy: number) => WorkspaceSpaceRect
 
@@ -24,7 +21,7 @@ export interface ProjectedSpaceDragLayout {
 
 export function projectWorkspaceSpaceDragLayout(
   input: SpaceDragLayoutInput,
-): ProjectedSpaceDragLayout | null {
+): ProjectedSpaceDragLayout {
   return projectSpaceDragWithCollapse(input, projectSpaceDragLayout)
 }
 
@@ -35,7 +32,7 @@ function projectSpaceDragLayout({
   nodes,
   spaces,
   resolveResizedRect,
-}: SpaceDragLayoutInput): ProjectedSpaceDragLayout | null {
+}: SpaceDragLayoutInput): ProjectedSpaceDragLayout {
   const baselineNodes = restoreBaselineNodes(nodes, dragState.allNodePositions)
   const handle = dragState.handle
   const targetSpace = spaces.find(space => space.id === dragState.spaceId) ?? null
@@ -207,42 +204,43 @@ export function finalizeWorkspaceSpaceDrag({
   dragState,
   dx,
   dy,
-  nodes,
-  spaces,
   resolveResizedRect,
-  setNodes,
-  onSpacesChange,
-  onRequestPersistFlush,
+  updateCanvasDocument,
+  endLiveNodes,
+  setSpaceDragFramePreview,
 }: {
   dragState: SpaceDragState
   dx: number
   dy: number
-  nodes: Node<TerminalNodeData>[]
-  spaces: WorkspaceSpaceState[]
   resolveResizedRect: ResolveResizedRect
-  setNodes: SetNodes
-  onSpacesChange: (spaces: WorkspaceSpaceState[]) => void
-  onRequestPersistFlush?: () => void
+  updateCanvasDocument: UseWorkspaceCanvasNodesStoreResult['updateCanvasDocument']
+  endLiveNodes: CanvasInteractionCommands['endLiveNodes']
+  setSpaceDragFramePreview: CanvasInteractionCommands['setSpaceDragFramePreview']
 }): void {
-  const projected = projectWorkspaceSpaceDragLayout({
-    dragState,
-    dx,
-    dy,
-    nodes,
-    spaces,
-    resolveResizedRect,
-  })
-
-  if (!projected) {
-    return
-  }
-
-  setNodes(
-    prevNodes => {
+  // The layout is planned inside the recipe, from the document the write is computed from, and
+  // the node positions and the Spaces are one store update. The flush rides on it. This is the one
+  // write of a Space drag: its frames only published to the overlay.
+  updateCanvasDocument(
+    ({ nodes: prevNodes, spaces: prevSpaces }) => {
+      const projected = projectWorkspaceSpaceDragLayout({
+        dragState,
+        dx,
+        dy,
+        nodes: prevNodes,
+        spaces: prevSpaces,
+        resolveResizedRect,
+      })
       let hasChanged = false
       const nextNodes = prevNodes.map(node => {
         const nextPosition = projected.nextNodePositionById.get(node.id)
         if (!nextPosition) {
+          return node
+        }
+
+        // A window the drag did not move is planned at its drag-start place: it keeps the store's
+        // position, so a move of it from elsewhere during the drag stands, as the overlay showed it.
+        const start = dragState.allNodePositions.get(node.id)
+        if (start && start.x === nextPosition.x && start.y === nextPosition.y) {
           return node
         }
 
@@ -257,13 +255,14 @@ export function finalizeWorkspaceSpaceDrag({
         }
       })
 
-      return hasChanged ? nextNodes : prevNodes
+      return { nodes: hasChanged ? nextNodes : prevNodes, spaces: projected.nextSpaces }
     },
-    { syncLayout: false },
+    { syncLayout: false, flush: true },
   )
-
-  onSpacesChange(projected.nextSpaces)
-  onRequestPersistFlush?.()
+  // The document first, the overlay and the preview after it, in this one block: a render between
+  // the two would show the overlay over the released nodes, never the nodes before the drag.
+  endLiveNodes()
+  setSpaceDragFramePreview(null)
 }
 
 function restoreBaselineNodes(

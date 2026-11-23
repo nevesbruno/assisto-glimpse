@@ -39,6 +39,7 @@ export class AgentRunStateRuntime {
       hookCoverage?: AgentHookCoverage
       hookInstallState?: AgentHookInstallState
       piConversation?: { pid: number; revision: number }
+      // @compat agent-legacy-run-state-label
       /** Last raw state per source, for the legacy UI label only (never for decisions). */
       rawStates?: Partial<Record<string, TerminalSessionStateEvent['state']>>
     }
@@ -108,6 +109,7 @@ export class AgentRunStateRuntime {
 
   project(snapshot: AgentRunSnapshot): TerminalSessionStateEvent {
     const session = this.sessions.get(snapshot.sessionId)
+    // @compat agent-legacy-run-state-label
     // `unknown` stays explicit in agentRunState (I3). The legacy UI label keeps showing what
     // the selected source last reported, as before the Worker owned the decision.
     // Only a provider report counts; the launch fallback is not evidence of what the agent does.
@@ -120,19 +122,26 @@ export class AgentRunStateRuntime {
         : undefined
     return {
       ...projectAgentRunState(snapshot),
+      // @compat agent-legacy-run-state-label
       ...(legacyState ? { state: legacyState, observationUnavailable: false } : {}),
       hookInstallState: session?.hookInstallState,
     }
   }
 
   metadata(event: TerminalSessionMetadataEvent): void {
-    const provider = event.agentProvider ?? event.terminalAgentActivity?.provider
-    if (!provider) {
-      return
-    }
     const existing = this.sessions.get(event.sessionId)
     if (existing?.mirrored) {
       this.applyBinding(event.sessionId)
+      return
+    }
+    const providerSessionStart = this.isProviderSessionStart(event, existing)
+    const provider =
+      event.agentProvider ??
+      event.terminalAgentActivity?.provider ??
+      (providerSessionStart
+        ? this.registry.get({ sessionId: event.sessionId })?.provider
+        : undefined)
+    if (!provider) {
       return
     }
     const incarnation =
@@ -175,9 +184,62 @@ export class AgentRunStateRuntime {
     const pending = this.pending.get(event.sessionId)
     this.pending.delete(event.sessionId)
     pending?.forEach(observation => this.observe(observation))
+    if (providerSessionStart) {
+      this.observeSessionStart(event.sessionId, provider, session)
+    }
     if (event.terminalAgentActivity?.phase === 'exited') {
       this.exit(event.sessionId)
     }
+  }
+
+  /**
+   * A metadata event carrying a provider session id can close the unobserved initial state of an
+   * invocation: the managed launch registered the session without evidence, and the first
+   * SessionStart identity proves the agent is at the prompt. It never overrides evidence.
+   */
+  private isProviderSessionStart(
+    event: TerminalSessionMetadataEvent,
+    existing: { remote: boolean } | undefined,
+  ): boolean {
+    if (!existing || event.resumeSessionId === null) {
+      return false
+    }
+    const current = this.registry.get({ sessionId: event.sessionId })
+    return current?.state === 'unknown' && current.source === null
+  }
+
+  /**
+   * The first SessionStart identity of a new invocation proves the agent is at the prompt. It
+   * closes the turn a crash left unobserved; the outcome is unknown because no provider reply
+   * proves it.
+   */
+  private observeSessionStart(
+    sessionId: string,
+    provider: AgentProviderId,
+    session: { incarnation: string; sequence: number; remote: boolean },
+  ): void {
+    const source =
+      provider === 'claude-code'
+        ? 'claude_hook'
+        : provider === 'codex'
+          ? 'codex_hook'
+          : provider === 'pi'
+            ? 'pi_hook'
+            : null
+    if (!source || session.remote) {
+      return
+    }
+    this.registry.observe(sessionId, {
+      incarnation: session.incarnation,
+      sourceSequence: ++session.sequence,
+      source,
+      observedAt: this.now(),
+      state: 'idle',
+      hookEventName: 'SessionStart',
+      // The first SessionStart of a new invocation closes the turn the crash left unobserved;
+      // the outcome is unknown because no provider reply proves it.
+      boundary: { kind: 'end', outcome: 'unknown' },
+    })
   }
 
   private mirror(event: TerminalSessionStateEvent): void {
@@ -219,6 +281,7 @@ export class AgentRunStateRuntime {
         turn: null,
         turnOutcome: null,
         blockedReason: null,
+        blockedSummary: null,
         source: null,
         lastTransitionAt: this.now(),
       })
@@ -237,6 +300,10 @@ export class AgentRunStateRuntime {
     const session = this.sessions.get(record.sessionId)
     if (!session || session.remote) {
       return
+    }
+    if (record.captureConversation) {
+      // Capture belongs to the invocation known by this Worker, never a guessed PTY session ID.
+      record = { ...record, incarnation: session.incarnation }
     }
     if (!record.incarnation) {
       return
@@ -271,12 +338,26 @@ export class AgentRunStateRuntime {
       this.metadata({ sessionId: event.sessionId, resumeSessionId: null, agentProvider: provider })
     }
     const session = this.sessions.get(event.sessionId)!
+    const capturedInvocation = getPromptSubmissionEvidence(event)?.invocationId
+    if (capturedInvocation !== undefined && capturedInvocation !== session.incarnation) {
+      return
+    }
+    if (
+      !this.registry.acceptsObservation(
+        event.sessionId,
+        event.source ?? 'session_file',
+        getPromptSubmissionEvidence(event),
+      )
+    ) {
+      return
+    }
     if (event.remote) {
       this.markRemote(event.sessionId)
     }
     if (session.remote) {
       return
     }
+    // @compat codex-legacy-notify-bridge
     // Lifecycle hooks own turn state. Codex's separately spawned legacy notify can arrive
     // after the next submit; it must not replace hook evidence or the legacy UI label.
     if (
@@ -375,8 +456,10 @@ export class AgentRunStateRuntime {
           (session.hookInstallState !== undefined &&
             ['partial', 'error', 'not_installed', 'skipped'].includes(session.hookInstallState)),
         blockedReason: event.blockedReason,
+        blockedSummary: event.blockedSummary,
         boundary,
         hookEventName: name,
+        baseline: event.baseline,
         emittedAtMs: event.emittedAtMs,
       },
       getPromptSubmissionEvidence(event),
@@ -399,6 +482,7 @@ export class AgentRunStateRuntime {
           quality: 'authoritative',
           turn: null,
           blockedReason: null,
+          blockedSummary: null,
           lastTransitionAt: this.now(),
         })
       }

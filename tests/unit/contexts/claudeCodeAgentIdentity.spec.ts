@@ -1,10 +1,13 @@
+import { createTestAgentLaunchArtifactRoot } from '../../support/agentLaunchArtifactRoot'
 import { describe, expect, it } from 'vitest'
 import { AgentLaunchArtifactScope } from '../../../src/contexts/agent/application/services/AgentLaunchArtifactScope'
 import { ClaudeCodeAgentProviderContribution } from '../../../src/contexts/agent/infrastructure/providers/claude-code/ClaudeCodeAgentProviderContribution'
 
 describe('managed Claude launch identity', () => {
   it('assigns different explicit UUIDs to concurrent new launches in the same directory', async () => {
-    const provider = new ClaudeCodeAgentProviderContribution()
+    const provider = new ClaudeCodeAgentProviderContribution({
+      artifactRoot: createTestAgentLaunchArtifactRoot(),
+    })
     const artifacts = new AgentLaunchArtifactScope()
     try {
       const command = {
@@ -15,7 +18,7 @@ describe('managed Claude launch identity', () => {
         resumeSessionId: '11111111-1111-4111-8111-111111111111',
         agentFullAccess: false,
         workspaceDirectory: '/tmp/shared-workspace',
-        prompt: '- explain the change',
+        prompt: 'Explain the change',
       }
       const plans = await Promise.all([
         provider.launcher.createLaunchPlan(command),
@@ -28,7 +31,14 @@ describe('managed Claude launch identity', () => {
         )
         expect(plan.resumeSessionId).not.toBe(command.resumeSessionId)
         expect(plan.launchMode).toBe('new')
-        expect(plan.args).toEqual(['--session-id', plan.resumeSessionId, '--', command.prompt])
+        expect(plan.args).toEqual([
+          '--permission-mode',
+          'default',
+          '--session-id',
+          plan.resumeSessionId,
+          '--',
+          command.prompt,
+        ])
       }
       expect(plans[0]?.resumeSessionId).not.toBe(plans[1]?.resumeSessionId)
     } finally {
@@ -37,7 +47,9 @@ describe('managed Claude launch identity', () => {
   })
 
   it('retains the explicit session ID when resuming', async () => {
-    const provider = new ClaudeCodeAgentProviderContribution()
+    const provider = new ClaudeCodeAgentProviderContribution({
+      artifactRoot: createTestAgentLaunchArtifactRoot(),
+    })
     const artifacts = new AgentLaunchArtifactScope()
     const resumeSessionId = '22222222-2222-4222-8222-222222222222'
     try {
@@ -52,7 +64,7 @@ describe('managed Claude launch identity', () => {
 
       expect(plan.resumeSessionId).toBe(resumeSessionId)
       expect(plan.launchMode).toBe('resume')
-      expect(plan.args).toEqual(['--resume', resumeSessionId])
+      expect(plan.args).toEqual(['--permission-mode', 'default', '--resume', resumeSessionId])
     } finally {
       await artifacts.dispose()
     }

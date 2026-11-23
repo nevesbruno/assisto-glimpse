@@ -1,4 +1,9 @@
+import { taskMutationAccessErrorPresentation } from '@shared/errors/taskMutationAccessError'
+import { taskClaimErrorPresentation } from '@shared/errors/taskClaimError'
 import type { AgentProvider } from '@contexts/settings/domain/agentSettings'
+import { agentSpawnErrorPresentation } from '@shared/errors/agentSpawnError'
+import { nodeParentErrorPresentation } from '@shared/errors/nodeParentError'
+import { initialPromptErrorPresentation } from '@shared/errors/initialPromptFeedback'
 import { getActiveUiLanguage, translate } from '@app/renderer/i18n'
 import {
   formatAppErrorMessage,
@@ -38,6 +43,74 @@ function getDateTimeFormatter(language: string): Intl.DateTimeFormat {
 }
 
 export function toErrorMessage(error: unknown): string {
+  if (error instanceof OpenCoveAppError || isAppErrorDescriptor(error)) {
+    const initialPrompt = initialPromptErrorPresentation(error)
+    if (initialPrompt) {
+      const options = { token: initialPrompt.token }
+      return `${translate(`messages.${initialPrompt.key}`, options)} ${translate(`messages.${initialPrompt.key}Hint`, options)}`
+    }
+    if (error.code === 'common.invalid_input') {
+      const reason = (error.details as { reason?: string } | undefined)?.reason
+      if (reason === 'initial_prompt_contains_nul') {
+        return translate('messages.initialPromptContainsNul')
+      }
+      if (reason === 'invalid_spawn_arguments') {
+        return translate('messages.invalidSpawnArguments')
+      }
+      if (reason === 'wsl_arguments_unsupported') {
+        return translate('messages.wslArgumentsUnsupported')
+      }
+    }
+    if (
+      (error.details as { reason?: string } | undefined)?.reason === 'initial_prompt_unsupported' &&
+      error.code === 'common.invalid_input'
+    ) {
+      return translate('messages.initialPromptUnsupported')
+    }
+    if (
+      error.code === 'common.invalid_input' &&
+      (error.details as { reason?: string } | undefined)?.reason === 'invalid_spawn_environment'
+    ) {
+      return translate('messages.invalidSpawnEnvironment')
+    }
+    if (error.code === 'agent.managed_launch_commit_failed') {
+      return translate('messages.managedAgentLaunchUncertain')
+    }
+    if (error.code === 'agent.managed_launch_rejected') {
+      const details = error.details as { reason?: string } | undefined
+      return translate(
+        details?.reason === 'resumeBindingDrainExpired'
+          ? 'messages.managedAgentClearSaveUnconfirmed'
+          : details?.reason === 'workerUpgradeRequired'
+            ? 'messages.managedAgentWorkerUpgradeRequired'
+            : details?.reason === 'clientUpgradeRequired'
+              ? 'messages.managedAgentClientUpgradeRequired'
+              : details?.reason === 'writesDisabled'
+                ? 'messages.managedAgentWritesDisabled'
+                : details?.reason === 'resumeUnavailable'
+                  ? 'messages.managedAgentResumeUnavailable'
+                  : 'messages.managedAgentChanged',
+      )
+    }
+    const spawn = agentSpawnErrorPresentation(error)
+    if (spawn) {
+      return `${translate(`messages.${spawn.key}`)} ${translate(`messages.${spawn.key}Hint`)}`
+    }
+    if (taskMutationAccessErrorPresentation(error)) {
+      return `${translate('messages.taskAgentAccess')} ${translate('messages.taskAgentAccessHint')}`
+    }
+    const claim = taskClaimErrorPresentation(error)
+    if (claim) {
+      return `${translate('messages.taskAlreadyClaimed', { holder: claim.holder })} ${translate('messages.taskAlreadyClaimedHint')}`
+    }
+    const parent = nodeParentErrorPresentation(error)
+    if (parent) {
+      return `${translate(`messages.${parent.key}`)} ${translate(`messages.${parent.key}Hint`)}`
+    }
+    if (error.code === 'persistence.owned_node_identity_conflict') {
+      return translate('messages.managedAgentChanged')
+    }
+  }
   if (error instanceof OpenCoveAppError) {
     if (error.code === 'worker.stop_not_owned') {
       return translate('common.workerStopNotOwned')

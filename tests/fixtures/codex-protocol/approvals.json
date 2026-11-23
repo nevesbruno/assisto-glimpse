@@ -1,0 +1,19 @@
+[
+  {
+    "definition": "CommandExecutionRequestApprovalParams",
+    "message": {
+      "threadId": "019a0000-0000-7000-8000-000000000001",
+      "turnId": "019a0000-0000-7000-8000-0000000000a1",
+      "itemId": "item-3",
+      "startedAtMs": 1762700002000,
+      "command": "git status",
+      "cwd": "/work/project",
+      "reason": null
+    }
+  },
+  { "definition": "CommandExecutionRequestApprovalResponse", "message": { "decision": "decline" } },
+  {
+    "definition": "ServerRequestResolvedNotification",
+    "message": { "threadId": "019a0000-0000-7000-8000-000000000001", "requestId": 7 }
+  }
+]

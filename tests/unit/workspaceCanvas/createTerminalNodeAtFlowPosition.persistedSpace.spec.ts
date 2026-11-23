@@ -3,6 +3,12 @@ import { DEFAULT_AGENT_SETTINGS } from '../../../src/contexts/settings/domain/ag
 import { resolveTerminalPtyGeometryForNodeFrame } from '../../../src/contexts/workspace/domain/terminalPtyGeometry'
 import { resolveDefaultTerminalWindowSize } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/constants'
 import { createTerminalNodeAtFlowPosition } from '../../../src/contexts/workspace/presentation/renderer/components/workspaceCanvas/hooks/useInteractions.paneNodeCreation'
+import {
+  createCanvasDocumentHarness,
+  renderCanvasDocumentCommands,
+  renderCanvasDocumentReader,
+  renderCanvasNodeStore,
+} from '../../support/canvasDocumentHarness'
 import type { WorkspaceSpaceState } from '../../../src/contexts/workspace/presentation/renderer/types'
 
 function regularTerminalLaunchGeometry() {
@@ -21,6 +27,19 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
+
+  // The mount repair writes through the store. None of these launches needs a repair, so the only
+  // write the store sees is the push-away that assigns the node to its Space.
+  function seedStore(spaces: WorkspaceSpaceState[] = []) {
+    const harness = createCanvasDocumentHarness({ spaces })
+    return {
+      harness,
+      readDocument: renderCanvasDocumentReader(harness.workspaceId),
+      updateSpaces: renderCanvasDocumentCommands(harness.workspaceId).updateSpaces,
+      updateCanvasDocument:
+        renderCanvasNodeStore(harness).result.current.nodeStore.updateCanvasDocument,
+    }
+  }
 
   it('uses a persisted containing space when local spaces are not hydrated yet', async () => {
     const ptySpawn = vi.fn()
@@ -54,7 +73,8 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
     const createNodeForSession = vi.fn(
       async () => ({ id: '00000000-0000-4000-8000-000000000001' }) as never,
     )
-    const onSpacesChange = vi.fn()
+
+    const { harness, readDocument, updateSpaces, updateCanvasDocument } = seedStore([])
 
     vi.stubGlobal('window', {
       opencoveApi: {
@@ -108,10 +128,9 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
       defaultTerminalProfileId: null,
       standardWindowSizeBucket: 'regular',
       workspacePath: '/repo',
-      spacesRef: { current: [] },
-      nodesRef: { current: [] },
-      setNodes: vi.fn(),
-      onSpacesChange,
+      readDocument,
+      updateCanvasDocument,
+      updateSpaces,
       createNodeForSession,
     })
     const expectedGeometry = regularTerminalLaunchGeometry()
@@ -143,7 +162,7 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
         expectedDirectory: '/repo/.opencove/worktrees/feature-a',
       }),
     )
-    const nextSpaces = onSpacesChange.mock.calls[0]?.[0]
+    const nextSpaces = harness.readStoreDocument().spaces
     expect(nextSpaces).toEqual([
       expect.objectContaining({
         id: 'space-1',
@@ -160,6 +179,8 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
         nodeIds: ['existing-node'],
       }),
     ])
+    expect(harness.notifications).toHaveBeenCalledTimes(1)
+    expect(harness.flush).not.toHaveBeenCalled()
   })
 
   it('merges a persisted target space without replacing existing local spaces', async () => {
@@ -171,7 +192,6 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
     const createNodeForSession = vi.fn(
       async () => ({ id: '00000000-0000-4000-8000-000000000001' }) as never,
     )
-    const onSpacesChange = vi.fn()
     const localSpace: WorkspaceSpaceState = {
       id: 'space-local',
       name: 'Scratch',
@@ -181,6 +201,8 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
       nodeIds: ['local-node'],
       rect: { x: 1400, y: 0, width: 800, height: 600 },
     }
+
+    const { harness, readDocument, updateSpaces, updateCanvasDocument } = seedStore([localSpace])
 
     vi.stubGlobal('window', {
       opencoveApi: {
@@ -231,10 +253,9 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
       defaultTerminalProfileId: null,
       standardWindowSizeBucket: 'regular',
       workspacePath: '/repo',
-      spacesRef: { current: [localSpace] },
-      nodesRef: { current: [] },
-      setNodes: vi.fn(),
-      onSpacesChange,
+      readDocument,
+      updateCanvasDocument,
+      updateSpaces,
       createNodeForSession,
     })
 
@@ -243,7 +264,7 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
         cwd: '/repo/.opencove/worktrees/feature-a',
       }),
     )
-    const nextSpaces = onSpacesChange.mock.calls[0]?.[0]
+    const nextSpaces = harness.readStoreDocument().spaces
     expect(nextSpaces).toEqual([
       expect.objectContaining({
         id: 'space-local',
@@ -265,5 +286,7 @@ describe('createTerminalNodeAtFlowPosition persisted space launch', () => {
         nodeIds: ['existing-node'],
       }),
     ])
+    expect(harness.notifications).toHaveBeenCalledTimes(1)
+    expect(harness.flush).not.toHaveBeenCalled()
   })
 })

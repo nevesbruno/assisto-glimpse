@@ -1,3 +1,5 @@
+import { tracksClaudeConversations } from '../../../shared/contracts/agentProviderDescriptors'
+import type { SessionInputProvenance } from '../../../shared/runtime/sessionInputProvenance'
 import { claudePromptId } from '../../../shared/runtime/agentHook/claudePromptEvidence'
 import type { DeliveryRecord } from './PromptDeliveryRecords'
 import type {
@@ -12,7 +14,12 @@ export class PromptDeliveryEvidence {
   private fence?: RunStateFence
   private identity?: PromptDeliveryIdentity
   private ended = new Set<string>()
-  private postFence?: { turnId: string; promptId?: string; providerSessionId?: string }
+  private postFence?: {
+    turnId: string
+    promptId?: string
+    providerSessionId?: string
+    providerTurnId?: string
+  }
   constructor(private readonly negotiated: boolean) {}
   capture(fence: RunStateFence, identity?: PromptDeliveryIdentity): void {
     this.fence = fence
@@ -22,11 +29,29 @@ export class PromptDeliveryEvidence {
       this.ended.add(fence.snapshot.lastEndedTurn.id)
     }
   }
+  get inputTarget(): SessionInputProvenance | undefined {
+    if (
+      !tracksClaudeConversations(this.fence?.snapshot.provider) ||
+      !this.fence ||
+      !this.fence.invocationId ||
+      !this.identity?.providerSessionId
+    ) {
+      return undefined
+    }
+    return {
+      providerSessionId: this.identity.providerSessionId,
+      invocationId: this.fence.invocationId,
+      conversationGeneration: this.fence.conversationGeneration,
+    }
+  }
   qualify(r: RunStateReceipt, record: DeliveryRecord, now: number): RunStateReceipt | undefined {
     const provider = record.initial.snapshot.provider
     const hook = promptHookSource(provider)
     if (
       !this.fence ||
+      (this.fence.conversationGeneration !== undefined &&
+        this.fence.conversationGeneration > 0 &&
+        r.conversationGeneration !== this.fence.conversationGeneration) ||
       r.source !== hook ||
       r.hookEventName !== 'UserPromptSubmit' ||
       (r.sourceSequence ?? 0) <= (this.fence.watermarks[hook] ?? 0) ||
@@ -35,7 +60,7 @@ export class PromptDeliveryEvidence {
       return
     }
     const identity = this.identity
-    if (provider === 'claude-code') {
+    if (tracksClaudeConversations(provider)) {
       if (this.negotiated && !claudePromptId(r.promptId)) {
         return
       }
@@ -51,17 +76,32 @@ export class PromptDeliveryEvidence {
       if (record.dto.mode === 'turn' && identity?.promptId && identity.promptId === r.promptId) {
         return
       }
-    } else if (record.codexSteer) {
+    } else if (provider === 'codex') {
+      // Once a complete pair is known, legacy/missing IDs cannot confirm a steer.
+      const knownPair = !!identity?.providerSessionId && !!identity.providerTurnId
+      if (knownPair && (!r.providerSessionId || !r.providerTurnId)) {
+        return
+      }
       if (
-        (identity?.providerSessionId &&
-          r.providerSessionId &&
-          identity.providerSessionId !== r.providerSessionId) ||
-        (identity?.providerTurnId &&
-          r.providerTurnId &&
-          identity.providerTurnId !== r.providerTurnId) ||
-        r.turnId !== record.dto.turnId
+        record.dto.mode === 'turn' &&
+        knownPair &&
+        identity.providerSessionId === r.providerSessionId &&
+        identity.providerTurnId === r.providerTurnId
       ) {
         return
+      }
+      if (record.codexSteer) {
+        if (
+          (identity?.providerSessionId &&
+            r.providerSessionId &&
+            identity.providerSessionId !== r.providerSessionId) ||
+          (identity?.providerTurnId &&
+            r.providerTurnId &&
+            identity.providerTurnId !== r.providerTurnId) ||
+          r.turnId !== record.dto.turnId
+        ) {
+          return
+        }
       }
     }
     // A post-fence start without a usable timestamp does not confirm submission, but
@@ -71,12 +111,15 @@ export class PromptDeliveryEvidence {
         turnId: r.turnId,
         promptId: r.promptId,
         providerSessionId: r.providerSessionId,
+        providerTurnId: r.providerTurnId,
       }
     }
     const turnId =
       r.turnId ??
-      (r.promptId &&
-      r.promptId === this.postFence?.promptId &&
+      ((provider === 'codex'
+        ? !!r.providerTurnId && r.providerTurnId === this.postFence?.providerTurnId
+        : !!r.promptId && r.promptId === this.postFence?.promptId) &&
+      this.postFence &&
       r.providerSessionId === this.postFence.providerSessionId
         ? this.postFence.turnId
         : undefined)

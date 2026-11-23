@@ -1,3 +1,4 @@
+import type { ControlSurfaceContext } from '../types'
 import { registerOperation } from '../registerOperation'
 import {
   sessionFinalMessageOperation,
@@ -20,6 +21,9 @@ import type {
 import { invokeControlSurface } from '../remote/controlSurfaceHttpClient'
 import type { WorkerTopologyStore } from '../topology/topologyStore'
 import type { SessionRecord } from './sessionRecords'
+import type { PersistenceStore } from '../../../../platform/persistence/sqlite/PersistenceStore'
+import { assertSessionInGrant } from './agentGrantScope'
+import { grantProjectOf } from './grantProjectScope'
 const RESUME_SESSION_LOCATE_TIMEOUT_MS = 3_000
 const SESSION_FILE_RESOLVE_TIMEOUT_MS = 1_500
 
@@ -28,18 +32,35 @@ export function registerSessionFinalMessageHandler(
   deps: {
     sessions: Map<string, SessionRecord>
     topology: WorkerTopologyStore
+    getPersistenceStore(): Promise<PersistenceStore>
     resolveNode?: ReturnType<typeof createSessionNodeResolver>
   },
 ): void {
   const handle = async (
     payload: GetSessionInput,
     requireTranscript: boolean,
+    ctx: ControlSurfaceContext,
   ): Promise<GetSessionFinalMessageResult> => {
+    const assertActive = (): void => {
+      ctx.assertActive?.()
+      ctx.signal?.throwIfAborted()
+    }
+    assertActive()
+    if (payload.sessionId !== undefined && payload.nodeId === undefined) {
+      await assertSessionInGrant(
+        ctx,
+        deps.getPersistenceStore,
+        payload.sessionId,
+        'session.not_found',
+        `session.finalMessage: unknown session id: ${payload.sessionId}`,
+      )
+    }
     const strict = requireTranscript || payload.nodeId !== undefined
     const nodeSession =
       payload.nodeId !== undefined && deps.resolveNode
-        ? await deps.resolveNode(payload.nodeId)
+        ? await deps.resolveNode(payload.nodeId, grantProjectOf(ctx))
         : null
+    assertActive()
     if (nodeSession && !nodeSession.value.provider) {
       throw createAppError('session.not_found')
     }
@@ -82,17 +103,23 @@ export function registerSessionFinalMessageHandler(
 
     if (record.route.kind === 'remote') {
       const endpoint = await deps.topology.resolveRemoteEndpointConnection(record.route.endpointId)
+      assertActive()
       if (!endpoint) {
         throw createAppError('worker.unavailable', {
           debugMessage: `Remote endpoint unavailable: ${record.route.endpointId}`,
         })
       }
 
-      const { result } = await invokeControlSurface(endpoint, {
-        kind: 'query',
-        id: strict ? 'session.finalMessageForNode' : 'session.finalMessage',
-        payload: { sessionId: record.route.remoteSessionId },
-      })
+      const { result } = await invokeControlSurface(
+        endpoint,
+        {
+          kind: 'query',
+          id: strict ? 'session.finalMessageForNode' : 'session.finalMessage',
+          payload: { sessionId: record.route.remoteSessionId },
+        },
+        ...(ctx.signal ? ([{ signal: ctx.signal }] as const) : []),
+      )
+      assertActive()
 
       if (!result) {
         throw createAppError('worker.unavailable')
@@ -132,6 +159,7 @@ export function registerSessionFinalMessageHandler(
             cwd: record.cwd,
             startedAtMs,
             timeoutMs: RESUME_SESSION_LOCATE_TIMEOUT_MS,
+            signal: ctx.signal,
             ...(record.launchMode === 'new' && record.geminiDiscoveryCursor !== undefined
               ? { discoveryCursor: record.geminiDiscoveryCursor }
               : {}),
@@ -141,8 +169,10 @@ export function registerSessionFinalMessageHandler(
             cwd: record.cwd,
             startedAtMs,
             timeoutMs: RESUME_SESSION_LOCATE_TIMEOUT_MS,
+            signal: ctx.signal,
           }))
 
+    assertActive()
     if (resumeSessionId) {
       record.resumeSessionId = resumeSessionId
     }
@@ -162,7 +192,12 @@ export function registerSessionFinalMessageHandler(
     }
 
     if (record.provider === 'opencode') {
-      const message = await readLastAssistantMessageFromOpenCodeSession(resumeSessionId, record.cwd)
+      const message = await readLastAssistantMessageFromOpenCodeSession(
+        resumeSessionId,
+        record.cwd,
+        ctx.signal,
+      )
+      assertActive()
       return {
         sessionId: record.sessionId,
         provider: record.provider,
@@ -179,8 +214,10 @@ export function registerSessionFinalMessageHandler(
       sessionId: resumeSessionId,
       startedAtMs,
       timeoutMs: SESSION_FILE_RESOLVE_TIMEOUT_MS,
+      signal: ctx.signal,
     })
 
+    assertActive()
     if (!sessionFilePath) {
       if (strict) {
         throw createAppError('session.transcript_not_ready')
@@ -195,7 +232,12 @@ export function registerSessionFinalMessageHandler(
       }
     }
 
-    const message = await readLastAssistantMessageFromSessionFile(record.provider, sessionFilePath)
+    const message = await readLastAssistantMessageFromSessionFile(
+      record.provider,
+      sessionFilePath,
+      ctx.signal,
+    )
+    assertActive()
     return {
       sessionId: record.sessionId,
       provider: record.provider,
@@ -206,11 +248,11 @@ export function registerSessionFinalMessageHandler(
     }
   }
   registerOperation(controlSurface, sessionFinalMessageOperation, {
-    handle: (_ctx, payload) => handle(payload, false),
+    handle: (ctx, payload) => handle(payload, false, ctx),
     defaultErrorCode: 'agent.read_last_message_failed',
   })
   registerOperation(controlSurface, sessionFinalMessageForNodeOperation, {
-    handle: (_ctx, payload) => handle(payload, true),
+    handle: (ctx, payload) => handle(payload, true, ctx),
     defaultErrorCode: 'agent.read_last_message_failed',
   })
 }

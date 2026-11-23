@@ -1,3 +1,9 @@
+import type {
+  AgentSpawnAdmissionOwner,
+  AgentSpawnPermit,
+  GrantCreationAuthority,
+} from '../nodeSpawn/AgentSpawnAdmissionOwner'
+import { prepareNodeLineage, projectNodeLineages } from '../nodeLineage/NodeLineageOwner'
 import { randomUUID } from 'node:crypto'
 import { createAppError } from '../../../../shared/errors/appError'
 import type {
@@ -13,10 +19,12 @@ import {
   type NodeControlAppStateStore,
   type NodeControlNode,
 } from './nodeControlState'
+import { scopeNodeControlState } from './nodeProjectScope'
 import { resolveNodeCreationTarget, type ResolvedNodeCreationTarget } from './nodeCreationTarget'
 import { normalizeAgentSettings } from '../../../settings/domain/agentSettings'
 import { resolvePlacement } from './nodeCreatePlacement'
 import { commitCreatedNode, cleanupFailedNodeCreation } from './nodeCreateCommit'
+import { assertTaskCanTakeAgent } from './nodeTaskLink'
 import {
   listSpacesForNodeControl,
   resolveSpaceLocatorForNodeControl,
@@ -39,6 +47,8 @@ import {
 } from './nodeDataFactory'
 
 export interface NodeControlRuntimeDeps {
+  cleanupUncommittedSpawn?: (nodeId: string) => Promise<void>
+  withSpawnPermit?: <T>(permit: AgentSpawnPermit, execute: () => Promise<T>) => Promise<T>
   assertActive?: () => void
   validateTarget?: (target: ResolvedNodeCreationTarget) => Promise<void>
   launchAgent: (
@@ -58,8 +68,12 @@ export async function listNodesForNodeControl(options: {
   store: NodeControlAppStateStore
   locatorDeps: SpaceLocatorResolverDeps
   input: ListNodesInput
+  projectScope?: string
 }): Promise<ListNodesResult> {
-  const state = requireNodeControlState(await options.store.readAppState())
+  const state = scopeNodeControlState(
+    requireNodeControlState(await options.store.readAppState()),
+    options.projectScope,
+  )
   const kind = options.input.kind ?? null
 
   if (options.input.space) {
@@ -72,17 +86,21 @@ export async function listNodesForNodeControl(options: {
     return {
       projectId: resolved.workspace.id,
       spaceId: resolved.space.id,
-      nodes: resolved.space.nodeIds
-        .map(nodeId => nodeById.get(nodeId))
-        .filter((node): node is NodeControlNode => !!node && isReadableNodeKind(node.kind))
-        .filter(node => !kind || node.kind === kind)
-        .map(node =>
-          toCanvasNodeSummary({
-            node,
-            workspace: resolved.workspace,
-            spaceId: resolved.space.id,
-          }),
-        ),
+      nodes: await projectNodeLineages(
+        options.store,
+        resolved.space.nodeIds
+          .map(nodeId => nodeById.get(nodeId))
+          .filter((node): node is NodeControlNode => !!node && isReadableNodeKind(node.kind))
+          .filter(node => !kind || node.kind === kind)
+          .map(node =>
+            toCanvasNodeSummary({
+              node,
+              workspace: resolved.workspace,
+              spaceId: resolved.space.id,
+            }),
+          ),
+        options.input.spawnedByNodeId,
+      ),
     }
   }
 
@@ -101,13 +119,17 @@ export async function listNodesForNodeControl(options: {
   return {
     projectId,
     spaceId: null,
-    nodes: workspaces.flatMap(workspace =>
-      workspace.nodes
-        .filter(node => isReadableNodeKind(node.kind))
-        .filter(node => !kind || node.kind === kind)
-        .map(node =>
-          toCanvasNodeSummary({ node, workspace, spaceId: spaceByNodeId.get(node.id) ?? null }),
-        ),
+    nodes: await projectNodeLineages(
+      options.store,
+      workspaces.flatMap(workspace =>
+        workspace.nodes
+          .filter(node => isReadableNodeKind(node.kind))
+          .filter(node => !kind || node.kind === kind)
+          .map(node =>
+            toCanvasNodeSummary({ node, workspace, spaceId: spaceByNodeId.get(node.id) ?? null }),
+          ),
+      ),
+      options.input.spawnedByNodeId,
     ),
   }
 }
@@ -115,14 +137,18 @@ export async function listNodesForNodeControl(options: {
 export async function getNodeForNodeControl(options: {
   store: NodeControlAppStateStore
   input: GetNodeInput
+  projectScope?: string
 }): Promise<GetNodeResult> {
-  const state = requireNodeControlState(await options.store.readAppState())
+  const state = scopeNodeControlState(
+    requireNodeControlState(await options.store.readAppState()),
+    options.projectScope,
+  )
   const matched = findNodeForNodeControl(state.workspaces, options.input.nodeId)
   if (!matched) {
     throw createAppError('node.not_found')
   }
 
-  return { node: toCanvasNodeDetail(matched) }
+  return { node: (await projectNodeLineages(options.store, [toCanvasNodeDetail(matched)]))[0] }
 }
 
 export async function createNodeForNodeControl(options: {
@@ -130,11 +156,27 @@ export async function createNodeForNodeControl(options: {
   locatorDeps: SpaceLocatorResolverDeps
   runtime: NodeControlRuntimeDeps
   input: CreateNodeInput
+  projectScope?: string
   now: Date
+  /** Internal identity from an authenticated session grant, never a wire field. */
+  callerNodeId?: string | null
+  authority?: GrantCreationAuthority
+  admission?: AgentSpawnAdmissionOwner
 }): Promise<CreateNodeResult> {
-  const state = requireNodeControlState(await options.store.readAppState())
+  const state = scopeNodeControlState(
+    requireNodeControlState(await options.store.readAppState()),
+    options.projectScope,
+  )
   const resolved = await resolveNodeCreationTarget(state, options.locatorDeps, options.input)
   const createData = normalizeCreateNodeData(options.input.kind, options.input.data)
+  const taskNodeId = createData.kind === 'agent' ? createData.taskNodeId : undefined
+  if (taskNodeId !== undefined) {
+    assertTaskCanTakeAgent({
+      workspace: resolved.workspace,
+      spaceId: resolved.space?.id ?? null,
+      taskNodeId,
+    })
+  }
   const settings = normalizeAgentSettings(state.settings)
   const placement = resolvePlacement({
     workspace: resolved.workspace,
@@ -142,6 +184,8 @@ export async function createNodeForNodeControl(options: {
     kind: options.input.kind,
     bucket: settings.standardWindowSizeBucket,
     frame: options.input.frame,
+    callerNodeId: options.callerNodeId,
+    reference: resolved.reference,
   })
   const frame = resolveCreateFrame({
     kind: options.input.kind,
@@ -153,34 +197,77 @@ export async function createNodeForNodeControl(options: {
   await options.runtime.validateTarget?.(resolved)
   options.runtime.assertActive?.()
   const canvasNodeId = randomUUID()
-  const spawnTarget = { ...resolved, canvasNodeId }
-  let agentRuntime: AgentNodeRuntimeData | null = null
-  let terminalRuntime: TerminalNodeRuntimeData | null = null
-  if (createData.kind === 'agent') {
-    agentRuntime = await options.runtime.launchAgent(spawnTarget, createData)
-  } else if (createData.kind === 'terminal') {
-    terminalRuntime = await options.runtime.spawnTerminal(spawnTarget, createData)
+  if (options.authority && (createData.kind === 'agent' || createData.kind === 'terminal')) {
+    if (!options.store.nodeLineage || !options.store.commitCreatedNodeState) {
+      throw createAppError('persistence.unavailable')
+    }
+    if (!options.admission || !options.runtime.withSpawnPermit) {
+      throw createAppError('common.unavailable')
+    }
+    return options.admission.runCreation(
+      options.store,
+      {
+        authority: options.authority,
+        nodeId: canvasNodeId,
+        title: options.input.title ?? undefined,
+        kind: createData.kind,
+        target: resolved,
+        assertActive: () => options.runtime.assertActive?.(),
+      },
+      (permit, lineage) => options.runtime.withSpawnPermit!(permit, () => create(lineage)),
+    )
   }
+  if (createData.kind !== 'agent' && createData.kind !== 'terminal') {
+    options.admission?.noteNonRuntimeCreation(canvasNodeId)
+  }
+  return create(await prepareNodeLineage(options.store, canvasNodeId, options.callerNodeId))
 
-  const node = makeNode({
-    id: canvasNodeId,
-    kind: options.input.kind,
-    title: resolveNodeTitle({
-      kind: options.input.kind,
-      title: options.input.title,
-      data: createData,
-      agentRuntime,
-    }),
-    frame,
-    data: createData,
-    now: options.now.toISOString(),
-    agentRuntime,
-    terminalRuntime,
-  })
-
-  try {
-    return await commitCreatedNode({ ...options, node, initialTarget: resolved })
-  } catch (error) {
-    return cleanupFailedNodeCreation(options.store, options.runtime, node, error)
+  async function create(
+    lineage: import('../../domain/nodeLineage').NodeLineageRecord | null,
+  ): Promise<CreateNodeResult> {
+    options.runtime.assertActive?.()
+    const spawnTarget = { ...resolved, canvasNodeId }
+    let agentRuntime: AgentNodeRuntimeData | null = null
+    let terminalRuntime: TerminalNodeRuntimeData | null = null
+    let node: NodeControlNode
+    try {
+      if (createData.kind === 'agent') {
+        agentRuntime = await options.runtime.launchAgent(spawnTarget, createData)
+      } else if (createData.kind === 'terminal') {
+        terminalRuntime = await options.runtime.spawnTerminal(spawnTarget, createData)
+      }
+      node = makeNode({
+        id: canvasNodeId,
+        titlePinnedByUser:
+          (options.input.kind === 'agent' || options.input.kind === 'terminal') &&
+          Boolean(options.input.title?.trim()),
+        kind: options.input.kind,
+        title: resolveNodeTitle({
+          kind: options.input.kind,
+          title: options.input.title,
+          data: createData,
+          agentRuntime,
+        }),
+        frame,
+        data: createData,
+        now: options.now.toISOString(),
+        agentRuntime,
+        terminalRuntime,
+      })
+    } catch (error) {
+      await options.runtime.cleanupUncommittedSpawn?.(canvasNodeId)
+      throw error
+    }
+    try {
+      return await commitCreatedNode({
+        ...options,
+        node,
+        lineage,
+        taskNodeId,
+        initialTarget: resolved,
+      })
+    } catch (error) {
+      return cleanupFailedNodeCreation(options.store, options.runtime, node, error)
+    }
   }
 }

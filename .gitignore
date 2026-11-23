@@ -115,6 +115,8 @@ test-results-web-shell/
 playwright-report-web-shell/
 test-results-web-canvas/
 playwright-report-web-canvas/
+test-results-web-canvas-webkit/
+playwright-report-web-canvas-webkit/
 artifacts/
 tmp/
 
@@ -125,3 +127,12 @@ tmp/
 # so a local release-style build creates this too.
 .cache/
 docs/Microsoft/
+
+# Spikes locais de viabilidade (F2-00), nao versionados
+scripts/spikes/
+
+# Rascunhos locais e worktrees descartaveis, nao versionados
+scratchpad/
+
+# Extracted immutable sources used only while generating non-clear compatibility goldens.
+tests/fixtures/claude/non-clear/baseline/

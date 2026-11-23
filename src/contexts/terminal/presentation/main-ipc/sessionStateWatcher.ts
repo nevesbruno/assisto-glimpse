@@ -1,6 +1,12 @@
+import { captureInputProvenance } from './sessionStateWatcherEvidence'
+import type { SessionInteraction } from '../../../../shared/runtime/sessionInputProvenance'
 import type { ClaudeTranscriptObservation } from '../../../../shared/runtime/agentHook/claudeTranscript'
-import { createSessionStatePublisher } from './sessionStateWatcherPublisher'
-import { IPC_CHANNELS } from '../../../../shared/contracts/ipc'
+import {
+  createSessionStatePublisher,
+  createSessionMetadataPublisher,
+  captureSessionStateObservation,
+  reportSessionStateWatcherFailure,
+} from './sessionStateWatcherPublisher'
 import type { AgentSessionDiscovery } from '../../../agent/application/ports/AgentSessionDiscovery'
 import type {
   SessionStateWatcherStartInput,
@@ -19,11 +25,9 @@ import { OpenCodeSessionStateWatcher } from '../../../agent/infrastructure/watch
 import { resolveSessionFilePath } from '../../../agent/infrastructure/watchers/SessionFileResolver'
 import { resolveDiscoveredSessionId } from './sessionStateWatcherDiscovery'
 import { shouldBroadcastOptimisticWorkingFromInteraction } from './sessionStateWatcherInteraction'
-import {
-  logSessionStateWatcherDiagnostics,
-  resolveSessionStateWatcherRetryDelay,
-} from './sessionStateWatcherShared'
+import { resolveSessionStateWatcherRetryDelay } from './sessionStateWatcherShared'
 import { createSessionFileStateWatcher } from './sessionStateWatcherProvider'
+import { SessionFileReadHistory } from './sessionFileReadHistory'
 
 const SESSION_STATE_WATCHER_LOCATE_TIMEOUT_MS = 1_500
 const SESSION_STATE_WATCHER_FILE_TIMEOUT_MS = 1_500
@@ -48,10 +52,11 @@ export function createSessionStateWatcherController({
   sessionDiscovery?: AgentSessionDiscovery
 }): {
   start: (input: SessionStateWatcherStartInput) => void
-  noteInteraction: (sessionId: string, data?: string) => void
-  disposeSession: (sessionId: string) => void
+  noteInteraction: SessionInteraction
+  disposeSession: (sessionId: string, forgetHistory?: boolean) => void
   dispose: () => void
 } {
+  const readHistory = new SessionFileReadHistory()
   const stateWatcherBySession = new Map<string, DisposableSessionWatcher>()
   const stateWatcherVersionBySession = new Map<string, number>()
   const stateWatcherStartInputBySession = new Map<string, OwnedSessionStateWatcherInput>()
@@ -81,18 +86,7 @@ export function createSessionStateWatcherController({
     stateWatcherRetryTimerBySession.delete(sessionId)
   }
 
-  const broadcastSessionMetadata = (sessionId: string, resumeSessionId: string | null): void => {
-    const eventPayload: TerminalSessionMetadataEvent = {
-      sessionId,
-      resumeSessionId,
-    }
-    logSessionStateWatcherDiagnostics('broadcast-metadata', {
-      sessionId,
-      resumeSessionId,
-    })
-    sendToAllWindows(IPC_CHANNELS.ptySessionMetadata, eventPayload)
-    onMetadata?.(eventPayload)
-  }
+  const broadcastSessionMetadata = createSessionMetadataPublisher({ sendToAllWindows, onMetadata })
 
   const clearSessionStateWatcher = (
     sessionId: string,
@@ -160,10 +154,8 @@ export function createSessionStateWatcherController({
   const broadcastSessionState = createSessionStatePublisher({
     getInput: sessionId => stateWatcherStartInputBySession.get(sessionId),
     onState,
+    onClaudeTranscript,
   })
-
-  const broadcastObservationUnavailable = (sessionId: string): void =>
-    broadcastSessionState(sessionId, 'standby', { degraded: true })
 
   const scheduleRetry = (sessionId: string, watcherVersion: number): void => {
     const attempt = stateWatcherRetryCountBySession.get(sessionId) ?? 0
@@ -197,16 +189,18 @@ export function createSessionStateWatcherController({
     const isCurrent = (): boolean =>
       stateWatcherVersionBySession.get(sessionId) === watcherVersion &&
       input.discovery?.isCurrent() !== false
+    const observation = captureSessionStateObservation(
+      input,
+      watcherVersion,
+      onClaudeTranscript,
+      broadcastSessionState,
+    )
     const handleWatcherError = (error: unknown): void => {
       if (!isCurrent()) {
         return
       }
-      const detail =
-        error instanceof Error ? `${error.name}: ${error.message}` : 'unknown watcher error'
-      reportIssue(
-        `[opencove] state watcher failed for ${input.provider} session ${sessionId}: ${detail}`,
-      )
-      broadcastObservationUnavailable(sessionId)
+      reportSessionStateWatcherFailure(input.provider, sessionId, error, reportIssue)
+      observation.unavailable(sessionId)
       clearSessionStateWatcher(sessionId)
       scheduleSessionStateWatcherAttempt(
         sessionId,
@@ -216,7 +210,7 @@ export function createSessionStateWatcherController({
     }
     const onWatcherState: typeof broadcastSessionState = (...args) => {
       if (isCurrent()) {
-        broadcastSessionState(...args)
+        observation.state(...args)
       }
     }
 
@@ -246,6 +240,9 @@ export function createSessionStateWatcherController({
         return
       }
 
+      if (resolvedSessionId) {
+        observation.bind(resolvedSessionId)
+      }
       if (!resolvedSessionId) {
         if (stateWatcherPendingImmediateRetryBySession.delete(sessionId)) {
           stateWatcherRetryCountBySession.set(sessionId, 0)
@@ -318,6 +315,7 @@ export function createSessionStateWatcherController({
         sessionId,
         filePath: sessionFilePath,
         launchMode: input.launchMode,
+        initialRead: readHistory.take(input),
         onState: onWatcherState,
         onClaudeTranscript: record => {
           if (!isCurrent()) {
@@ -327,13 +325,15 @@ export function createSessionStateWatcherController({
             ...record,
             sessionId,
             providerSessionId: resolvedSessionId,
-            incarnation: sessionId,
+            incarnation: observation.incarnation ?? sessionId,
             generation: watcherVersion,
+            conversationGeneration: observation.generation,
+            conversationCapture: observation.capture,
           })
         },
         onUnavailable: unavailableSessionId => {
           if (isCurrent()) {
-            broadcastObservationUnavailable(unavailableSessionId)
+            observation.unavailable(unavailableSessionId)
           }
         },
         onError: handleWatcherError,
@@ -363,9 +363,7 @@ export function createSessionStateWatcherController({
 
     const watcherVersion = stateWatcherVersionBySession.get(input.sessionId) ?? 0
     if (input.provider === 'gemini' && input.launchMode === 'new' && !input.resumeSessionId) {
-      // If the caller already captured (or explicitly skipped) the discovery cursor,
-      // avoid capturing it again after the agent has started, which can race with
-      // Gemini writing the session file and lead to missing resume bindings.
+      // Recapturing after launch can miss Gemini's new file; explicit null also skips capture.
       if (input.geminiDiscoveryCursor !== undefined) {
         if (input.geminiDiscoveryCursor) {
           geminiDiscoveryCursorBySession.set(input.sessionId, input.geminiDiscoveryCursor)
@@ -408,7 +406,7 @@ export function createSessionStateWatcherController({
     scheduleSessionStateWatcherAttempt(input.sessionId, watcherVersion, 0)
   }
 
-  const noteInteraction = (sessionId: string, data?: string): void => {
+  const noteInteraction: SessionInteraction = (sessionId, data, provenance) => {
     const input = stateWatcherStartInputBySession.get(sessionId)
     if (!input) {
       return
@@ -418,7 +416,8 @@ export function createSessionStateWatcherController({
     stateWatcherLastInteractionAtMsBySession.set(sessionId, interactionAtMs)
 
     if (shouldBroadcastOptimisticWorkingFromInteraction({ provider: input.provider, data })) {
-      broadcastSessionState(sessionId, 'working')
+      const evidence = captureInputProvenance(sessionId, provenance, onClaudeTranscript)
+      broadcastSessionState(sessionId, 'working', { evidence })
     }
 
     const shouldForceImmediateRetry =
@@ -462,11 +461,13 @@ export function createSessionStateWatcherController({
     )
   }
 
-  const disposeSession = (sessionId: string): void => {
+  const disposeSession = (sessionId: string, forgetHistory = false): void => {
     clearSessionStateWatcher(sessionId, { disposeStartInput: true })
+    readHistory.release(sessionId, forgetHistory)
   }
 
   const dispose = (): void => {
+    readHistory.clear()
     stateWatcherBySession.forEach(watcher => {
       watcher.dispose()
     })

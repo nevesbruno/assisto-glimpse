@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React from 'react'
 import type { Node } from '@xyflow/react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
@@ -10,7 +10,12 @@ import type {
   WorkspaceViewport,
 } from '../../../src/contexts/workspace/presentation/renderer/types'
 import { WorkspaceCanvas } from '../../../src/contexts/workspace/presentation/renderer/components/WorkspaceCanvas'
+import { readWorkspaceDocument } from '../../../src/contexts/workspace/presentation/renderer/store/workspaceDocumentCommands'
 import { createMountAwareAgentControlSurface } from './workspaceCanvas.mountTestSupport'
+import {
+  seedWorkspaceCanvasStore,
+  useWorkspaceCanvasStoreNodes,
+} from '../../support/workspaceCanvasStoreHarness'
 
 vi.mock('@xyflow/react', () => {
   let currentNodes: Array<{ id: string; type: string; data: unknown }> = []
@@ -162,11 +167,24 @@ describe('WorkspaceCanvas run default agent', () => {
     })
 
     const viewport: WorkspaceViewport = { x: 0, y: 0, zoom: 1 }
-    const spaces: WorkspaceSpaceState[] = []
+    // The click lands inside this Space, so the launch ends in the push-away.
+    const spaces: WorkspaceSpaceState[] = [
+      {
+        id: 'space-under-click',
+        name: 'Space',
+        directoryPath: '/tmp/repo',
+        targetMountId: null,
+        labelColor: null,
+        nodeIds: [],
+        rect: { x: -5000, y: -5000, width: 10000, height: 10000 },
+      },
+    ]
     let latestNodes: Node<TerminalNodeData>[] = []
 
+    seedWorkspaceCanvasStore({ spaces })
+
     function Harness() {
-      const [nodes, setNodes] = useState<Node<TerminalNodeData>[]>([])
+      const nodes = useWorkspaceCanvasStoreNodes()
       latestNodes = nodes
 
       return (
@@ -175,10 +193,8 @@ describe('WorkspaceCanvas run default agent', () => {
           workspacePath="/tmp/repo"
           worktreesRoot=""
           nodes={nodes}
-          onNodesChange={setNodes}
           spaces={spaces}
           activeSpaceId={null}
-          onSpacesChange={() => undefined}
           onActiveSpaceChange={() => undefined}
           viewport={viewport}
           isMinimapVisible={false}
@@ -250,6 +266,8 @@ describe('WorkspaceCanvas run default agent', () => {
     expect(latestNodes[0]?.data.width).toBe(expectedSize.width)
     expect(latestNodes[0]?.data.height).toBe(expectedSize.height)
     expect(screen.queryByTestId('workspace-agent-launcher')).toBeNull()
+    // The push-away reached the store through the writer that Inner hands the agent support.
+    expect(readWorkspaceDocument('workspace-1')!.spaces[0].nodeIds).toContain(latestNodes[0]!.id)
   })
 
   it('can expand the pane context menu to launch a specific installed agent CLI', async () => {
@@ -318,8 +336,10 @@ describe('WorkspaceCanvas run default agent', () => {
     const viewport: WorkspaceViewport = { x: 0, y: 0, zoom: 1 }
     const spaces: WorkspaceSpaceState[] = []
 
+    seedWorkspaceCanvasStore()
+
     function Harness() {
-      const [nodes, setNodes] = useState<Node<TerminalNodeData>[]>([])
+      const nodes = useWorkspaceCanvasStoreNodes()
 
       return (
         <WorkspaceCanvas
@@ -327,10 +347,8 @@ describe('WorkspaceCanvas run default agent', () => {
           workspacePath="/tmp/repo"
           worktreesRoot=""
           nodes={nodes}
-          onNodesChange={setNodes}
           spaces={spaces}
           activeSpaceId={null}
-          onSpacesChange={() => undefined}
           onActiveSpaceChange={() => undefined}
           viewport={viewport}
           isMinimapVisible={false}
@@ -432,8 +450,10 @@ describe('WorkspaceCanvas run default agent', () => {
     const viewport: WorkspaceViewport = { x: 0, y: 0, zoom: 1 }
     const spaces: WorkspaceSpaceState[] = []
 
+    seedWorkspaceCanvasStore()
+
     function Harness() {
-      const [nodes, setNodes] = useState<Node<TerminalNodeData>[]>([])
+      const nodes = useWorkspaceCanvasStoreNodes()
 
       return (
         <WorkspaceCanvas
@@ -441,10 +461,8 @@ describe('WorkspaceCanvas run default agent', () => {
           workspacePath="/tmp/repo"
           worktreesRoot=""
           nodes={nodes}
-          onNodesChange={setNodes}
           spaces={spaces}
           activeSpaceId={null}
-          onSpacesChange={() => undefined}
           onActiveSpaceChange={() => undefined}
           viewport={viewport}
           isMinimapVisible={false}

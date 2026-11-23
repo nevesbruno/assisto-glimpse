@@ -1,0 +1,51 @@
+[
+  { "definition": "HooksListParams", "message": { "cwds": ["/work/project"] } },
+  {
+    "definition": "HooksListResponse",
+    "message": {
+      "data": [
+        {
+          "cwd": "/work/project",
+          "errors": [],
+          "warnings": [],
+          "hooks": [
+            {
+              "key": "/home/u/.codex/hooks.json:pre_tool_use:0:0",
+              "currentHash": "sha256:abc",
+              "displayOrder": 0,
+              "enabled": true,
+              "eventName": "preToolUse",
+              "isManaged": false,
+              "handlerType": "command",
+              "command": "/home/u/hook.sh",
+              "matcher": "Bash",
+              "source": "user",
+              "sourcePath": "/home/u/.codex/hooks.json",
+              "timeoutSec": 30,
+              "trustStatus": "untrusted"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "definition": "HookCompletedNotification",
+    "message": {
+      "threadId": "019a0000-0000-7000-8000-000000000001",
+      "turnId": "019a0000-0000-7000-8000-0000000000a1",
+      "run": {
+        "id": "run-1",
+        "displayOrder": 0,
+        "entries": [],
+        "eventName": "preToolUse",
+        "executionMode": "sync",
+        "handlerType": "command",
+        "scope": "turn",
+        "sourcePath": "/home/u/.codex/hooks.json",
+        "startedAt": 1762700003,
+        "status": "completed"
+      }
+    }
+  }
+]

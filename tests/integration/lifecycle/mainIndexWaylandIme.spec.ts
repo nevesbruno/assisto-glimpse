@@ -67,6 +67,7 @@ describe('main process Wayland IME flags', () => {
 
         public on(): void {}
         public show(): void {}
+        public setContentSize(): void {}
         public showInactive(): void {}
         public loadURL(): void {}
         public loadFile(): void {}
@@ -106,12 +107,6 @@ describe('main process Wayland IME flags', () => {
 
       vi.doMock('../../../src/contexts/terminal/presentation/main-ipc/runtime', () => ({
         createPtyRuntime: () => ({
-          dispose: vi.fn(),
-        }),
-      }))
-
-      vi.doMock('../../../src/app/main/controlSurface/registerControlSurfaceServer', () => ({
-        registerControlSurfaceServer: () => ({
           dispose: vi.fn(),
         }),
       }))

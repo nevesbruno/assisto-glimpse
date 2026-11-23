@@ -352,6 +352,6 @@ describe('TerminalNode theme behavior', () => {
     rerender(renderNode('agent', 'session-agent'))
 
     expect(queryByTestId('react-flow-handle-target')).not.toBeNull()
-    expect(queryByTestId('react-flow-handle-source')).toBeNull()
+    expect(queryByTestId('react-flow-handle-source')).not.toBeNull()
   })
 })

@@ -1,7 +1,7 @@
 # Sending a prompt to Claude Code or Codex
 
 `opencove agent prompt` pastes text into a local agent window OpenCove launched
-(Claude Code or Codex with lifecycle hooks) and attempts to press Enter once. It never retries automatically.
+(Claude Code or Codex with lifecycle hooks) and attempts to press Enter once. It never retries automatically. For launch prompts and grant restrictions, see [initial prompts](./INITIAL_PROMPTS.md).
 
 ```sh
 opencove agent prompt --node node-123 --text "Review the changes"
@@ -9,8 +9,7 @@ opencove agent prompt --node node-123 --text-file ./prompt.txt --timeout 20s
 cat prompt.txt | opencove agent prompt --node node-123 --text-file -
 ```
 
-Use exactly one of `--text` or `--text-file`. Idle agents must have finished a turn
-that OpenCove observed; authoritative working agents accept steering in the current turn. A newly opened or resumed session may need a turn completed
+Use exactly one of `--text` or `--text-file`. Idle agents need an observed completed turn or [new Claude `/clear` readiness](CLAUDE_CLEAR_PROMPT.md); authoritative working agents accept steering in the current turn. A newly opened or resumed session may need a turn completed
 in its terminal before this command can be used.
 
 The command attempts one bracketed paste into the current editor. If the paste reaches the editor and Enter submits it, any existing draft is
@@ -51,10 +50,10 @@ configuration is modified to force hooks on.
 
 | Provider            | Required for this invocation                                                              | Readiness and receipt                                                                       |
 | ------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Claude Code         | Installed lifecycle hooks, `hookCoverage: lifecycle`                                      | Selected reliable `claude_hook` Stop or StopFailure; `claude_hook` UserPromptSubmit receipt |
+| Claude Code         | Installed lifecycle hooks, `hookCoverage: lifecycle`                                      | Reliable Stop/StopFailure or new-ID clear; `claude_hook` UserPromptSubmit receipt |
 | Codex (macOS/Linux) | Trusted lifecycle hook configuration actually passed at launch, `hookCoverage: lifecycle` | Selected reliable `codex_hook` Stop; `codex_hook` UserPromptSubmit receipt                  |
 
-Both require bracketed paste and authoritative lifecycle observations. Idle admission requires a completed turn; working admission requires whenBusy: steer and an active turn. `installed` alone
+Both require bracketed paste and authoritative lifecycle observations. Idle admission requires a completed turn or new-ID Claude clear; working admission requires whenBusy: steer and an active turn. `installed` alone
 is insufficient. Trust resolution failure leaves Codex with `notify_only` coverage;
 notify cannot observe submissions or permission requests. Daemon reuse (`skipped`),
 Windows (`not_required`, session files), no hooks (`none`), and file-only readiness
@@ -116,7 +115,7 @@ The provider's optional `promptId` is returned on any comparison outcome when va
 For Claude Code, matching session and prompt IDs also bind retained Stop/StopFailure
 messages to the observed start. `agent.finalMessage` can select that provider ID;
 the CLI uses the OpenCove `turnId` returned by `agent prompt`. Codex has no comparison
-profile or hook-carried final-message support in this cut.
+profile; lifecycle replies match the private session/turn pair.
 
 Equality is not proof of causation or model processing: another qualifying submission
 of identical text also matches, and another hook may block processing after this
@@ -139,7 +138,7 @@ running turn automatically because of the comparison.** The CLI notice is:
 | The agent is waiting for input, even when the reason is unknown | `agent.blocked`                                               | Resolve the dialog in the terminal.                                                                    |
 | The agent is working and whenBusy is absent/refuse              | `agent.busy` / `working`                                      | Wait for the turn to finish.                                                                           |
 | Another delivery is in progress                                 | `agent.busy` / `delivery_in_progress`                         | Wait for that delivery's result before deciding whether another is needed.                             |
-| OpenCove has not observed a completed turn                      | `agent.state_unknown` / `readiness_unobserved`                | Complete a turn in the terminal first.                                                                 |
+| OpenCove cannot confirm prompt readiness                      | `agent.state_unknown` / `readiness_unobserved`                | Inspect the screen; wait for observed readiness.                                                                 |
 | Hook observations are unavailable or unreliable                 | `agent.state_unknown` / `observation_degraded`                | Check the hook setup and wait for a reliably observed turn end.                                        |
 | No running agent exists at the target                           | `agent.not_running`                                           | Check the node and start or resume its session.                                                        |
 | The agent window uses a custom executable path                  | `agent.prompt_unsupported` / `executable_override_unverified` | Remove the override in Settings → agent executable and launch a new agent window with lifecycle hooks. |
@@ -170,7 +169,7 @@ not confirmed receipt by the terminal. Validation errors and transport failures
 may not contain those details. Never infer false flags from missing fields.
 
 The CLI returns 0 for every observed submission, including `different` and
-`unavailable`, and for Codex `dispatched` steering (not confirmation). It returns 1 for a refusal or unconfirmed delivery, 2 for invalid input, 124
+`unavailable`, and for Codex `dispatched` steering (not confirmation). It returns 1 for a refusal or unconfirmed delivery, 2 for invalid input, 4 for authentication or grant-policy refusal, 124
 for the overall deadline, and 130 for interruption. A deadline after a paste or
 Enter attempt preserves that phase's error and attempt flags. The separate
 five-second submission-observation limit returns `agent.prompt_stalled`, exit 1,
@@ -257,8 +256,8 @@ Before paste and Enter, the service rechecks identity, caller authority, deadlin
 and bracketed-paste mode inside the reserved input operation. Readiness requires a
 retained selected, non-degraded Claude `Stop` or `StopFailure`, or Codex `Stop`
 turn-end receipt, current idle state from that source and no active turn. A later
-same-source idle refresh (for example Codex notify or a Claude Notification) preserves
-that receipt but cannot establish it. A Stop from an argv launch prompt establishes
+qualifying same-source idle refresh preserves that receipt but cannot establish it.
+Codex legacy notify is ignored when lifecycle hooks own the invocation. A Stop from an argv launch prompt establishes
 readiness even without an observed turn start; it does not fabricate a completed-turn
 event. New turns, lifecycle resets, unavailable observations and source changes revoke
 the receipt; another qualifying Stop is needed. A notify `done`, SessionEnd, launch baseline or file observation never establishes prompt readiness.
@@ -286,16 +285,18 @@ queue. There is no automatic resend, raw-typing fallback or wait-until-idle queu
 
 ## Reading the observed turn result
 
-Retain `turnId` from the successful prompt response:
+Retain `deliveryId` and `turnId` from prompt; confirm delivery before waiting:
 
 ```sh
 opencove agent prompt --node node-123 --text "Review the changes"
+opencove agent delivery delivery-123 --wait --timeout 2m
 opencove agent wait --node node-123 --turn turn-123 --timeout 60s
-opencove agent read --node node-123 --turn <turnId>
+opencove agent read --node node-123 --turn turn-123
 ```
 
-Replace `turn-123` with prompt's saved `turnId`. `wait --turn` waits for that exact
-OpenCove turn, including permission/question pauses, even if another turn has started.
+Replace `delivery-123` and `turn-123` with prompt's saved IDs. `wait --turn` waits for that exact
+OpenCove turn, including continuations, even if another turn has started. Matching waiting
+now stops with 10 by default; `--through-waiting` continues. See [wait recovery](WAIT.md).
 It returns `{ nodeId, sessionId, turnId, outcome, endedAt?, state }` and exits 0 for
 every ended outcome (`completed`, `failed`, `aborted`, `unknown`); inspect `outcome`.
 `read --turn` selects the same turn and never substitutes a transcript message.
@@ -359,8 +360,8 @@ a hook; otherwise idle sessions perform no periodic filesystem IO. Hooks always
 refresh immediately. Same-session compaction/resume refreshes preserve the active
 turn and its queued follow-ups, permission wait and recovery chain. Conversation
 changes retire observer generations: different session IDs, clear, or an ordered
-startup/resume after an end. Invocation-authenticated state hooks continue;
-new-generation turn/completion evidence restores readiness. Historical queued
+startup/resume after an end. Only accepted current-conversation hooks publish state;
+turn/completion evidence or [new-ID clear readiness](CLAUDE_CLEAR_PROMPT.md) permits prompting. Historical queued
 identities and paired Stops roll out of bounded caches; the current EOF candidate
 and Stops awaiting user correlation stay protected.
 See [run state](RUN_STATE.md#claude-queued-continuations) for generation fences,
@@ -446,7 +447,8 @@ digest is exposed. `not_sent` means this attempt wrote no CR; a pasted draft may
 remain. `submitted` means qualifying evidence; `dispatched` awaits consumption.
 evidenceWindow describes collecting delivery evidence, not the agent’s work; closed never proves completion or retry safety.
 
-Unresolved deliveries are pinned; limits are 32/session and 1024 globally. Completed
+Current unresolved deliveries are pinned; retired conversations with permanently closed
+unknown attempts are eligible for eviction. Limits are 32/session and 1024 globally. Completed
 (`submitted`/`not_sent`) records evict first and expire 30 minutes after resolvedAt. Capacity refusal happens before bytes, with
 `agent.delivery_unsettled` (legacy: `agent.busy`) and delivery lookup guidance.
 Retirement or identity/binding loss disposes subscriptions while retaining the DTO.
@@ -465,7 +467,7 @@ consumption. `dispatched` is not a confirmed result.
 
 Use prompt → delivery status → `wait --turn` = **the containing turn ended**
 (check outcome) → `read --turn`. Claude reply reads are correlated; Codex reply
-reads stay uncorrelated (use an unqualified read/screen). A containing turn ending
+reads are correlated with lifecycle hooks (see [Codex replies](CODEX_TURN_REPLIES.md)). A containing turn ending
 does not prove a steer was handled. Never resend; check delivery status or the
 screen. Claude transcript-based reconciliation of uncertain deliveries is a known
 limit and remains out of scope; no transcript/rollout fallback confirms deliveries.
@@ -494,4 +496,6 @@ memory-only (`retention_backlog`) while bounded cleanup makes room for future re
 
 Deleting the node removes queryable OpenCove history, including caches; it does not
 erase provider transcripts, existing backups or forensic remnants.
-`opencove agent history clear --node <selector>` (`agent.history.clear`, interact scope) deletes the node’s archived and in-memory replies across retained incarnations, leaving the node, provider transcripts, backups, run state, active turns and delivery records unchanged; later ends store normally, and archive unavailability clears memory but exits 1. Unqualified reads, prompt-ID selectors and transcript fallback keep current-incarnation semantics; remote history stays on its executing Worker.
+`opencove agent history clear --node <selector>` (`agent.history.clear`, interact scope) deletes the node’s archived and in-memory replies across retained incarnations, leaving the node, provider transcripts, backups, run state, active turns and delivery records unchanged; later ends store normally, and archive unavailability clears memory but exits 1. Unqualified reads, prompt-ID selectors and transcript fallback keep current-incarnation semantics; remote history stays on its executing Worker. See [Claude clear recovery](./CLAUDE_CLEAR_RECOVERY.md) for saved restart targets after `/clear`.
+
+Glimpse notices to a linked orchestrator use this same delivery with `whenBusy: refuse`, one batch per delivery id, and only after 10 s without typing in its terminal. A batch that stalls after the paste is marked uncertain and is never resent.

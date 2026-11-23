@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createTestAgentLaunchArtifactRoot } from '../support/agentLaunchArtifactRoot'
 import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -26,6 +27,7 @@ async function relay(input: string, provider: 'claude' | 'codex' = 'claude') {
       `import { writeFile } from 'node:fs/promises'; globalThis.fetch = async (_url, options) => { await writeFile(${JSON.stringify(capture)}, options.body); return new Response(null, {status:204}); };`,
     )
     const invocation = await createAgentHookRelay({
+      artifactRoot: createTestAgentLaunchArtifactRoot(),
       provider,
       runtimeExecutable: process.execPath,
       runtimePlatform: process.platform,
@@ -36,7 +38,7 @@ async function relay(input: string, provider: 'claude' | 'codex' = 'claude') {
         env: {
           ...process.env,
           NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
-          [`OPENCOVE_${provider.toUpperCase()}_HOOK_ENDPOINT`]: 'http://relay.test',
+          [`OPENCOVE_${provider.toUpperCase()}_HOOK_ENDPOINT`]: `http://127.0.0.1:1234/hooks/${provider}`,
           [`OPENCOVE_${provider.toUpperCase()}_HOOK_TOKEN`]: 'token',
         },
       })
@@ -66,11 +68,14 @@ const payload = (fields = {}) => ({
   prompt_id: 'p',
   ...fields,
 })
-it.each([300 * 1024, 2 * 1024 * 1024])(
-  'delivers lifecycle evidence and a marked prefix from a real relay with %i reply bytes',
-  async size => {
+it.each(['claude', 'codex'] as const)(
+  'delivers lifecycle evidence and a marked prefix from a real relay for %s',
+  async provider => {
     const body = await relay(
-      JSON.stringify(payload({ last_assistant_message: '🙂'.repeat(size / 4) })),
+      JSON.stringify(
+        payload({ turn_id: 'A', last_assistant_message: '🙂'.repeat((300 * 1024) / 4) }),
+      ),
+      provider,
     )
     expect(body).not.toBeNull()
     expect(Buffer.byteLength(body!)).toBeLessThanOrEqual(256 * 1024)
@@ -81,7 +86,9 @@ it.each([300 * 1024, 2 * 1024 * 1024])(
       last_assistant_message_truncated: true,
     })
     expect(posted.last_assistant_message).toBe('🙂'.repeat((16 * 1024) / 4))
-    const { channel, post } = inMemoryClaudeHookChannel()
+    const { channel, post } = (
+      provider === 'codex' ? inMemoryCodexHookChannel : inMemoryClaudeHookChannel
+    )()
     try {
       const reservation = await channel.reserveSpawn()
       reservation.commit('s')
@@ -95,7 +102,12 @@ it.each([300 * 1024, 2 * 1024 * 1024])(
         })
       })
       expect(
-        await post(reservation.env!.OPENCOVE_CLAUDE_HOOK_TOKEN!, 'Stop', undefined, posted),
+        await post(
+          reservation.env![`OPENCOVE_${provider.toUpperCase()}_HOOK_TOKEN`]!,
+          'Stop',
+          undefined,
+          posted,
+        ),
       ).toBe(204)
       expect(observed).toBe(true)
     } finally {

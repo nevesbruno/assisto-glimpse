@@ -1,3 +1,5 @@
+import { ORCHESTRATION_ERROR_CODES } from './orchestrationErrorCodes'
+
 export const APP_ERROR_CODES = [
   'common.invalid_input',
   'common.forbidden',
@@ -12,6 +14,10 @@ export const APP_ERROR_CODES = [
   'endpoint.operation_in_progress',
   'space.not_found',
   'space.ambiguous',
+  'node.parent_unavailable',
+  'agent.spawn_depth_limit',
+  'agent.spawn_concurrency_limit',
+  'task.already_claimed',
   'node.not_found',
   'node.unsupported_operation',
   'session.not_found',
@@ -76,6 +82,8 @@ export const APP_ERROR_CODES = [
   'agent.list_models_failed',
   'agent.install_failed',
   'agent.launch_failed',
+  'agent.managed_launch_rejected',
+  'agent.managed_launch_commit_failed',
   'agent.read_last_message_failed',
   'agent.final_message_unavailable',
   'agent.resume_session_resolve_failed',
@@ -85,6 +93,7 @@ export const APP_ERROR_CODES = [
   'persistence.payload_too_large',
   'persistence.io_failed',
   'persistence.invalid_state',
+  'persistence.owned_node_identity_conflict',
   'persistence.invalid_node_id',
   'update.get_state_failed',
   'update.configure_failed',
@@ -92,6 +101,7 @@ export const APP_ERROR_CODES = [
   'update.download_failed',
   'update.install_failed',
   'release_notes.get_current_failed',
+  ...ORCHESTRATION_ERROR_CODES,
 ] as const
 
 export type AppErrorCode = (typeof APP_ERROR_CODES)[number]

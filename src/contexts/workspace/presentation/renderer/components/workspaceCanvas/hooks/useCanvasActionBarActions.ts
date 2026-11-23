@@ -3,6 +3,7 @@ import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
 import type { Point, TerminalNodeData } from '../../../types'
 import type { WorkspaceCanvasActionKind } from '../view/WorkspaceCanvasActionBar'
 import { findContainingSpaceByAnchor } from './useInteractions.spaceAssignment'
+import { useCanvasUiCommands, useReadCanvasDocument } from '../../../store/canvasStoreContext'
 
 export function useWorkspaceCanvasActionBarActions({
   canvasRef,
@@ -15,7 +16,6 @@ export function useWorkspaceCanvasActionBarActions({
   createSpaceAtPoint,
   createPluginAtPoint,
   clearTransientUi,
-  spacesRef,
 }: {
   canvasRef: React.RefObject<HTMLDivElement | null>
   reactFlow: ReactFlowInstance<Node<TerminalNodeData>, Edge>
@@ -27,12 +27,13 @@ export function useWorkspaceCanvasActionBarActions({
   createSpaceAtPoint: (anchor: Point) => void | Promise<void>
   createPluginAtPoint: (anchor: Point, pluginId: string) => void | Promise<void>
   clearTransientUi: () => void
-  spacesRef: React.MutableRefObject<import('../../../types').WorkspaceSpaceState[]>
 }): {
   createNodeAtViewportCenter: (kind: WorkspaceCanvasActionKind) => void | Promise<void>
   createNodeAtPoint: (kind: WorkspaceCanvasActionKind, point: Point) => void | Promise<void>
   resolveDropTargetLabel: (point: Point) => string | null
 } {
+  const readDocument = useReadCanvasDocument()
+
   const createNodeAtPoint = useCallback(
     (kind: WorkspaceCanvasActionKind, point: Point): void | Promise<void> => {
       clearTransientUi()
@@ -87,9 +88,9 @@ export function useWorkspaceCanvasActionBarActions({
   const resolveDropTargetLabel = useCallback(
     (point: Point): string | null => {
       const anchor = reactFlow.screenToFlowPosition(point)
-      return findContainingSpaceByAnchor(spacesRef.current, anchor)?.name ?? null
+      return findContainingSpaceByAnchor(readDocument().spaces, anchor)?.name ?? null
     },
-    [reactFlow, spacesRef],
+    [reactFlow, readDocument],
   )
 
   return { createNodeAtViewportCenter, createNodeAtPoint, resolveDropTargetLabel }
@@ -105,20 +106,13 @@ export function useWorkspaceCanvasActionBar({
   createWebsiteAtPoint,
   createSpaceAtPoint,
   createPluginAtPoint,
-  setContextMenu,
-  setEmptySelectionPrompt,
-  cancelSpaceRename,
-  spacesRef,
-}: Omit<Parameters<typeof useWorkspaceCanvasActionBarActions>[0], 'clearTransientUi'> & {
-  setContextMenu: (next: null) => void
-  setEmptySelectionPrompt: (next: null) => void
-  cancelSpaceRename: () => void
-}) {
+}: Omit<Parameters<typeof useWorkspaceCanvasActionBarActions>[0], 'clearTransientUi'>) {
+  const ui = useCanvasUiCommands()
+
   const clearTransientUi = useCallback(() => {
-    setContextMenu(null)
-    setEmptySelectionPrompt(null)
-    cancelSpaceRename()
-  }, [cancelSpaceRename, setContextMenu, setEmptySelectionPrompt])
+    ui.closeContextMenu()
+    ui.cancelSpaceRename()
+  }, [ui])
 
   return {
     ...useWorkspaceCanvasActionBarActions({
@@ -132,7 +126,6 @@ export function useWorkspaceCanvasActionBar({
       createSpaceAtPoint,
       createPluginAtPoint,
       clearTransientUi,
-      spacesRef,
     }),
     clearActionBarTransientUi: clearTransientUi,
   }

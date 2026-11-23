@@ -5,14 +5,19 @@ import type {
 import { createAppError } from '../../../../shared/errors/appError'
 import { requireNodeControlState, type NodeControlAppStateStore } from './nodeControlState'
 import { findNodeForNodeControl } from './nodeDtos'
+import { scopeNodeControlState } from './nodeProjectScope'
 import { resolveSpaceLocatorForNodeControl, type SpaceLocatorResolverDeps } from './spaceLocator'
 
 export async function resolveCanvasFocusTargetForNodeControl(options: {
   store: NodeControlAppStateStore
   locatorDeps: SpaceLocatorResolverDeps
   target: CanvasFocusTargetInput
+  projectScope?: string
 }): Promise<{ projectId: string; target: CanvasFocusEventTarget }> {
-  const state = requireNodeControlState(await options.store.readAppState())
+  const state = scopeNodeControlState(
+    requireNodeControlState(await options.store.readAppState()),
+    options.projectScope,
+  )
 
   if (options.target.kind === 'node') {
     const matched = findNodeForNodeControl(state.workspaces, options.target.nodeId)

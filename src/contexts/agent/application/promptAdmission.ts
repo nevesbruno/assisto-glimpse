@@ -1,3 +1,4 @@
+import { tracksClaudeConversations } from '../../../shared/contracts/agentProviderDescriptors'
 import type { RunStateFence, PromptDeliveryPorts } from './ports/PromptDeliveryPorts'
 export type PromptRefusal = {
   code:
@@ -28,6 +29,12 @@ export function promptAdmission(
   if (fence.hookCoverage === 'unverified_executable') {
     return { code: 'agent.prompt_unsupported', reason: 'executable_override_unverified' }
   }
+  if (fence.claudeHistorySaturated) {
+    return { code: 'agent.state_unknown', reason: 'history_saturated' }
+  }
+  if (fence.conversationQuarantined) {
+    return { code: 'agent.state_unknown', reason: 'readiness_unobserved' }
+  }
   const s = fence.snapshot
   if (s.provider === 'codex') {
     const install = fence.hookInstallState
@@ -52,7 +59,7 @@ export function promptAdmission(
   if (fence.hookInstallState !== undefined && fence.hookInstallState !== 'installed') {
     return { code: 'agent.state_unknown', reason: 'observation_degraded' }
   }
-  if (s.provider === 'claude-code' && fence.hookCoverage !== 'lifecycle') {
+  if (tracksClaudeConversations(s.provider) && fence.hookCoverage !== 'lifecycle') {
     return { code: 'agent.prompt_unsupported', reason: 'claude_hooks_missing' }
   }
   if (s.provider === 'codex' && s.source === 'session_file') {
@@ -74,13 +81,22 @@ export function promptAdmission(
     return null
   }
   if (
+    tracksClaudeConversations(s.provider) &&
+    fence.claudeClearReady &&
+    s.state === 'idle' &&
+    !s.turn &&
+    s.source === 'claude_hook'
+  ) {
+    return null
+  }
+  if (
     s.state !== 'idle' ||
     s.source !== promptHookSource(s.provider) ||
     s.turn ||
     fence.lastTurnEnd?.source !== s.source ||
-    !(s.provider === 'codex' ? ['Stop'] : ['Stop', 'StopFailure']).includes(
-      fence.lastTurnEnd?.hookEventName ?? '',
-    )
+    !(
+      s.provider === 'codex' ? ['Stop', 'SessionStart'] : ['Stop', 'StopFailure', 'SessionStart']
+    ).includes(fence.lastTurnEnd?.hookEventName ?? '')
   ) {
     return { code: 'agent.state_unknown', reason: 'readiness_unobserved' }
   }
@@ -93,6 +109,7 @@ export function samePromptEntry(a: RunStateFence, b: RunStateFence | null): b is
     a.epoch === b.epoch &&
     a.incarnation === b.incarnation &&
     a.bindingGeneration === b.bindingGeneration &&
+    a.conversationGeneration === b.conversationGeneration &&
     a.snapshot.nodeId === b.snapshot.nodeId
   )
 }

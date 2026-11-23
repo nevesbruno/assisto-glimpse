@@ -6,7 +6,7 @@
 
 - `architecture/CURRENT_ARCHITECTURE.md`：当前运行时、控制面、持久化、文件系统、终端与 CLI 的总览。
 - `architecture/ARCHITECTURE.md`：DDD + Clean 的代码组织规则。
-- `architecture/ARCHITECTURE_HARNESS.md`：源码 import 图与架构偏离检查脚本说明，工具目录为 `harness/architecture/`。
+- `../harness/architecture/README.md`：架构检查（`pnpm arch:check`）与 ratchet 基线说明。
 - `architecture/CONTROL_SURFACE.md`：Control Surface 的 command / query / event 边界。
 - `architecture/PERSISTENCE.md`：SQLite、拓扑文件和迁移规则。
 - `architecture/RECOVERY_MODEL.md`：恢复语义、状态所有权与不变量。
@@ -69,5 +69,9 @@
 ## Cases
 
 - `cases/README.md`：复盘案例索引。
+
+## Glimpse fork knowledge
+
+- `knowledge/README.md`: studies, measurements, decisions and the evolution plan for the Glimpse fork. This is fork-specific material, not upstream public documentation.
 
 新增公开文档前先判断它是否描述当前事实。若内容包含未实现方案、执行顺序、风险登记或内部决策记录，应放在内部文档区，而不是 `docs/`。
