@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "count": 190,
+  "count": 193,
   "entries": {
     "tests/e2e/agent-hook-relay.spec.ts › claude-code executes Electron hooks through the real launch path and retains keyboard input": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/agent-launch.path-resolution.spec.ts › Agent launch resolves the provider on PATH › codex starts the real executable found by name": "Desktop: pre-restructure inventory; existing assertions retained",
@@ -31,6 +31,9 @@
     "tests/e2e/issue-report.spec.ts › Issue report › generates a report from the header dialog": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/m6.endpoints-mounts.local-worktree.pr-chip.integration.spec.ts › M6 - Local mount worktree PR chip integration › shows branch badge + PR chip after creating worktree": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/managed-runtime-verify.windows.spec.ts › managed runtime verification exits after native PTY completion on Windows": "Desktop: pre-restructure inventory; existing assertions retained",
+    "tests/e2e/orchestration.hooks.real-codex.spec.ts › orchestration hooks with the real Codex service › E-06 approving the -c PreToolUse hook makes the same turn write the marker": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.real-codex.service.spec.ts › orchestration phase 2 with real service deaths › E-03 kill -9 mid-turn restarts the service, fails the dispatch with a down notice and keeps the link active": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.smoke.spec.ts › Orchestration smoke (E-09) › two agent nodes outside any space: orch link create draws the edge on the canvas": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
     "tests/e2e/plugins.commands.spec.ts › Independent plugin CLI and window ownership › runs backend commands without creating a node, exposes skills, and restores a singleton across restart": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/plugins.commands.spec.ts › Independent plugin CLI and window ownership › serializes concurrent singleton creation across projects and shares the action-bar entry": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/plugins.contributions.spec.ts › keeps creation shortcut preferences independent across plugin disablement and a full restart": "Desktop: pre-restructure inventory; existing assertions retained",

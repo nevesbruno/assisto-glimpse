@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "count": 172,
+  "count": 173,
   "entries": {
     "tests/e2e/agent-hook-relay.windows.spec.ts › claude-code executes Electron hooks through the real launch path and retains keyboard input": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/agent-hook-relay.windows.spec.ts › codex executes Electron hooks through the real launch path and retains keyboard input": "Desktop: pre-restructure inventory; existing assertions retained",
@@ -26,6 +26,7 @@
     "tests/e2e/context-bridge.compatibility.spec.ts › acknowledges flush only after the renderer callback Promise rejects": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/context-bridge.compatibility.spec.ts › installs the same public API in a second real app document": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/m6.endpoints-mounts.legacy-repair.remote.integration.spec.ts › M6 - Legacy mount/space repair integration (remote) › repairs remote workspace space mount binding": "Desktop: pre-restructure inventory; existing assertions retained",
+    "tests/e2e/orchestration.real-codex.restart.spec.ts › orchestration phase 2 with a real Glimpse restart › E-02 SIGKILL mid-turn reaps the orphan and resumes the thread without input": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
     "tests/e2e/performance-monitor.mac.spec.ts › Performance Diagnostics (macOS) › shows real process-tree rows in diagnostics settings": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/persistence.concurrent-control-surface-writes.spec.ts › control surface echo writes survive renderer publication": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/plugins.canvas.spec.ts › uses canvas and terminal APIs from a real backend and window and retires observation leases": "Desktop: pre-restructure inventory; existing assertions retained",

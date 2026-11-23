@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "count": 180,
+  "count": 182,
   "entries": {
     "tests/e2e/add-project-wizard.inline-endpoint.spec.ts › Add project wizard inline endpoint registration › preserves the parent wizard across Escape, cancel, and successful registration": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/agent-process-reaping.real-codex.spec.ts › managed Agent tool process reaping with real Codex › delete reaps a running tool across process groups": "Desktop: pre-restructure inventory; existing assertions retained",
@@ -35,6 +35,8 @@
     "tests/e2e/control-center.spec.ts › Control Center › opens as a pixel window with appearances, quick switches and lines into Settings": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/control-center.spec.ts › Control Center › uses a mobile sheet with large UI text and hands focus to Settings": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/m6.endpoints-mounts.dev-profile.happy-path.spec.ts › M6 - Dev profile happy path (manual) › registers endpoint, creates remote project, creates space worktree, runs terminal, and opens files": "Desktop: pre-restructure inventory; existing assertions retained",
+    "tests/e2e/orchestration.resend.real-codex.spec.ts › orchestration phase 2 resend with the real Codex service › E-08 in-flight refusal, CLI timeout resends and duplicate after completion": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.smoke.spec.ts › Orchestration smoke (E-09) › empty profile: window opens, preload loads and the Worker boots orchestration": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
     "tests/e2e/persistence.concurrent-control-surface-writes.spec.ts › control surface task writes survive renderer publication": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/plugins.library.spec.ts › plugin library reads bundled documents in zh-CN": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/plugins.local.spec.ts › Independently installed plugins › loads source, preserves work across collapse and restart, and rejects failed replacement atomically": "Desktop: pre-restructure inventory; existing assertions retained",

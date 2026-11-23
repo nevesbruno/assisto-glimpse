@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "count": 169,
+  "count": 178,
   "entries": {
     "tests/e2e/agent-hook-relay.spec.ts › codex executes Electron hooks through the real launch path and retains keyboard input": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/agent.prompt.real-codex.daemon.spec.ts › Codex orchestration beside a shared app-server daemon › default hooks complete prompts while the daemon stays healthy; delete reaps the agent tree": "Desktop: pre-restructure inventory; existing assertions retained",
@@ -37,6 +37,15 @@
     "tests/e2e/m6.endpoints-mounts.legacy-repair.local.integration.spec.ts › M6 - Legacy mount/space repair integration (local) › repairs legacy local workspace mounts + space target mount": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/m6.endpoints-mounts.managed-ssh.integration.spec.ts › M6 - Managed SSH remote endpoint integration › connects through managed SSH and creates a remote-only project via browse": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/m6.endpoints-mounts.remote-worktree.integration.spec.ts › M6 - Remote mount worktree integration › creates and archives worktrees via remote mount": "Desktop: pre-restructure inventory; existing assertions retained",
+    "tests/e2e/orchestration.approval.interface.real-codex.spec.ts › orchestration approval answered in the Glimpse window › E-08 the window answer completes the turn and runs the command outside the workspace": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.approval.real-codex.spec.ts › orchestration approval with the real Codex service › E-07 the approval alert reaches the user and the TUI answer ends the turn": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.cost.real-model.spec.ts › E-04 fake rehearsal › three dispatches and the token parser against the fake Responses API": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.cost.real-model.spec.ts › E-04 real model cost › second dispatch on the same executor reuses the session cache": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.hooks.interface.real-codex.spec.ts › orchestration hooks approved in the Glimpse window › E-09 the window approves the hook and the next turn writes the marker": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.real-codex.restart.spec.ts › orchestration phase 2 with a real Glimpse restart › E-02 the notice is delivered after the restart without orchestrator input": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.real-codex.service.spec.ts › orchestration phase 2 with real service deaths › E-03 after executor.recovered the TUI is relaunched on the same node": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.real-codex.service.spec.ts › orchestration phase 2 with real service deaths › E-03 four deaths in 60 s leave the executor unavailable, fail the in-flight dispatch with executor_down and keep the link active": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
+    "tests/e2e/orchestration.real-codex.spec.ts › orchestration phase 2 with the real Codex service › E-01 orchestrator drives two executors without a click after the mount": "Desktop: orchestration boundaries E-01..E-09 against the real Codex service and the Glimpse window",
     "tests/e2e/performance-monitor.windows.spec.ts › Performance Monitor (Windows) › opens the header performance monitor panel": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/persistence.concurrent-control-surface-writes.spec.ts › control surface note writes survive renderer publication": "Desktop: pre-restructure inventory; existing assertions retained",
     "tests/e2e/plugins.filesystem.spec.ts › uses scoped filesystem mutations and observations through installed backend and window SDKs": "Desktop: pre-restructure inventory; existing assertions retained",
